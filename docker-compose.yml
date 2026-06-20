@@ -1,0 +1,30 @@
+name: sentinel-dashboard
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: sentinel
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "5050"
+      MONGODB_URI: "mongodb://mongodb:27017"
+      MONGODB_DATABASE: "sentinel"
+    depends_on:
+      - mongodb
+
+volumes:
+  mongodb_data:

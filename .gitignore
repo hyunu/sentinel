@@ -1,0 +1,27 @@
+# Build outputs
+build/
+dist/
+*.app
+*.ipa
+*.apk
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+backend/server
+
+# Node
+node_modules/
+
+# Firmware
+firmware/build/
+firmware/sdkconfig
