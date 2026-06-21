@@ -7,12 +7,22 @@
 #include "config.h"
 
 static BLEServer *pServer = nullptr;
-static BLECharacteristic *pUartChar = nullptr;
-static BLECharacteristic *pWifiSsidChar = nullptr;
-static BLECharacteristic *pWifiPassChar = nullptr;
+static BLECharacteristic *pUartNotifyChar = nullptr;
+static BLECharacteristic *pUartWriteChar = nullptr;
 static bool deviceConnected = false;
 
 extern void on_wifi_credentials_received(const String &ssid, const String &password);
+
+// Simple JSON field extractor (very small, no external JSON lib)
+static String _extract_json_field(const String &json, const char *key) {
+    String pattern = String("\"") + String(key) + String("\":\"");
+    int idx = json.indexOf(pattern);
+    if (idx < 0) return String("");
+    idx += pattern.length();
+    int end = json.indexOf("\"", idx);
+    if (end < 0) return String("");
+    return json.substring(idx, end);
+}
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *s) override {
@@ -26,22 +36,20 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
 };
 
-class WifiSsidCallback : public BLECharacteristicCallbacks {
+class UartWriteCallback : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *c) override {
         String value = c->getValue();
-        if (value.length() > 0) {
-            Serial.printf("[BLE] WiFi SSID received: %s\n", value.c_str());
-        }
-    }
-};
+        if (value.length() == 0) return;
+        Serial.printf("[BLE] Received write payload: %s\n", value.c_str());
 
-class WifiPassCallback : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *c) override {
-        String ssid = pWifiSsidChar->getValue();
-        String password = c->getValue();
+        // Try to extract ssid/password from JSON payload
+        String ssid = _extract_json_field(value, "ssid");
+        String password = _extract_json_field(value, "password");
         if (ssid.length() > 0 && password.length() > 0) {
             Serial.printf("[BLE] WiFi credentials received. Connecting to: %s\n", ssid.c_str());
             on_wifi_credentials_received(ssid, password);
+        } else {
+            Serial.printf("[BLE] WiFi credentials not found in payload\n");
         }
     }
 };
@@ -53,23 +61,19 @@ void ble_init() {
 
     BLEService *pService = pServer->createService(BLEUUID(UART_SERVICE_UUID));
 
-    pUartChar = pService->createCharacteristic(
-        BLEUUID(UART_DATA_CHAR_UUID),
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+    // Notify characteristic (board -> app)
+    pUartNotifyChar = pService->createCharacteristic(
+        BLEUUID(UART_NOTIFY_CHAR_UUID),
+        BLECharacteristic::PROPERTY_NOTIFY
     );
-    pUartChar->addDescriptor(new BLE2902());
+    pUartNotifyChar->addDescriptor(new BLE2902());
 
-    pWifiSsidChar = pService->createCharacteristic(
-        BLEUUID(WIFI_SSID_CHAR_UUID),
+    // Write characteristic (app -> board)
+    pUartWriteChar = pService->createCharacteristic(
+        BLEUUID(UART_WRITE_CHAR_UUID),
         BLECharacteristic::PROPERTY_WRITE
     );
-    pWifiSsidChar->setCallbacks(new WifiSsidCallback());
-
-    pWifiPassChar = pService->createCharacteristic(
-        BLEUUID(WIFI_PASS_CHAR_UUID),
-        BLECharacteristic::PROPERTY_WRITE
-    );
-    pWifiPassChar->setCallbacks(new WifiPassCallback());
+    pUartWriteChar->setCallbacks(new UartWriteCallback());
 
     pService->start();
 
@@ -84,7 +88,7 @@ void ble_init() {
 }
 
 void ble_send_uart_data(const String &hex_str) {
-    if (!deviceConnected || !pUartChar) return;
-    pUartChar->setValue(hex_str);
-    pUartChar->notify();
+    if (!deviceConnected || !pUartNotifyChar) return;
+    pUartNotifyChar->setValue(hex_str);
+    pUartNotifyChar->notify();
 }

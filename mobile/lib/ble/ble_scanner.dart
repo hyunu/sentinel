@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-const String kUartServiceUuid = '0000ffe0-0000-1000-8000-00805f9b34fb';
-const String kUartDataCharUuid = '5f9b34fb-0080-8000-0010-0000e1ff0000';
-const String kWifiSsidCharUuid = '5f9b34fb-0080-8000-0010-0000e2ff0000';
-const String kWifiPassCharUuid = '5f9b34fb-0080-8000-0010-0000e3ff0000';
+// Use Nordic UART Service (NUS) UUIDs to match nexio implementation
+const String kUartServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const String kUartNotifyCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const String kUartWriteCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
 class BleScanner {
   final StreamController<List<ScanResult>> _scanController =
@@ -73,7 +73,7 @@ class BleScanner {
   }
 
   Future<Stream<List<int>>> subscribeToUartData(BluetoothDevice device) async {
-    final ch = await _findChar(device, kUartDataCharUuid);
+    final ch = await _findChar(device, kUartNotifyCharUuid);
     if (ch == null) throw Exception('UART data characteristic not found');
     await ch.setNotifyValue(true);
     return ch.onValueReceived;
@@ -89,9 +89,9 @@ class BleScanner {
   }) async {
     try {
       clearCache();
-      final passCh = await _findChar(device, kWifiPassCharUuid);
+      final writeCh = await _findChar(device, kUartWriteCharUuid);
 
-      if (passCh == null) throw Exception('WiFi config characteristic not found');
+      if (writeCh == null) throw Exception('WiFi config/write characteristic not found');
 
       final json = StringBuffer('{');
       json.write('"ssid":"${_escapeJson(ssid)}",');
@@ -100,14 +100,14 @@ class BleScanner {
         json.write(',"baudRate":$baudRate');
       }
       if (serverUrl != null && serverUrl.isNotEmpty) {
-        json.write(',"url":"${_escapeJson(serverUrl)}"');
+        json.write(',"serverUrl":"${_escapeJson(serverUrl)}"');
       }
       if (uid != null && uid.isNotEmpty) {
-        json.write(',"uid":"${_escapeJson(uid)}"');
+        json.write(',"uniqueId":"${_escapeJson(uid)}"');
       }
       json.write('}');
 
-      await passCh.write(json.toString().codeUnits, withoutResponse: false).timeout(const Duration(seconds: 10));
+      await writeCh.write(json.toString().codeUnits, withoutResponse: false).timeout(const Duration(seconds: 10));
 
       return true;
     } catch (e) {
