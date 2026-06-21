@@ -60,8 +60,8 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	}
 
 	board := models.Board{
-		ID:            uuid.New().String(),
-		UID:           fmt.Sprintf("%04d", seq),
+		ID:  uuid.New().String(),
+		UID: fmt.Sprintf("%04d", seq),
 		// Name is set to STN-<UID> (sentinel shorthand) to standardize naming
 		Name:          fmt.Sprintf("STN-%s", fmt.Sprintf("%04d", seq)),
 		MACAddress:    req.MACAddress,
@@ -75,6 +75,14 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		h.logger.Error("failed to register board", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register board"})
 		return
+	}
+
+	// Ensure stored name is standardized to STN-<UID> in DB (guard against client-side overrides)
+	name := fmt.Sprintf("STN-%s", board.UID)
+	if _, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": board.ID}, bson.M{"$set": bson.M{"name": name}}); err == nil {
+		board.Name = name
+	} else {
+		h.logger.Warn("failed to enforce standardized board name", zap.Error(err))
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"uid": board.UID, "board": board})
@@ -253,8 +261,8 @@ func (h *Handler) IngestUART(c *gin.Context) {
 
 func (h *Handler) IngestUARTBatch(c *gin.Context) {
 	var req struct {
-		BoardID string          `json:"board_id"`
-		UID     string          `json:"uid"`
+		BoardID string `json:"board_id"`
+		UID     string `json:"uid"`
 		Entries []struct {
 			RawHex    string    `json:"raw_hex" binding:"required"`
 			Direction string    `json:"direction" binding:"required"`
@@ -419,9 +427,9 @@ func (h *Handler) QueryTemperature(c *gin.Context) {
 
 func (h *Handler) CreateProtocol(c *gin.Context) {
 	var req struct {
-		Name        string            `json:"name" binding:"required"`
-		Version     string            `json:"version" binding:"required"`
-		Description string            `json:"description,omitempty"`
+		Name        string             `json:"name" binding:"required"`
+		Version     string             `json:"version" binding:"required"`
+		Description string             `json:"description,omitempty"`
 		Fields      []models.FieldSpec `json:"fields" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -491,9 +499,9 @@ func (h *Handler) GetProtocol(c *gin.Context) {
 func (h *Handler) UpdateProtocol(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name        string            `json:"name,omitempty"`
-		Version     string            `json:"version,omitempty"`
-		Description string            `json:"description,omitempty"`
+		Name        string             `json:"name,omitempty"`
+		Version     string             `json:"version,omitempty"`
+		Description string             `json:"description,omitempty"`
 		Fields      []models.FieldSpec `json:"fields,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
