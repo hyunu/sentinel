@@ -4,6 +4,7 @@ import "time"
 
 type Board struct {
 	ID              string    `json:"id" bson:"_id"`
+	UID             string    `json:"uid" bson:"uid"`
 	Name            string    `json:"name" bson:"name"`
 	MACAddress      string    `json:"mac_address" bson:"mac_address"`
 	FirmwareVersion string    `json:"firmware_version,omitempty" bson:"firmware_version,omitempty"`
@@ -126,6 +127,11 @@ type VizItem struct {
 type FieldRef struct {
 	ProtocolID string `json:"protocol_id" bson:"protocol_id"`
 	FieldName  string `json:"field_name" bson:"field_name"`
+}
+
+type CounterSeq struct {
+	ID    string `json:"_id" bson:"_id"`
+	Value int    `json:"value" bson:"value"`
 }
 
 type YAxisConfig struct {

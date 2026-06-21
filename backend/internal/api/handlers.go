@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -24,6 +25,20 @@ func NewHandler(database *db.MongoDB, logger *zap.Logger) *Handler {
 	return &Handler{db: database, logger: logger}
 }
 
+func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (string, error) {
+	if boardID != "" {
+		return boardID, nil
+	}
+	if uid == "" {
+		return "", fmt.Errorf("board_id or uid required")
+	}
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"uid": uid}).Decode(&board); err != nil {
+		return "", fmt.Errorf("board not found by uid: %s", uid)
+	}
+	return board.ID, nil
+}
+
 func (h *Handler) RegisterBoard(c *gin.Context) {
 	var req struct {
 		Name       string `json:"name" binding:"required"`
@@ -34,8 +49,19 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	seq, err := h.db.GetNextSequence(ctx, "device_uid")
+	if err != nil {
+		h.logger.Error("failed to generate UID", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate UID"})
+		return
+	}
+
 	board := models.Board{
 		ID:            uuid.New().String(),
+		UID:           fmt.Sprintf("%04d", seq),
 		Name:          req.Name,
 		MACAddress:    req.MACAddress,
 		LastHeartbeat: time.Now(),
@@ -44,16 +70,13 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		UpdatedAt:     time.Now(),
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
 	if _, err := h.db.Boards().InsertOne(ctx, board); err != nil {
 		h.logger.Error("failed to register board", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register board"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, board)
+	c.JSON(http.StatusCreated, gin.H{"uid": board.UID, "board": board})
 }
 
 func (h *Handler) ListBoards(c *gin.Context) {
@@ -127,7 +150,8 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 
 func (h *Handler) Heartbeat(c *gin.Context) {
 	var req struct {
-		BoardID string `json:"board_id" binding:"required"`
+		BoardID string `json:"board_id"`
+		UID     string `json:"uid"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -138,8 +162,14 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	boardID, err := h.resolveBoardID(ctx, req.BoardID, req.UID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	result, err := h.db.Boards().UpdateOne(ctx,
-		bson.M{"_id": req.BoardID},
+		bson.M{"_id": boardID},
 		bson.M{"$set": bson.M{"last_heartbeat": now, "is_active": true, "updated_at": now}},
 	)
 	if err != nil {
@@ -154,7 +184,7 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 	}
 
 	heartbeat := models.Heartbeat{
-		BoardID:   req.BoardID,
+		BoardID:   boardID,
 		Timestamp: now,
 	}
 	if _, err := h.db.Heartbeats().InsertOne(ctx, heartbeat); err != nil {
@@ -166,7 +196,8 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 
 func (h *Handler) IngestUART(c *gin.Context) {
 	var req struct {
-		BoardID    string    `json:"board_id" binding:"required"`
+		BoardID    string    `json:"board_id"`
+		UID        string    `json:"uid"`
 		RawHex     string    `json:"raw_hex" binding:"required"`
 		Direction  string    `json:"direction" binding:"required"`
 		Timestamp  time.Time `json:"timestamp"`
@@ -184,27 +215,31 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	boardID, err := h.resolveBoardID(ctx, req.BoardID, req.UID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	data := models.UartData{
 		ID:        uuid.New().String(),
-		BoardID:   req.BoardID,
+		BoardID:   boardID,
 		Timestamp: req.Timestamp,
 		RawHex:    req.RawHex,
 		Direction: req.Direction,
 	}
 
 	if req.ProtocolID != "" {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		var proto models.ProtocolSpec
 		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": req.ProtocolID}).Decode(&proto); err == nil {
 			if parsed, err := protocol.ParseAndFlatten(req.RawHex, &proto); err == nil {
 				data.ParsedFields = parsed
 			}
 		}
-		cancel()
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
 
 	if _, err := h.db.UartData().InsertOne(ctx, data); err != nil {
 		h.logger.Error("failed to ingest UART data", zap.Error(err))
@@ -217,7 +252,8 @@ func (h *Handler) IngestUART(c *gin.Context) {
 
 func (h *Handler) IngestUARTBatch(c *gin.Context) {
 	var req struct {
-		BoardID string          `json:"board_id" binding:"required"`
+		BoardID string          `json:"board_id"`
+		UID     string          `json:"uid"`
 		Entries []struct {
 			RawHex    string    `json:"raw_hex" binding:"required"`
 			Direction string    `json:"direction" binding:"required"`
@@ -225,6 +261,15 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 		} `json:"entries" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	boardID, err := h.resolveBoardID(ctx, req.BoardID, req.UID)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -238,15 +283,12 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 		}
 		docs[i] = models.UartData{
 			ID:        uuid.New().String(),
-			BoardID:   req.BoardID,
+			BoardID:   boardID,
 			Timestamp: ts,
 			RawHex:    e.RawHex,
 			Direction: e.Direction,
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
 
 	if _, err := h.db.UartData().InsertMany(ctx, docs); err != nil {
 		h.logger.Error("failed to batch ingest UART data", zap.Error(err))
@@ -307,7 +349,8 @@ func (h *Handler) QueryUART(c *gin.Context) {
 
 func (h *Handler) IngestTemperature(c *gin.Context) {
 	var req struct {
-		BoardID      string    `json:"board_id" binding:"required"`
+		BoardID      string    `json:"board_id"`
+		UID          string    `json:"uid"`
 		ValueCelsius float64   `json:"value_celsius" binding:"required"`
 		Timestamp    time.Time `json:"timestamp"`
 	}
@@ -319,15 +362,21 @@ func (h *Handler) IngestTemperature(c *gin.Context) {
 		req.Timestamp = time.Now()
 	}
 
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	boardID, err := h.resolveBoardID(ctx, req.BoardID, req.UID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	temp := models.Temperature{
 		ID:           uuid.New().String(),
-		BoardID:      req.BoardID,
+		BoardID:      boardID,
 		Timestamp:    req.Timestamp,
 		ValueCelsius: req.ValueCelsius,
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
 
 	if _, err := h.db.Temperatures().InsertOne(ctx, temp); err != nil {
 		h.logger.Error("failed to ingest temperature", zap.Error(err))

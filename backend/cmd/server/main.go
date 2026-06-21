@@ -27,6 +27,10 @@ func main() {
 	}
 	defer database.Close(context.Background())
 
+	if err := database.EnsureIndexes(context.Background()); err != nil {
+		logger.Warn("Failed to ensure indexes", zap.Error(err))
+	}
+
 	router := api.SetupRouter(database, logger)
 
 	srv := &http.Server{

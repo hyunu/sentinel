@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-const String kUartServiceUuid = '0000fff0-0000-1000-8000-00805f9b34fb';
-const String kUartDataCharUuid = '0000ffe1-0000-1000-8000-00805f9b34fb';
-const String kWifiSsidCharUuid = '0000ffe2-0000-1000-8000-00805f9b34fb';
-const String kWifiPassCharUuid = '0000ffe3-0000-1000-8000-00805f9b34fb';
+const String kUartServiceUuid = '0000ffe0-0000-1000-8000-00805f9b34fb';
+const String kUartDataCharUuid = '5f9b34fb-0080-8000-0010-0000e1ff0000';
+const String kWifiSsidCharUuid = '5f9b34fb-0080-8000-0010-0000e2ff0000';
+const String kWifiPassCharUuid = '5f9b34fb-0080-8000-0010-0000e3ff0000';
 
 class BleScanner {
   final StreamController<List<ScanResult>> _scanController =
@@ -19,7 +19,10 @@ class BleScanner {
   bool get isScanning => _isScanning;
 
   static bool isSentinelDevice(ScanResult r) {
-    return true;
+    final name = r.device.platformName.isNotEmpty
+        ? r.device.platformName
+        : r.advertisementData.advName;
+    return name.toLowerCase().startsWith('sentinel');
   }
 
   Future<List<BluetoothService>> discoverServices(BluetoothDevice device) async {
@@ -80,19 +83,39 @@ class BleScanner {
     BluetoothDevice device, {
     required String ssid,
     required String password,
+    int? baudRate,
+    String? serverUrl,
+    String? uid,
   }) async {
     try {
-      final ssidCh = await _findChar(device, kWifiSsidCharUuid);
+      clearCache();
       final passCh = await _findChar(device, kWifiPassCharUuid);
-      if (ssidCh != null) {
-        await ssidCh.write(ssid.codeUnits);
+
+      if (passCh == null) throw Exception('WiFi config characteristic not found');
+
+      final json = StringBuffer('{');
+      json.write('"ssid":"${_escapeJson(ssid)}",');
+      json.write('"password":"${_escapeJson(password)}"');
+      if (baudRate != null && baudRate > 0) {
+        json.write(',"baudRate":$baudRate');
       }
-      if (passCh != null) {
-        await passCh.write(password.codeUnits);
+      if (serverUrl != null && serverUrl.isNotEmpty) {
+        json.write(',"url":"${_escapeJson(serverUrl)}"');
       }
+      if (uid != null && uid.isNotEmpty) {
+        json.write(',"uid":"${_escapeJson(uid)}"');
+      }
+      json.write('}');
+
+      await passCh.write(json.toString().codeUnits, withoutResponse: false).timeout(const Duration(seconds: 10));
+
       return true;
-    } catch (_) {
-      return false;
+    } catch (e) {
+      throw Exception('sendWifiConfig failed: $e');
     }
+  }
+
+  String _escapeJson(String s) {
+    return s.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
   }
 }

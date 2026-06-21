@@ -11,7 +11,7 @@
 #define BACKEND_URL             "http://192.168.1.100:5050"
 #define BOARD_ID_PREFIX         "sentinel"
 
-#define BLE_DEVICE_NAME         "Sentinel-UART"
+#define BLE_DEVICE_NAME         "Sentinel"
 #define BLE_MANUFACTURER_ID     0x02E5
 
 #define UART_SERVICE_UUID       "0000ffe0-0000-1000-8000-00805f9b34fb"
