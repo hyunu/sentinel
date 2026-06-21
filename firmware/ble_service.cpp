@@ -45,6 +45,18 @@ class UartWriteCallback : public BLECharacteristicCallbacks {
         // Try to extract ssid/password from JSON payload
         String ssid = _extract_json_field(value, "ssid");
         String password = _extract_json_field(value, "password");
+        String serverUrl = _extract_json_field(value, "serverUrl");
+        if (serverUrl.length() == 0) {
+            // try alternate key 'url'
+            serverUrl = _extract_json_field(value, "url");
+        }
+        String uniqueId = _extract_json_field(value, "uniqueId");
+        String baudStr = _extract_json_field(value, "baudRate");
+        if (serverUrl.length() > 0) {
+            // update firmware backend URL at runtime
+            wifi_set_server_url(serverUrl);
+        }
+
         if (ssid.length() > 0 && password.length() > 0) {
             Serial.printf("[BLE] WiFi credentials received. Connecting to: %s\n", ssid.c_str());
             on_wifi_credentials_received(ssid, password);

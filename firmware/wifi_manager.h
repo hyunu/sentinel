@@ -10,5 +10,6 @@ void wifi_send_uart_data(const String &hex_data);
 void wifi_send_temperature(float temp_celsius);
 bool wifi_is_connected();
 void wifi_loop();
+void wifi_set_server_url(const String &url);
 
 #endif

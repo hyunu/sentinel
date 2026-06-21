@@ -8,6 +8,8 @@ static String board_id;
 static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
 
+static String backend_url = String(BACKEND_URL);
+
 static String getBoardId() {
     uint8_t mac[6];
     WiFi.macAddress(mac);
@@ -43,11 +45,17 @@ void wifi_loop() {
     }
 }
 
+void wifi_set_server_url(const String &url) {
+    if (url.length() == 0) return;
+    backend_url = url;
+    Serial.printf("[WiFi] Backend URL updated: %s\n", backend_url.c_str());
+}
+
 static bool http_post(const String &path, const String &body) {
     if (!wifi_is_connected()) return false;
 
     HTTPClient http;
-    String url = String(BACKEND_URL) + path;
+    String url = backend_url + path;
 
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
