@@ -176,17 +176,47 @@ class _DeviceScreenState extends State<DeviceScreen>
       final baud = int.tryParse(_baudCtrl.text.trim());
       final url = _urlCtrl.text.trim();
 
-      String? uid;
+      // 1. Send config to device over BLE (no uid yet)
+      await _scanner.sendWifiConfig(
+        widget.device,
+        ssid: ssid,
+        password: pass,
+        baudRate: baud,
+        serverUrl: url.isNotEmpty ? url : null,
+        uid: null,
+      );
 
-      // 1. Register device with server to get a unique UID
+      // 2. Wait for device to report WiFi connected and successful heartbeat via BLE logs
+      final logStream = await _scanner.subscribeToLogs(widget.device);
+      final wifiConnected = Completer<void>();
+      final heartbeatOk = Completer<void>();
+      final sub = logStream.listen((msg) {
+        if (msg.contains('EVENT:WIFI_CONNECTED') && !wifiConnected.isCompleted) wifiConnected.complete();
+        if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) heartbeatOk.complete();
+      });
+
+      try {
+        // wait up to 30s for both signals
+        await Future.wait([
+          wifiConnected.future.timeout(const Duration(seconds: 30)),
+          heartbeatOk.future.timeout(const Duration(seconds: 30)),
+        ]);
+      } catch (e) {
+        await sub.cancel();
+        throw Exception('Board did not become ready: $e');
+      }
+      await sub.cancel();
+
+      // 3. Register device with server (server will assign STN-<uid> name)
       final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
+      String? uid;
       try {
         final regRes = await http
             .post(
               Uri.parse('$baseUrl/api/v1/boards/register'),
               headers: {'Content-Type': 'application/json'},
               body: json.encode({
-                'name': ssid,
+                'name': 'STN', // server will standardize to STN-<uid>
                 'mac_address': widget.device.remoteId.str,
               }),
             )
@@ -194,25 +224,31 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (regRes.statusCode == 201) {
           final regBody = json.decode(regRes.body);
           uid = regBody['uid'] as String?;
+        } else {
+          throw Exception('Register failed: ${regRes.statusCode}');
         }
-      } catch (_) {}
+      } catch (e) {
+        throw Exception('Server registration failed: $e');
+      }
 
-      // 2. Send config (with uid if server returned one) to device over BLE
-      await _scanner.sendWifiConfig(
-        widget.device,
-        ssid: ssid,
-        password: pass,
-        baudRate: baud,
-        serverUrl: url.isNotEmpty ? url : null,
-        uid: uid,
-      );
+      // 4. Send assigned uid back to device so future heartbeats include uid
+      if (uid != null && uid.isNotEmpty) {
+        await _scanner.sendWifiConfig(
+          widget.device,
+          ssid: ssid,
+          password: pass,
+          baudRate: baud,
+          serverUrl: url.isNotEmpty ? url : null,
+          uid: uid,
+        );
+      }
 
       await _storage.saveWifiProfile(ssid, pass);
       if (url.isNotEmpty) await _storage.setServerUrl(url);
 
       if (mounted) {
         setState(() => _wifiConfigured = true);
-        _showSnack('Configuration sent${uid != null ? ' (uid: $uid)' : ''}');
+        _showSnack('Configuration sent and registered${uid != null ? ' (uid: $uid)' : ''}');
       }
     } catch (e) {
       if (mounted) _showSnack('$e');

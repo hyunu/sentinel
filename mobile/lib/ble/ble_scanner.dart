@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 const String kUartServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartNotifyCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartWriteCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const String kUartMacCharUuid = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
 
 class BleScanner {
   final StreamController<List<ScanResult>> _scanController =
@@ -77,6 +78,28 @@ class BleScanner {
     if (ch == null) throw Exception('UART data characteristic not found');
     await ch.setNotifyValue(true);
     return ch.onValueReceived;
+  }
+
+  Future<Stream<String>> subscribeToLogs(BluetoothDevice device) async {
+    final stream = await subscribeToUartData(device);
+    return stream.transform(
+      StreamTransformer<List<int>, String>.fromHandlers(
+        handleData: (data, sink) {
+          sink.add(String.fromCharCodes(data));
+        },
+      ),
+    );
+  }
+
+  Future<String?> readWifiMac(BluetoothDevice device) async {
+    final macCh = await _findChar(device, kUartMacCharUuid);
+    if (macCh == null) return null;
+    try {
+      final value = await macCh.read();
+      return String.fromCharCodes(value);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> sendWifiConfig(

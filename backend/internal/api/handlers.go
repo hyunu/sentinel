@@ -62,7 +62,8 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	board := models.Board{
 		ID:            uuid.New().String(),
 		UID:           fmt.Sprintf("%04d", seq),
-		Name:          req.Name,
+		// Name is set to STN-<UID> (sentinel shorthand) to standardize naming
+		Name:          fmt.Sprintf("STN-%s", fmt.Sprintf("%04d", seq)),
 		MACAddress:    req.MACAddress,
 		LastHeartbeat: time.Now(),
 		IsActive:      true,

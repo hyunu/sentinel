@@ -3,6 +3,7 @@
 
 #include "wifi_manager.h"
 #include "config.h"
+#include "ble_service.h"
 
 static String board_id;
 static unsigned long lastHeartbeat = 0;
@@ -42,7 +43,14 @@ void wifi_loop() {
     if (connecting && WiFi.status() == WL_CONNECTED) {
         connecting = false;
         Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-        wifi_send_heartbeat();
+        // notify app via BLE and send initial heartbeat
+        ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
+        bool ok = wifi_send_heartbeat();
+        if (ok) {
+            ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
+        } else {
+            ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
+        }
     }
 }
 
@@ -79,14 +87,15 @@ static bool http_post(const String &path, const String &body) {
     return ok;
 }
 
-void wifi_send_heartbeat() {
+bool wifi_send_heartbeat() {
     String body = "{\"board_id\":\"" + board_id + "\"";
     if (board_uid.length() > 0) {
         body += ",\"uid\":\"" + board_uid + "\"";
     }
     body += "}";
-    http_post("/api/v1/heartbeat", body);
+    bool ok = http_post("/api/v1/heartbeat", body);
     lastHeartbeat = millis();
+    return ok;
 }
 
 void wifi_send_uart_data(const String &hex_data) {
