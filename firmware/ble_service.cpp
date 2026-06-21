@@ -57,6 +57,9 @@ class UartWriteCallback : public BLECharacteristicCallbacks {
             // update firmware backend URL at runtime
             wifi_set_server_url(serverUrl);
         }
+        if (uniqueId.length() > 0) {
+            wifi_set_uid(uniqueId);
+        }
 
         if (ssid.length() > 0 && password.length() > 0) {
             Serial.printf("[BLE] WiFi credentials received. Connecting to: %s\n", ssid.c_str());

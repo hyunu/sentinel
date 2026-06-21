@@ -9,6 +9,7 @@ static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
 
 static String backend_url = String(BACKEND_URL);
+static String board_uid = String("");
 
 static String getBoardId() {
     uint8_t mac[6];
@@ -51,6 +52,12 @@ void wifi_set_server_url(const String &url) {
     Serial.printf("[WiFi] Backend URL updated: %s\n", backend_url.c_str());
 }
 
+void wifi_set_uid(const String &uid) {
+    if (uid.length() == 0) return;
+    board_uid = uid;
+    Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
+}
+
 static bool http_post(const String &path, const String &body) {
     if (!wifi_is_connected()) return false;
 
@@ -73,17 +80,25 @@ static bool http_post(const String &path, const String &body) {
 }
 
 void wifi_send_heartbeat() {
-    String body = "{\"board_id\":\"" + board_id + "\"}";
+    String body = "{\"board_id\":\"" + board_id + "\"";
+    if (board_uid.length() > 0) {
+        body += ",\"uid\":\"" + board_uid + "\"";
+    }
+    body += "}";
     http_post("/api/v1/heartbeat", body);
     lastHeartbeat = millis();
 }
 
 void wifi_send_uart_data(const String &hex_data) {
-    String body = "{\"board_id\":\"" + board_id + "\",\"raw_hex\":\"" + hex_data + "\",\"direction\":\"RX\"}";
+    String body = "{\"board_id\":\"" + board_id + "\"";
+    if (board_uid.length() > 0) body += ",\"uid\":\"" + board_uid + "\"";
+    body += ",\"raw_hex\":\"" + hex_data + "\",\"direction\":\"RX\"}";
     http_post("/api/v1/data/uart", body);
 }
 
 void wifi_send_temperature(float temp_celsius) {
-    String body = "{\"board_id\":\"" + board_id + "\",\"value_celsius\":" + String(temp_celsius, 2) + "}";
+    String body = "{\"board_id\":\"" + board_id + "\"";
+    if (board_uid.length() > 0) body += ",\"uid\":\"" + board_uid + "\"";
+    body += ",\"value_celsius\":" + String(temp_celsius, 2) + "}";
     http_post("/api/v1/data/temperature", body);
 }
