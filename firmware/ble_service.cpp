@@ -5,6 +5,7 @@
 
 #include "ble_service.h"
 #include "config.h"
+#include "wifi_manager.h"
 
 static BLEServer *pServer = nullptr;
 static BLECharacteristic *pUartNotifyChar = nullptr;
