@@ -200,10 +200,10 @@ func (h *Handler) ApplyVizProfile(c *gin.Context) {
 
 func (h *Handler) VizQuery(c *gin.Context) {
 	var req struct {
-		BoardID    string `json:"board_id" binding:"required"`
-		SessionID  string `json:"session_id,omitempty"`
+		BoardID    string   `json:"board_id" binding:"required"`
+		SessionID  string   `json:"session_id,omitempty"`
 		FieldNames []string `json:"field_names" binding:"required"`
-		Aggregate  string `json:"aggregate,omitempty"`
+		Aggregate  string   `json:"aggregate,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -253,4 +253,85 @@ func (h *Handler) VizQuery(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, results)
+}
+
+type VizQueryItemsRequest struct {
+	BoardID   string            `json:"board_id" binding:"required"`
+	Items     []models.VizItem  `json:"items" binding:"required"`
+	TimeRange *models.TimeRange `json:"time_range,omitempty"`
+}
+
+func (h *Handler) VizQueryItems(c *gin.Context) {
+	var req VizQueryItemsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	filter := bson.M{"board_id": req.BoardID}
+	if req.TimeRange != nil && !req.TimeRange.Start.IsZero() {
+		filter["timestamp"] = bson.M{
+			"$gte": req.TimeRange.Start,
+			"$lte": req.TimeRange.End,
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := h.db.UartData().Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var rawData []models.UartData
+	if err := cursor.All(ctx, &rawData); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
+		return
+	}
+
+	type transformedPoint struct {
+		Timestamp time.Time              `json:"timestamp"`
+		Values    map[string]interface{} `json:"values"`
+	}
+
+	results := make([]transformedPoint, 0, len(rawData))
+	for _, d := range rawData {
+		vals := make(map[string]interface{})
+		for _, item := range req.Items {
+			if !item.Visible {
+				continue
+			}
+			if d.ParsedFields != nil {
+				if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
+					var fv float64
+					switch vv := v.(type) {
+					case float64:
+						fv = vv
+					case int:
+						fv = float64(vv)
+					case int32:
+						fv = float64(vv)
+					case int64:
+						fv = float64(vv)
+					default:
+						continue
+					}
+					vals[item.Label] = fv*item.Weight + item.Offset
+				}
+			}
+		}
+		if len(vals) > 0 {
+			results = append(results, transformedPoint{
+				Timestamp: d.Timestamp,
+				Values:    vals,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": results,
+	})
 }

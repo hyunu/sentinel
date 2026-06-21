@@ -177,6 +177,10 @@ export const api = {
       request<{ profile: VizProfile; data: Array<{ timestamp: string; values: Record<string, number> }> }>(
         `/viz/profiles/${id}/apply`, { method: 'POST' }
       ),
+    queryItems: (data: { board_id: string; items: VizItem[]; time_range?: { start: string; end: string } }) =>
+      request<{ data: Array<{ timestamp: string; values: Record<string, number> }> }>(
+        '/viz/query-items', { method: 'POST', body: JSON.stringify(data) }
+      ),
   },
 
   ai: {
