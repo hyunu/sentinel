@@ -248,6 +248,7 @@ func (h *Handler) QueryUART(c *gin.Context) {
 	boardID := c.Query("board_id")
 	sessionID := c.Query("session_id")
 	direction := c.Query("direction")
+	since := c.Query("since")
 	limit := c.DefaultQuery("limit", "100")
 
 	filter := bson.M{}
@@ -259,6 +260,12 @@ func (h *Handler) QueryUART(c *gin.Context) {
 	}
 	if direction != "" {
 		filter["direction"] = direction
+	}
+	if since != "" {
+		t, err := time.Parse(time.RFC3339, since)
+		if err == nil {
+			filter["timestamp"] = bson.M{"$gt": t}
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
@@ -6,8 +6,9 @@ import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
-
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
+const MAX_POINTS = 1000;
+const POLL_INTERVAL = 3000;
 
 function makeItem(protoId: string, fieldName: string, yId: string, idx: number): VizItem {
   return {
@@ -60,6 +61,13 @@ export default function VizDashboardPage() {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [loading, setLoading] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
+  const lastTimestampRef = useRef<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const liveModeRef = useRef(liveMode);
+  liveModeRef.current = liveMode;
 
   useEffect(() => {
     api.boards.list().then(setBoards);
@@ -77,7 +85,6 @@ export default function VizDashboardPage() {
       setCustomEnd(toLocalISO(new Date(p.time_range.end)));
       setTimeRangePreset(0);
     }
-
     const result = await api.viz.apply(id);
     const points: ChartPoint[] = result.data.map(d => ({
       timestamp: new Date(d.timestamp).toLocaleTimeString(),
@@ -103,13 +110,13 @@ export default function VizDashboardPage() {
     return undefined;
   }, [timeRangePreset, customStart, customEnd]);
 
-  const fetchData = useCallback(async () => {
-    if (!selectedBoard || !items.length) return;
+  const fetchAll = useCallback(async () => {
+    if (!selectedBoard || !itemsRef.current.length) return;
     setLoading(true);
     try {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
-        items: items.filter(i => i.visible),
+        items: itemsRef.current.filter(i => i.visible),
         time_range: buildTimeRange(),
       });
       const points: ChartPoint[] = result.data.map(d => ({
@@ -117,10 +124,60 @@ export default function VizDashboardPage() {
         ...d.values,
       }) as ChartPoint);
       setChartData(points);
+      if (points.length > 0) {
+        lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
+      }
     } finally {
       setLoading(false);
     }
-  }, [selectedBoard, items, buildTimeRange]);
+  }, [selectedBoard, buildTimeRange]);
+
+  const appendLive = useCallback(async () => {
+    if (!selectedBoard || !itemsRef.current.length) return;
+    const since = lastTimestampRef.current;
+    try {
+      const result = await api.viz.queryItems({
+        board_id: selectedBoard,
+        items: itemsRef.current.filter(i => i.visible),
+        since: since || undefined,
+      });
+      if (!result.data.length) return;
+      const newPoints: ChartPoint[] = result.data.map(d => ({
+        timestamp: new Date(d.timestamp).toLocaleTimeString(),
+        ...d.values,
+      }) as ChartPoint);
+      lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
+      setChartData(prev => {
+        const existing = since ? prev : [];
+        const merged = [...existing, ...newPoints];
+        return merged.length > MAX_POINTS ? merged.slice(-MAX_POINTS) : merged;
+      });
+    } catch {
+      // ignore polling errors
+    }
+  }, [selectedBoard]);
+
+  const stopLive = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const startLive = useCallback(() => {
+    stopLive();
+    fetchAll();
+    pollTimerRef.current = setInterval(() => { appendLive(); }, POLL_INTERVAL);
+  }, [fetchAll, appendLive, stopLive]);
+
+  useEffect(() => {
+    if (liveMode) {
+      startLive();
+    } else {
+      stopLive();
+    }
+    return stopLive;
+  }, [liveMode, startLive, stopLive]);
 
   const addAllFields = () => {
     if (!selectedProto) return;
@@ -230,19 +287,31 @@ export default function VizDashboardPage() {
             {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
           </select>
           <button onClick={addAllFields}>+ Add All Fields</button>
-          <button onClick={fetchData} className="btn-primary" disabled={loading}>
-            {loading ? 'Loading...' : 'Refresh Chart'}
+          <button onClick={fetchAll} className="btn-primary" disabled={loading}>
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+          <button
+            onClick={() => setLiveMode(v => !v)}
+            style={{
+              background: liveMode ? '#22c55e' : undefined,
+              borderColor: liveMode ? '#22c55e' : undefined,
+              color: liveMode ? '#000' : undefined,
+              fontWeight: liveMode ? 600 : undefined,
+            }}
+          >
+            {liveMode ? '● LIVE' : 'Live'}
           </button>
           {chartData.length > 0 && <button onClick={exportCSV}>Export CSV</button>}
         </div>
 
-        <h3>Time Range</h3>
+        <h3>Time Range {liveMode && <span className="muted">(disabled in Live mode)</span>}</h3>
         <div className="form-row">
           {TIME_PRESETS.map(p => (
             <button
               key={p.label}
               className={timeRangePreset === p.seconds ? 'btn-primary' : ''}
               onClick={() => { setTimeRangePreset(p.seconds); setCustomStart(''); setCustomEnd(''); }}
+              disabled={liveMode}
             >
               {p.label}
             </button>
@@ -250,11 +319,13 @@ export default function VizDashboardPage() {
           <input
             type="datetime-local" value={customStart}
             onChange={e => { setCustomStart(e.target.value); setTimeRangePreset(0); }}
+            disabled={liveMode}
           />
           <span style={{ color: 'var(--text-muted)' }}>~</span>
           <input
             type="datetime-local" value={customEnd}
             onChange={e => { setCustomEnd(e.target.value); setTimeRangePreset(0); }}
+            disabled={liveMode}
           />
         </div>
       </div>
@@ -309,7 +380,10 @@ export default function VizDashboardPage() {
       </div>
 
       <div className="card">
-        <h2>Chart ({chartData.length} points)</h2>
+        <h2>
+          Chart ({chartData.length} points)
+          {liveMode && <span className="muted" style={{ marginLeft: 8 }}>· polling every {POLL_INTERVAL / 1000}s</span>}
+        </h2>
         <ResponsiveContainer width="100%" height={400}>
           <ComposedChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2e3040" />

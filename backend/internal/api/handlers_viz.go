@@ -259,6 +259,7 @@ type VizQueryItemsRequest struct {
 	BoardID   string            `json:"board_id" binding:"required"`
 	Items     []models.VizItem  `json:"items" binding:"required"`
 	TimeRange *models.TimeRange `json:"time_range,omitempty"`
+	Since     string            `json:"since,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -269,11 +270,16 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	}
 
 	filter := bson.M{"board_id": req.BoardID}
-	if req.TimeRange != nil && !req.TimeRange.Start.IsZero() {
-		filter["timestamp"] = bson.M{
-			"$gte": req.TimeRange.Start,
-			"$lte": req.TimeRange.End,
+	if req.Since != "" {
+		if st, err := time.Parse(time.RFC3339, req.Since); err == nil {
+			filter["timestamp"] = bson.M{"$gt": st}
 		}
+	} else if req.TimeRange != nil && !req.TimeRange.Start.IsZero() {
+		tsFilter := bson.M{"$gte": req.TimeRange.Start}
+		if !req.TimeRange.End.IsZero() {
+			tsFilter["$lte"] = req.TimeRange.End
+		}
+		filter["timestamp"] = tsFilter
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)

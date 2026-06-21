@@ -117,11 +117,12 @@ export const api = {
     request<{ message: string }>('/heartbeat', { method: 'POST', body: JSON.stringify({ board_id }) }),
 
   uart: {
-    list: (params?: { board_id?: string; session_id?: string; direction?: string }) => {
+    list: (params?: { board_id?: string; session_id?: string; direction?: string; since?: string }) => {
       const qs = new URLSearchParams();
       if (params?.board_id) qs.set('board_id', params.board_id);
       if (params?.session_id) qs.set('session_id', params.session_id);
       if (params?.direction) qs.set('direction', params.direction);
+      if (params?.since) qs.set('since', params.since);
       return request<UartData[]>(`/data/uart?${qs}`);
     },
     ingest: (board_id: string, raw_hex: string, direction: string) =>
@@ -177,7 +178,7 @@ export const api = {
       request<{ profile: VizProfile; data: Array<{ timestamp: string; values: Record<string, number> }> }>(
         `/viz/profiles/${id}/apply`, { method: 'POST' }
       ),
-    queryItems: (data: { board_id: string; items: VizItem[]; time_range?: { start: string; end: string } }) =>
+    queryItems: (data: { board_id: string; items: VizItem[]; time_range?: { start: string; end: string }; since?: string }) =>
       request<{ data: Array<{ timestamp: string; values: Record<string, number> }> }>(
         '/viz/query-items', { method: 'POST', body: JSON.stringify(data) }
       ),
