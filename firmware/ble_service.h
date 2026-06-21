@@ -5,5 +5,6 @@
 
 void ble_init();
 void ble_send_uart_data(const String &hex_str);
+void ble_update_name(const String &name);
 
 #endif

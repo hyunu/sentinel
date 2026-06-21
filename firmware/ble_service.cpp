@@ -108,3 +108,16 @@ void ble_send_uart_data(const String &hex_str) {
     pUartNotifyChar->setValue(hex_str);
     pUartNotifyChar->notify();
 }
+
+void ble_update_name(const String &name) {
+    if (name.length() == 0) return;
+    // Update advertisement local name so phones see the new name
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    BLEAdvertisementData adv;
+    adv.setName(name.c_str());
+    pAdvertising->setAdvertisementData(adv);
+    // restart advertising to ensure update
+    pAdvertising->stop();
+    pAdvertising->start();
+    Serial.printf("[BLE] Updated advertised name: %s\n", name.c_str());
+}
