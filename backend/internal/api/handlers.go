@@ -41,8 +41,9 @@ func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (stri
 
 func (h *Handler) RegisterBoard(c *gin.Context) {
 	var req struct {
-		Name       string `json:"name" binding:"required"`
+		Name       string `json:"name"`
 		MACAddress string `json:"mac_address" binding:"required"`
+		UID        string `json:"uid,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -52,18 +53,30 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	seq, err := h.db.GetNextSequence(ctx, "device_uid")
-	if err != nil {
-		h.logger.Error("failed to generate UID", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate UID"})
-		return
+	var uid string
+	if req.UID != "" {
+		// ensure uniqueness
+		count, _ := h.db.Boards().CountDocuments(ctx, bson.M{"uid": req.UID})
+		if count > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "uid already exists"})
+			return
+		}
+		uid = req.UID
+	} else {
+		seq, err := h.db.GetNextSequence(ctx, "device_uid")
+		if err != nil {
+			h.logger.Error("failed to generate UID", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate UID"})
+			return
+		}
+		uid = fmt.Sprintf("%04d", seq)
 	}
 
 	board := models.Board{
-		ID:  uuid.New().String(),
-		UID: fmt.Sprintf("%04d", seq),
-		// Name is set to STN-<UID> (sentinel shorthand) to standardize naming
-		Name:          fmt.Sprintf("STN-%s", fmt.Sprintf("%04d", seq)),
+		ID:            uuid.New().String(),
+		UID:           uid,
+		// Name is standardized to STN-<UID>
+		Name:          fmt.Sprintf("STN-%s", uid),
 		MACAddress:    req.MACAddress,
 		LastHeartbeat: time.Now(),
 		IsActive:      true,
@@ -86,6 +99,20 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"uid": board.UID, "board": board})
+}
+
+// ClaimBoard returns a new unique UID without creating a board record.
+func (h *Handler) ClaimBoard(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	seq, err := h.db.GetNextSequence(ctx, "device_uid")
+	if err != nil {
+		h.logger.Error("failed to generate claim UID", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate uid"})
+		return
+	}
+	uid := fmt.Sprintf("%04d", seq)
+	c.JSON(http.StatusOK, gin.H{"uid": uid})
 }
 
 func (h *Handler) ListBoards(c *gin.Context) {

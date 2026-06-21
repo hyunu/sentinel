@@ -15,6 +15,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 		boards := v1.Group("/boards")
 		{
 			boards.POST("/register", h.RegisterBoard)
+			boards.POST("/claim", h.ClaimBoard)
 			boards.GET("", h.ListBoards)
 			boards.GET("/:id", h.GetBoard)
 			boards.PUT("/:id", h.UpdateBoard)
