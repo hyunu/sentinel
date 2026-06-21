@@ -25,12 +25,32 @@ export interface Board {
 
 export interface FieldSpec {
   name: string;
-  offset: number;
-  length: number;
+  offset?: number;
+  length?: number;
   type: string;
   unit?: string;
   enum_mapping?: Record<string, number>;
   endian?: string;
+  fields?: FieldSpec[];
+  flag?: string;
+  condition?: string;
+  repeat?: string;
+}
+
+export interface FrameDef {
+  start_byte: string;
+  end_byte: string;
+  header: FieldSpec[];
+  tail: FieldSpec[];
+  endian: string;
+  crc_position?: string;
+}
+
+export interface FIDPayload {
+  fid: string;
+  name: string;
+  description?: string;
+  fields?: FieldSpec[];
 }
 
 export interface ProtocolSpec {
@@ -38,7 +58,9 @@ export interface ProtocolSpec {
   name: string;
   version: string;
   description?: string;
+  frame_def?: FrameDef;
   fields: FieldSpec[];
+  fid_payloads?: FIDPayload[];
   created_at: string;
   updated_at: string;
 }
@@ -144,6 +166,7 @@ export const api = {
     update: (id: string, data: Partial<ProtocolSpec>) =>
       request<void>(`/protocols/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/protocols/${id}`, { method: 'DELETE' }),
+    seedDefault: () => request<{ message: string; id?: string }>('/protocols/seed-default', { method: 'POST' }),
   },
 
   sessions: {

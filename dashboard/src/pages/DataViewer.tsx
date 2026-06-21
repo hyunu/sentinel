@@ -1,34 +1,278 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
-import type { UartData, ProtocolSpec, Board } from '../api';
+import type { UartData, ProtocolSpec, Board, FieldSpec } from '../api';
+
+function hexToBytes(hex: string): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes.push(parseInt(hex.substring(i, i + 2), 16));
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes: number[]): string {
+  return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+}
+
+function readField(data: number[], offset: number, spec: FieldSpec): { value: unknown; nextOffset: number } {
+  const endian = spec.endian || 'little';
+  const length = spec.length || 1;
+
+  if (offset + length > data.length) {
+    return { value: null, nextOffset: offset };
+  }
+
+  const slice = data.slice(offset, offset + length);
+  let value: unknown;
+
+  switch (spec.type) {
+    case 'uint8': value = slice[0]; break;
+    case 'int8': value = slice[0] << 24 >> 24; break;
+    case 'uint16':
+      value = endian === 'big' ? (slice[0] << 8) | slice[1] : slice[0] | (slice[1] << 8);
+      break;
+    case 'int16':
+      if (endian === 'big') value = ((slice[0] << 8) | slice[1]) << 16 >> 16;
+      else value = ((slice[0]) | (slice[1] << 8)) << 16 >> 16;
+      break;
+    case 'uint32':
+      value = endian === 'big'
+        ? ((slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]) >>> 0
+        : ((slice[3] << 24) | (slice[2] << 16) | (slice[1] << 8) | slice[0]) >>> 0;
+      break;
+    case 'ascii': value = String.fromCharCode(...slice).replace(/\x00+$/, ''); break;
+    case 'hex': value = bytesToHex(slice); break;
+    case 'raw': value = bytesToHex(slice); break;
+    case 'dynamic': value = bytesToHex(slice); break;
+    default: value = bytesToHex(slice);
+  }
+
+  return { value, nextOffset: offset + length };
+}
+
+function parseFieldsSequential(data: number[], fields: FieldSpec[]): { fields: Record<string, unknown>; offset: number } {
+  const result: Record<string, unknown> = {};
+  let offset = 0;
+
+  for (const field of fields) {
+    if (field.repeat === 'until_end' || (field.type === 'raw' && (!field.length || field.length === 0))) {
+      result[field.name] = bytesToHex(data.slice(offset));
+      offset = data.length;
+      continue;
+    }
+
+    if (field.type === 'function_args') {
+      const args = parseFunctionArgs(data.slice(offset), field);
+      result[field.name] = args;
+      // Estimate consumed bytes (sum of FA entries)
+      let consumed = 0;
+      for (const a of args) {
+        consumed += 2 + (a._length as number);
+      }
+      offset += consumed || data.length;
+      continue;
+    }
+
+    if (field.type === 'func_result') {
+      const res = parseFunctionResult(data.slice(offset), field);
+      result[field.name] = res;
+      offset += (res._consumed as number) || data.length;
+      continue;
+    }
+
+    if (field.condition) {
+      const condVal = result[field.condition];
+      if (condVal === 0 || condVal === undefined || condVal === null) continue;
+    }
+
+    if (field.length === undefined || field.length === 0) continue;
+
+    const { value, nextOffset } = readField(data, offset, field);
+    result[field.name] = value;
+    offset = nextOffset;
+  }
+
+  return { fields: result, offset };
+}
+
+function parseFunctionArgs(data: number[], spec: FieldSpec): Record<string, unknown>[] {
+  const args: Record<string, unknown>[] = [];
+  let offset = 0;
+  const argSpec = spec.fields?.[0];
+
+  while (offset < data.length) {
+    const flag = data[offset];
+    offset++;
+    const flagStr = flag.toString(16).padStart(2, '0').toUpperCase();
+
+    if (argSpec?.flag && flagStr !== argSpec.flag) {
+      offset--;
+      break;
+    }
+
+    if (offset >= data.length) break;
+    const argLen = data[offset];
+    offset++;
+
+    if (offset + argLen > data.length) break;
+    const argData = data.slice(offset, offset + argLen);
+    offset += argLen;
+
+    const arg: Record<string, unknown> = { flag: flagStr, length: argLen, _length: argLen };
+    if (argData.length >= 1) arg.type_id = argData[0];
+    if (argData.length > 1) arg.value = bytesToHex(argData.slice(1));
+    args.push(arg);
+  }
+
+  return args;
+}
+
+function parseFunctionResult(data: number[], spec: FieldSpec): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (data.length < 2) return result;
+
+  const flag = data[0];
+  const flagStr = flag.toString(16).padStart(2, '0').toUpperCase();
+  const blockLen = data[1];
+  const blockData = data.slice(2, 2 + blockLen);
+
+  result.flag = flagStr;
+  result._consumed = 2 + blockLen;
+
+  for (const child of spec.fields || []) {
+    if (child.flag && child.flag !== flagStr) continue;
+    const { fields: sub } = parseFieldsSequential(blockData, child.fields || []);
+    Object.assign(result, sub);
+  }
+
+  return result;
+}
+
+function crc16CCITT(data: number[]): number {
+  let crc = 0xFFFF;
+  for (const b of data) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) {
+      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else crc <<= 1;
+    }
+  }
+  return crc & 0xFFFF;
+}
+
+function parseFrame(hex: string, proto: ProtocolSpec): Record<string, unknown> {
+  const data = hexToBytes(hex);
+  const result: Record<string, unknown> = {};
+  if (data.length < 2) return result;
+
+  const fd = proto.frame_def;
+  const startByte = parseInt(fd?.start_byte || 'AA', 16);
+  const endByte = parseInt(fd?.end_byte || 'BB', 16);
+
+  let bodyStart = 0;
+  if (data[0] === startByte) { bodyStart = 1; result.start_byte = fd?.start_byte || 'AA'; }
+  let bodyEnd = data.length;
+  if (data[data.length - 1] === endByte) { bodyEnd = data.length - 1; result.end_byte = fd?.end_byte || 'BB'; }
+
+  const frameBody = data.slice(bodyStart, bodyEnd);
+  if (frameBody.length < 2) return result;
+
+  // Parse header
+  const hdrFields = fd?.header || [];
+  let hdrOff = 0;
+  for (const hf of hdrFields) {
+    const { value, nextOffset } = readField(frameBody, hdrOff, hf);
+    result['header.' + hf.name] = value;
+    hdrOff = nextOffset;
+  }
+
+  // FID mapping
+  const fidVal = result['header.fid'] as number | undefined;
+  const fidMap: Record<number, string> = { 0xCF: 'CF', 0xCD: 'CD', 0xCA: 'CA', 0xCE: 'CE', 0xCC: 'CC', 0xBC: 'BC', 0xC9: 'C9' };
+  const fidStr = fidVal !== undefined ? (fidMap[fidVal] || fidVal.toString(16).toUpperCase()) : '??';
+  result.fid = fidStr;
+
+  // Parse attr
+  const attrVal = result['header.attr'] as number | undefined;
+  if (attrVal !== undefined) {
+    result['attr.retry'] = (attrVal >> 4) & 0x0F;
+    result['attr.priority'] = attrVal & 0x0F;
+  }
+
+  // Find payload boundary
+  const lenVal = result['header.length'] as number | undefined;
+  let payloadData: number[];
+  if (lenVal !== undefined && lenVal > hdrOff && lenVal <= frameBody.length) {
+    payloadData = frameBody.slice(hdrOff, lenVal);
+  } else {
+    payloadData = frameBody.slice(hdrOff);
+  }
+
+  // Parse tail
+  const tailFields = fd?.tail || [];
+  let tailOff = Math.min(lenVal || frameBody.length, frameBody.length - (fd?.tail?.reduce((s, f) => s + (f.length || 0), 0) || 0));
+  for (const tf of tailFields) {
+    const { value, nextOffset } = readField(frameBody, tailOff, tf);
+    result['tail.' + tf.name] = value;
+    tailOff = nextOffset;
+  }
+
+  // CRC validation
+  const crcVal = result['tail.crc16'] as number | undefined;
+  if (crcVal !== undefined) {
+    const calcCRC = crc16CCITT(frameBody.slice(0, frameBody.length - 2));
+    result['crc.calculated'] = calcCRC;
+    result['crc.valid'] = calcCRC === crcVal;
+  }
+
+  // Parse payload by FID
+  const payloads = proto.fid_payloads || [];
+  let fidPayload = payloads.find(p => p.fid === fidStr);
+
+  if (fidPayload && payloadData.length > 0) {
+    const { fields: parsed } = parseFieldsSequential(payloadData, fidPayload.fields || []);
+    for (const [k, v] of Object.entries(parsed)) {
+      result['payload.' + k] = v;
+    }
+  } else if (payloadData.length > 0) {
+    result['payload.raw'] = bytesToHex(payloadData);
+  }
+
+  // Flat fields (backward compat)
+  if (proto.fields.length > 0) {
+    const { fields: flatParsed } = parseFieldsSequential(data, proto.fields);
+    Object.assign(result, flatParsed);
+  }
+
+  return result;
+}
+
+function renderValue(v: unknown): string {
+  if (v === null || v === undefined) return '-';
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '[]';
+    const first = v[0] as Record<string, unknown>;
+    if (first && typeof first === 'object') {
+      return `[${v.length} items]`;
+    }
+    return JSON.stringify(v);
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (o.flag) return `${o.flag} func=${o.function_id ?? '?'} ${o.error_code !== undefined ? `err=0x${(o.error_code as number).toString(16)}` : ''}`.trim();
+    return JSON.stringify(v);
+  }
+  if (typeof v === 'number') return String(v);
+  return String(v);
+}
 
 function hexToAscii(hex: string): string {
   let out = '';
   for (let i = 0; i < hex.length; i += 2) {
     const c = parseInt(hex.substring(i, i + 2), 16);
-    if (c >= 32 && c <= 126) out += String.fromCharCode(c);
-    else out += '.';
+    out += (c >= 32 && c <= 126) ? String.fromCharCode(c) : '.';
   }
   return out;
-}
-
-function parseBytes(hex: string, proto: ProtocolSpec): Record<string, unknown> {
-  const bytes = hex.match(/.{1,2}/g)?.map(b => parseInt(b, 16)) || [];
-  const result: Record<string, unknown> = {};
-  for (const field of proto.fields) {
-    if (field.offset + field.length > bytes.length) continue;
-    const slice = bytes.slice(field.offset, field.offset + field.length);
-    let value: unknown;
-    switch (field.type) {
-      case 'uint8': value = slice[0]; break;
-      case 'uint16': value = field.endian === 'big' ? (slice[0] << 8) | slice[1] : slice[0] | (slice[1] << 8); break;
-      case 'int8': value = slice[0] << 24 >> 24; break;
-      case 'ascii': value = String.fromCharCode(...slice); break;
-      default: value = slice.join(' ');
-    }
-    result[field.name] = value;
-  }
-  return result;
 }
 
 export default function DataViewerPage() {
@@ -49,6 +293,23 @@ export default function DataViewerPage() {
   }, [selectedBoard]);
 
   const proto = protocols.find(p => p.id === selectedProto);
+
+  const parsedData = useMemo(() => {
+    if (!proto) return data.map(d => ({ ...d, parsedFields: {} as Record<string, unknown> }));
+
+    // Collect all possible keys from frame parsing
+    const allKeys = new Set<string>();
+    const entries = data.map(d => {
+      const parsed = parseFrame(d.raw_hex, proto);
+      Object.keys(parsed).forEach(k => allKeys.add(k));
+      return { ...d, parsedFields: parsed };
+    });
+
+    return { entries, allKeys: [...allKeys].sort() };
+  }, [data, proto]);
+
+  const entries = Array.isArray(parsedData) ? parsedData : parsedData.entries;
+  const allKeys = Array.isArray(parsedData) ? [] : parsedData.allKeys;
 
   return (
     <div className="page">
@@ -74,22 +335,25 @@ export default function DataViewerPage() {
               <th>Dir</th>
               <th>Raw Hex</th>
               <th>ASCII</th>
-              {proto?.fields.map(f => <th key={f.name}>{f.name}{f.unit ? ` (${f.unit})` : ''}</th>)}
+              <th>FID</th>
+              {allKeys.filter(k => k.startsWith('payload.') || k.startsWith('header.') || k.startsWith('tail.') || k.startsWith('crc.') || k.startsWith('attr.')).map(k => (
+                <th key={k}>{k}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {data.map(d => {
-              const parsed = proto ? parseBytes(d.raw_hex, proto) : {};
-              return (
-                <tr key={d.id}>
-                  <td className="mono">{new Date(d.timestamp).toLocaleTimeString()}</td>
-                  <td><span className={`badge ${d.direction === 'TX' ? 'badge-tx' : 'badge-rx'}`}>{d.direction}</span></td>
-                  <td className="mono">{d.raw_hex}</td>
-                  <td className="mono">{hexToAscii(d.raw_hex)}</td>
-                  {proto?.fields.map(f => <td key={f.name}>{String(parsed[f.name] ?? '-')}</td>)}
-                </tr>
-              );
-            })}
+            {entries.map(d => (
+              <tr key={d.id}>
+                <td className="mono">{new Date(d.timestamp).toLocaleTimeString()}</td>
+                <td><span className={`badge ${d.direction === 'TX' ? 'badge-tx' : 'badge-rx'}`}>{d.direction}</span></td>
+                <td className="mono">{d.raw_hex}</td>
+                <td className="mono">{hexToAscii(d.raw_hex)}</td>
+                <td><span className="badge badge-tx">{(d as any).parsedFields?.fid as string || '-'}</span></td>
+                {allKeys.filter(k => k.startsWith('payload.') || k.startsWith('header.') || k.startsWith('tail.') || k.startsWith('crc.') || k.startsWith('attr.')).map(k => (
+                  <td key={k} className="mono">{renderValue((d as any).parsedFields?.[k])}</td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

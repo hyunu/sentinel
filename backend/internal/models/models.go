@@ -20,22 +20,44 @@ type Heartbeat struct {
 
 type FieldSpec struct {
 	Name         string            `json:"name" bson:"name"`
-	Offset       int               `json:"offset" bson:"offset"`
-	Length       int               `json:"length" bson:"length"`
+	Offset       int               `json:"offset,omitempty" bson:"offset,omitempty"`
+	Length       int               `json:"length,omitempty" bson:"length,omitempty"`
 	Type         string            `json:"type" bson:"type"`
 	Unit         string            `json:"unit,omitempty" bson:"unit,omitempty"`
-	EnumMapping  map[string]int    `json:"enum_mapping,omitempty" bson:"enum_mapping,omitempty"`
 	Endian       string            `json:"endian,omitempty" bson:"endian,omitempty"`
+	EnumMapping  map[string]int    `json:"enum_mapping,omitempty" bson:"enum_mapping,omitempty"`
+	Fields       []FieldSpec       `json:"fields,omitempty" bson:"fields,omitempty"`
+	Flag         string            `json:"flag,omitempty" bson:"flag,omitempty"`
+	Condition    string            `json:"condition,omitempty" bson:"condition,omitempty"`
+	Repeat       string            `json:"repeat,omitempty" bson:"repeat,omitempty"`
+}
+
+type FrameDef struct {
+	StartByte   string      `json:"start_byte" bson:"start_byte"`
+	EndByte     string      `json:"end_byte" bson:"end_byte"`
+	Header      []FieldSpec `json:"header" bson:"header"`
+	Tail        []FieldSpec `json:"tail" bson:"tail"`
+	Endian      string      `json:"endian" bson:"endian"`
+	CrcPosition string      `json:"crc_position,omitempty" bson:"crc_position,omitempty"`
+}
+
+type FIDPayload struct {
+	FID         string      `json:"fid" bson:"fid"`
+	Name        string      `json:"name" bson:"name"`
+	Description string      `json:"description,omitempty" bson:"description,omitempty"`
+	Fields      []FieldSpec `json:"fields,omitempty" bson:"fields,omitempty"`
 }
 
 type ProtocolSpec struct {
-	ID          string      `json:"id" bson:"_id"`
-	Name        string      `json:"name" bson:"name"`
-	Version     string      `json:"version" bson:"version"`
-	Description string      `json:"description,omitempty" bson:"description,omitempty"`
-	Fields      []FieldSpec `json:"fields" bson:"fields"`
-	CreatedAt   time.Time   `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at" bson:"updated_at"`
+	ID          string       `json:"id" bson:"_id"`
+	Name        string       `json:"name" bson:"name"`
+	Version     string       `json:"version" bson:"version"`
+	Description string       `json:"description,omitempty" bson:"description,omitempty"`
+	FrameDef    *FrameDef    `json:"frame_def,omitempty" bson:"frame_def,omitempty"`
+	Fields      []FieldSpec  `json:"fields" bson:"fields"`
+	FIDPayloads []FIDPayload `json:"fid_payloads,omitempty" bson:"fid_payloads,omitempty"`
+	CreatedAt   time.Time    `json:"created_at" bson:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at" bson:"updated_at"`
 }
 
 type UartData struct {

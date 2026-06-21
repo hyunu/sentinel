@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hyunu/sentinel/internal/db"
 	"github.com/hyunu/sentinel/internal/models"
+	"github.com/hyunu/sentinel/internal/protocol"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -165,10 +166,11 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 
 func (h *Handler) IngestUART(c *gin.Context) {
 	var req struct {
-		BoardID   string    `json:"board_id" binding:"required"`
-		RawHex    string    `json:"raw_hex" binding:"required"`
-		Direction string    `json:"direction" binding:"required"`
-		Timestamp time.Time `json:"timestamp"`
+		BoardID    string    `json:"board_id" binding:"required"`
+		RawHex     string    `json:"raw_hex" binding:"required"`
+		Direction  string    `json:"direction" binding:"required"`
+		Timestamp  time.Time `json:"timestamp"`
+		ProtocolID string    `json:"protocol_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -188,6 +190,17 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		Timestamp: req.Timestamp,
 		RawHex:    req.RawHex,
 		Direction: req.Direction,
+	}
+
+	if req.ProtocolID != "" {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		var proto models.ProtocolSpec
+		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": req.ProtocolID}).Decode(&proto); err == nil {
+			if parsed, err := protocol.ParseAndFlatten(req.RawHex, &proto); err == nil {
+				data.ParsedFields = parsed
+			}
+		}
+		cancel()
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -476,4 +489,102 @@ func (h *Handler) DeleteProtocol(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+func (h *Handler) SeedDefaultProtocol(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	count, err := h.db.Protocols().CountDocuments(ctx, bson.M{"name": "LCP Protocol"})
+	if err == nil && count > 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "default protocol already exists"})
+		return
+	}
+
+	proto := models.ProtocolSpec{
+		ID:          uuid.New().String(),
+		Name:        "LCP Protocol",
+		Version:     "1.0",
+		Description: "LCP↔OSP UART binary protocol: AA header + FID-based payload + CRC16 + BB tail",
+		FrameDef: &models.FrameDef{
+			StartByte:   "AA",
+			EndByte:     "BB",
+			Endian:      "big",
+			CrcPosition: "before_end",
+			Header: []models.FieldSpec{
+				{Name: "length", Length: 2, Type: "uint16", Endian: "big"},
+				{Name: "fid", Length: 1, Type: "uint8"},
+				{Name: "seq_no", Length: 2, Type: "uint16", Endian: "big"},
+				{Name: "attr", Length: 1, Type: "uint8"},
+			},
+			Tail: []models.FieldSpec{
+				{Name: "crc16", Length: 2, Type: "uint16", Endian: "big"},
+			},
+		},
+		Fields: []models.FieldSpec{
+			{Name: "start_byte", Offset: 0, Length: 1, Type: "hex"},
+			{Name: "length", Offset: 1, Length: 2, Type: "uint16", Endian: "big"},
+			{Name: "fid", Offset: 3, Length: 1, Type: "uint8"},
+			{Name: "seq_no", Offset: 4, Length: 2, Type: "uint16", Endian: "big"},
+			{Name: "attr", Offset: 6, Length: 1, Type: "uint8"},
+			{Name: "crc16", Offset: 0, Length: 2, Type: "uint16", Endian: "big"},
+			{Name: "end_byte", Offset: 0, Length: 1, Type: "hex"},
+		},
+		FIDPayloads: []models.FIDPayload{
+			{
+				FID: "CF", Name: "Function Call",
+				Fields: []models.FieldSpec{
+					{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
+					{Name: "arguments", Type: "function_args", Fields: []models.FieldSpec{
+						{Flag: "FA", Name: "arg", Fields: []models.FieldSpec{
+							{Name: "type_id", Length: 1, Type: "uint8"},
+							{Name: "value", Type: "dynamic"},
+						}},
+					}},
+				},
+			},
+			{
+				FID: "CD", Name: "Function ACK",
+				Fields: []models.FieldSpec{
+					{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
+					{Name: "result", Type: "func_result", Fields: []models.FieldSpec{
+						{Flag: "FD", Name: "success", Fields: []models.FieldSpec{
+							{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
+							{Name: "result_data", Type: "raw"},
+						}},
+						{Flag: "FE", Name: "error", Fields: []models.FieldSpec{
+							{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
+							{Name: "error_code", Length: 1, Type: "uint8"},
+						}},
+					}},
+				},
+			},
+			{FID: "CA", Name: "Data Transfer", Fields: []models.FieldSpec{
+				{Name: "raw_data", Type: "raw"},
+			}},
+			{FID: "CE", Name: "Ping"},
+			{FID: "CC", Name: "Packet ACK", Fields: []models.FieldSpec{
+				{Name: "ack_seq", Length: 2, Type: "uint16", Endian: "big"},
+				{Name: "error_code", Length: 1, Type: "uint8"},
+			}},
+			{FID: "BC", Name: "Heartbeat", Fields: []models.FieldSpec{
+				{Name: "timestamp_raw", Length: 4, Type: "uint32", Endian: "little"},
+				{Name: "status", Length: 1, Type: "uint8"},
+			}},
+			{FID: "C9", Name: "Event", Fields: []models.FieldSpec{
+				{Name: "event_id", Length: 1, Type: "uint8"},
+				{Name: "event_data", Type: "raw"},
+			}},
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if _, err := h.db.Protocols().InsertOne(ctx, proto); err != nil {
+		h.logger.Error("failed to seed default protocol", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to seed protocol"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "default protocol seeded", "id": proto.ID})
 }

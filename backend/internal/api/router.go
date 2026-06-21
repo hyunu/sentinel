@@ -38,6 +38,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 			protocols.GET("/:id", h.GetProtocol)
 			protocols.PUT("/:id", h.UpdateProtocol)
 			protocols.DELETE("/:id", h.DeleteProtocol)
+			protocols.POST("/seed-default", h.SeedDefaultProtocol)
 		}
 
 		sessions := v1.Group("/sessions")
