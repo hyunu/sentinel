@@ -190,20 +190,37 @@ class _DeviceScreenState extends State<DeviceScreen>
         return;
       }
       
-      // 1. Claim a UID from server before onboarding
+      // 1. Try to find existing board by mac on server; if not found, claim a new UID
       String? claimedUid;
       try {
-        final claimRes = await http
-            .post(Uri.parse('$baseUrl/api/v1/boards/claim'))
-            .timeout(const Duration(seconds: 5));
-        if (claimRes.statusCode == 200) {
-          final body = json.decode(claimRes.body);
-          claimedUid = body['uid'] as String?;
-        } else {
-          throw Exception('Claim failed: ${claimRes.statusCode}');
+        final boardsRes = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
+        if (boardsRes.statusCode == 200) {
+          final list = json.decode(boardsRes.body) as List;
+          for (final b in list) {
+            if (b is Map && b['mac_address'] == widget.device.remoteId.str) {
+              claimedUid = b['uid'] as String?;
+              break;
+            }
+          }
         }
-      } catch (e) {
-        throw Exception('Failed to claim UID: $e');
+      } catch (_) {
+        // ignore and fallback to claim
+      }
+
+      if (claimedUid == null) {
+        try {
+          final claimRes = await http
+              .post(Uri.parse('$baseUrl/api/v1/boards/claim'))
+              .timeout(const Duration(seconds: 5));
+          if (claimRes.statusCode == 200) {
+            final body = json.decode(claimRes.body);
+            claimedUid = body['uid'] as String?;
+          } else {
+            throw Exception('Claim failed: ${claimRes.statusCode}');
+          }
+        } catch (e) {
+          throw Exception('Failed to claim UID: $e');
+        }
       }
 
       if (claimedUid == null || claimedUid.isEmpty) throw Exception('No UID claimed');
