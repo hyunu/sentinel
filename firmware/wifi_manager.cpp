@@ -96,8 +96,21 @@ bool wifi_send_heartbeat() {
         body += ",\"uid\":\"" + board_uid + "\"";
     }
     body += "}";
-    bool ok = http_post("/api/v1/heartbeat", body);
+
+    const int maxAttempts = 3;
+    const unsigned long retryDelayMs = 500;
+    bool ok = false;
+    for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
+        Serial.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
+        ok = http_post("/api/v1/heartbeat", body);
+        if (ok) break;
+        delay(retryDelayMs);
+    }
+
     lastHeartbeat = millis();
+    if (!ok) {
+        Serial.println("[HTTP] Heartbeat: all attempts failed");
+    }
     return ok;
 }
 
