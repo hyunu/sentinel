@@ -245,10 +245,10 @@ class _DeviceScreenState extends State<DeviceScreen>
       });
 
       try {
-        // wait up to 30s for both signals
+        // wait up to 60s for both signals (firmware waits for stable WiFi before heartbeat)
         await Future.wait([
-          wifiConnected.future.timeout(const Duration(seconds: 30)),
-          heartbeatOk.future.timeout(const Duration(seconds: 30)),
+          wifiConnected.future.timeout(const Duration(seconds: 60)),
+          heartbeatOk.future.timeout(const Duration(seconds: 60)),
         ]);
       } catch (e) {
         await sub.cancel();
@@ -286,7 +286,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         setState(() => _wifiConfigured = true);
         // Clear scanner cache so HomeScreen will refresh device names (advertised name)
         _scanner.clearCache();
-        _showSnack('Configuration sent and registered${uid != null ? ' (uid: $uid)' : ''}');
+        Navigator.pop(context, uid ?? claimedUid);
       }
     } catch (e) {
       if (mounted) _showSnack('$e', persistent: true);
