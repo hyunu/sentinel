@@ -52,15 +52,35 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+	// If UID provided and placeholder exists, update that record (fill mac and activate)
+	if req.UID != "" {
+		var existing models.Board
+		err := h.db.Boards().FindOne(ctx, bson.M{"uid": req.UID}).Decode(&existing)
+		if err == nil {
+			update := bson.M{
+				"mac_address":    req.MACAddress,
+				"is_active":      true,
+				"updated_at":     time.Now(),
+				"last_heartbeat": time.Now(),
+			}
+			_, err = h.db.Boards().UpdateOne(ctx, bson.M{"uid": req.UID}, bson.M{"$set": update})
+			if err != nil {
+				h.logger.Error("failed to update existing board", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register board"})
+				return
+			}
+			// return updated board
+			if err := h.db.Boards().FindOne(ctx, bson.M{"uid": req.UID}).Decode(&existing); err == nil {
+				c.JSON(http.StatusCreated, gin.H{"uid": existing.UID, "board": existing})
+				return
+			}
+		}
+		// if not found, fall through to create with provided UID
+	}
 
+	// Create new board (uid may be empty -> generate)
 	var uid string
 	if req.UID != "" {
-		// ensure uniqueness
-		count, _ := h.db.Boards().CountDocuments(ctx, bson.M{"uid": req.UID})
-		if count > 0 {
-			c.JSON(http.StatusConflict, gin.H{"error": "uid already exists"})
-			return
-		}
 		uid = req.UID
 	} else {
 		seq, err := h.db.GetNextSequence(ctx, "device_uid")
@@ -75,7 +95,6 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	board := models.Board{
 		ID:            uuid.New().String(),
 		UID:           uid,
-		// Name is standardized to STN-<UID>
 		Name:          fmt.Sprintf("STN-%s", uid),
 		MACAddress:    req.MACAddress,
 		LastHeartbeat: time.Now(),
@@ -90,14 +109,6 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		return
 	}
 
-	// Ensure stored name is standardized to STN-<UID> in DB (guard against client-side overrides)
-	name := fmt.Sprintf("STN-%s", board.UID)
-	if _, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": board.ID}, bson.M{"$set": bson.M{"name": name}}); err == nil {
-		board.Name = name
-	} else {
-		h.logger.Warn("failed to enforce standardized board name", zap.Error(err))
-	}
-
 	c.JSON(http.StatusCreated, gin.H{"uid": board.UID, "board": board})
 }
 
@@ -105,6 +116,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 func (h *Handler) ClaimBoard(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+
 	seq, err := h.db.GetNextSequence(ctx, "device_uid")
 	if err != nil {
 		h.logger.Error("failed to generate claim UID", zap.Error(err))
@@ -112,6 +124,24 @@ func (h *Handler) ClaimBoard(c *gin.Context) {
 		return
 	}
 	uid := fmt.Sprintf("%04d", seq)
+
+	// create placeholder board record so heartbeat can be accepted immediately
+	board := models.Board{
+		ID:            uuid.New().String(),
+		UID:           uid,
+		Name:          fmt.Sprintf("STN-%s", uid),
+		MACAddress:    "",
+		LastHeartbeat: time.Time{},
+		IsActive:      false,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if _, err := h.db.Boards().InsertOne(ctx, board); err != nil {
+		h.logger.Error("failed to create placeholder board", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to claim uid"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"uid": uid})
 }
 
