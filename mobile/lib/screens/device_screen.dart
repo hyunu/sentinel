@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../ble/ble_scanner.dart';
 import '../services/storage_service.dart';
 
@@ -175,6 +176,20 @@ class _DeviceScreenState extends State<DeviceScreen>
     try {
       final baud = int.tryParse(_baudCtrl.text.trim());
       final url = _urlCtrl.text.trim();
+
+      // 먼저 서버 연결 가능 여부를 확인합니다. (Wi‑Fi가 꺼져 있어도 테더링 등으로 연결되어 있으면 ok)
+      final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
+      try {
+        final pingRes =
+            await http.get(Uri.parse('$baseUrl/api/v1/protocols')).timeout(const Duration(seconds: 3));
+        if (pingRes.statusCode < 200 || pingRes.statusCode >= 400) {
+          if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl');
+          return;
+        }
+      } catch (_) {
+        if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl');
+        return;
+      }
       final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
 
       // 1. Claim a UID from server before onboarding
