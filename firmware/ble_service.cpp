@@ -111,13 +111,19 @@ void ble_send_uart_data(const String &hex_str) {
 
 void ble_update_name(const String &name) {
     if (name.length() == 0) return;
-    // Update advertisement local name so phones see the new name
+    // Update device name and advertise name (both adv data + scan response)
+    BLEDevice::setDeviceName(name.c_str());
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     BLEAdvertisementData adv;
     adv.setName(name.c_str());
     pAdvertising->setAdvertisementData(adv);
+    // also set scan response (some phones show name from scan response)
+    BLEAdvertisementData scanResp;
+    scanResp.setName(name.c_str());
+    pAdvertising->setScanResponse(scanResp);
     // restart advertising to ensure update
     pAdvertising->stop();
+    delay(50);
     pAdvertising->start();
     Serial.printf("[BLE] Updated advertised name: %s\n", name.c_str());
 }
