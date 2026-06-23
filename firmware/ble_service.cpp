@@ -119,7 +119,7 @@ void ble_update_name(const String &name) {
     {
         String uid_str = name.substring(name.indexOf('-') + 1); // "0036"
         // manufacturer data: ASCII "UID" + uid
-        std::string mdata = std::string("UID") + std::string(uid_str.c_str());
+        String mdata = String("UID") + uid_str;
         adv.setManufacturerData(mdata);
     }
     pAdvertising->setAdvertisementData(adv);
