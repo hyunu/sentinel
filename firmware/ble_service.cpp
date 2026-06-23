@@ -83,7 +83,7 @@ void ble_init() {
         NimBLEUUID(UART_NOTIFY_CHAR_UUID),
         NIMBLE_PROPERTY::NOTIFY
     );
-    pUartNotifyChar->addDescriptor(new BLE2902());
+    pUartNotifyChar->addDescriptor(new NimBLE2902());
 
     // Write characteristic (app -> board)
     pUartWriteChar = pService->createCharacteristic(
