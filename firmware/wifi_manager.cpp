@@ -43,8 +43,9 @@ void wifi_loop() {
     if (connecting && WiFi.status() == WL_CONNECTED) {
         connecting = false;
         Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-        // notify app via BLE and send initial heartbeat
+        // notify app via BLE and send initial heartbeat after short stabilization delay
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
+        delay(1000); // allow network stack (DHCP, routes) to settle
         bool ok = wifi_send_heartbeat();
         if (ok) {
             ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
@@ -69,8 +70,8 @@ void wifi_set_uid(const String &uid) {
     ble_update_name(advertised);
 }
 
-static bool http_post(const String &path, const String &body) {
-    if (!wifi_is_connected()) return false;
+static int http_post(const String &path, const String &body) {
+    if (!wifi_is_connected()) return -1;
 
     HTTPClient http;
     String url = backend_url + path;
@@ -79,15 +80,14 @@ static bool http_post(const String &path, const String &body) {
     http.addHeader("Content-Type", "application/json");
 
     int code = http.POST(body);
-    bool ok = (code > 0);
-    if (ok) {
+    if (code > 0) {
         Serial.printf("[HTTP] POST %s: %d\n", path.c_str(), code);
     } else {
         Serial.printf("[HTTP] POST %s failed: %d\n", path.c_str(), code);
     }
 
     http.end();
-    return ok;
+    return code;
 }
 
 bool wifi_send_heartbeat() {
@@ -98,13 +98,16 @@ bool wifi_send_heartbeat() {
     body += "}";
 
     const int maxAttempts = 3;
-    const unsigned long retryDelayMs = 500;
+    unsigned long backoffMs[] = {500, 1000, 2000};
     bool ok = false;
     for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
         Serial.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
-        ok = http_post("/api/v1/heartbeat", body);
+        Serial.printf("[HTTP] WiFi.status=%d, IP=%s\n", WiFi.status(), WiFi.localIP().toString().c_str());
+        int code = http_post("/api/v1/heartbeat", body);
+        ok = (code > 0);
+        Serial.printf("[HTTP] Heartbeat result code: %d\n", code);
         if (ok) break;
-        delay(retryDelayMs);
+        if (attempt < maxAttempts) delay(backoffMs[attempt - 1]);
     }
 
     lastHeartbeat = millis();
