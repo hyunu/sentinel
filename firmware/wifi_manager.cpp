@@ -66,7 +66,11 @@ void wifi_set_uid(const String &uid) {
     board_uid = uid;
     Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
     // update BLE advertised name to include UID: Sentinel-<UID>
-    String advertised = String("Sentinel-") + board_uid;
+    String uid_padded = board_uid;
+    while (uid_padded.length() < 4) {
+        uid_padded = String("0") + uid_padded;
+    }
+    String advertised = String("Sentinel-") + uid_padded;
     ble_update_name(advertised);
 }
 
