@@ -242,6 +242,8 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Log inbound heartbeat for debugging
+	h.logger.Info("heartbeat received", zap.String("board_id", req.BoardID), zap.String("uid", req.UID))
 
 	now := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
