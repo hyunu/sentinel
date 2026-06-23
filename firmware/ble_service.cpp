@@ -115,6 +115,13 @@ void ble_update_name(const String &name) {
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     BLEAdvertisementData adv;
     adv.setName(name.c_str());
+    // include UID in manufacturer data so scanners show it reliably
+    {
+        String uid_str = name.substring(name.indexOf('-') + 1); // "0036"
+        // manufacturer data: ASCII "UID" + uid
+        std::string mdata = std::string("UID") + std::string(uid_str.c_str());
+        adv.setManufacturerData(mdata);
+    }
     pAdvertising->setAdvertisementData(adv);
     // enable scan response so phones pick up updated name reliably
     pAdvertising->setScanResponse(true);
