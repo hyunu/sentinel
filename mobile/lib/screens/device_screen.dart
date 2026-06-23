@@ -284,6 +284,8 @@ class _DeviceScreenState extends State<DeviceScreen>
 
       if (mounted) {
         setState(() => _wifiConfigured = true);
+        // Clear scanner cache so HomeScreen will refresh device names (advertised name)
+        _scanner.clearCache();
         _showSnack('Configuration sent and registered${uid != null ? ' (uid: $uid)' : ''}');
       }
     } catch (e) {

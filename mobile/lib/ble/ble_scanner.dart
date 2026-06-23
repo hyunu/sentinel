@@ -20,9 +20,11 @@ class BleScanner {
   bool get isScanning => _isScanning;
 
   static bool isSentinelDevice(ScanResult r) {
-    final name = r.device.platformName.isNotEmpty
-        ? r.device.platformName
-        : r.advertisementData.advName;
+    // Prefer advertisement local name when available (more up-to-date after adv change)
+    final advName = r.advertisementData.advName;
+    final name = advName.isNotEmpty
+        ? advName
+        : r.device.platformName;
     return name.toLowerCase().startsWith('sentinel');
   }
 

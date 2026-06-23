@@ -324,9 +324,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDeviceCard(ColorScheme cs, ScanResult device) {
-    final name = device.device.platformName.isNotEmpty
-        ? device.device.platformName
-        : device.advertisementData.advName;
+    // Prefer advertisement local name (updated by device) to show Sentinel-0001
+    final advName = device.advertisementData.advName;
+    final name = advName.isNotEmpty ? advName : (device.device.platformName.isNotEmpty ? device.device.platformName : '');
     final displayName = name.isNotEmpty ? name : 'Sentinel Device';
     final rssi = device.rssi;
     final strength = rssi >= -55
