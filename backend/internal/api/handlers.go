@@ -26,9 +26,28 @@ func NewHandler(database *db.MongoDB, logger *zap.Logger) *Handler {
 }
 
 func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (string, error) {
+	// If boardID provided, try multiple ways to resolve it to internal _id:
 	if boardID != "" {
-		return boardID, nil
+		// 1) try _id match
+		var board models.Board
+		if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&board); err == nil {
+			return board.ID, nil
+		}
+		// 2) try uid match
+		if err := h.db.Boards().FindOne(ctx, bson.M{"uid": boardID}).Decode(&board); err == nil {
+			return board.ID, nil
+		}
+		// 3) try mac_address match (exact)
+		if err := h.db.Boards().FindOne(ctx, bson.M{"mac_address": boardID}).Decode(&board); err == nil {
+			return board.ID, nil
+		}
+		// 4) try name match
+		if err := h.db.Boards().FindOne(ctx, bson.M{"name": boardID}).Decode(&board); err == nil {
+			return board.ID, nil
+		}
+		// not found by boardID, continue to try uid if provided
 	}
+
 	if uid == "" {
 		return "", fmt.Errorf("board_id or uid required")
 	}
