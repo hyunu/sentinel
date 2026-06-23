@@ -190,8 +190,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl');
         return;
       }
-      final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
-
+      
       // 1. Claim a UID from server before onboarding
       String? claimedUid;
       try {
