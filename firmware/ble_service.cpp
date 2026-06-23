@@ -1,5 +1,4 @@
 #include <NimBLEDevice.h>
-#include <NimBLE2902.h>
 #include <vector>
 
 #include "ble_service.h"
@@ -80,11 +79,11 @@ void ble_init() {
     NimBLEService *pService = pServer->createService(NimBLEUUID(UART_SERVICE_UUID));
 
     // Notify characteristic (board -> app)
+    // CCCD(0x2902)는 NimBLE이 NOTIFY 특성에 자동 추가함
     pUartNotifyChar = pService->createCharacteristic(
         NimBLEUUID(UART_NOTIFY_CHAR_UUID),
         NIMBLE_PROPERTY::NOTIFY
     );
-    pUartNotifyChar->addDescriptor(new NimBLE2902());
 
     // Write characteristic (app -> board)
     pUartWriteChar = pService->createCharacteristic(
