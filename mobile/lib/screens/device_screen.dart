@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
+import '../models/onboarding_profile.dart';
 import '../services/onboarding_profiler.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
@@ -74,6 +75,8 @@ class _DeviceScreenState extends State<DeviceScreen>
   StreamSubscription? _uartSub;
   StreamSubscription? _connSub;
   bool _scanningUart = false;
+  List<OnboardingProfile> _onboardingProfiles = [];
+  String? _selectedProfileId;
 
   late TabController _tabCtrl;
 
@@ -82,8 +85,15 @@ class _DeviceScreenState extends State<DeviceScreen>
     super.initState();
     _tabCtrl = TabController(length: 3, vsync: this);
     _onboardingProfiler.addListener(_onProfilerUpdated);
+    for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
+      c.addListener(_onFieldChanged);
+    }
     _loadSaved();
     _connect();
+  }
+
+  void _onFieldChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onProfilerUpdated() {
@@ -93,6 +103,9 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   void dispose() {
     _onboardingProfiler.removeListener(_onProfilerUpdated);
+    for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
+      c.removeListener(_onFieldChanged);
+    }
     _uartSub?.cancel();
     _connSub?.cancel();
     _ssidCtrl.dispose();
@@ -107,22 +120,195 @@ class _DeviceScreenState extends State<DeviceScreen>
   }
 
   Future<void> _loadSaved() async {
-    final profiles = await _storage.getWifiProfiles();
-    if (profiles.isNotEmpty) {
-      final entry = profiles.entries.first;
-      _ssidCtrl.text = entry.key;
-      _passCtrl.text = entry.value;
-    } else {
+    await _loadOnboardingProfiles();
+    if (_onboardingProfiles.isEmpty) {
       _ssidCtrl.text = 'hyunu_2.4Ghz';
       _passCtrl.text = 'gusdn1006';
       _baudCtrl.text = '19200';
-    }
-    final url = await _storage.getServerUrl();
-    if (url != null && url.isNotEmpty) {
-      _urlCtrl.text = url;
-    } else {
       _urlCtrl.text = 'http://192.168.0.9:5050';
     }
+  }
+
+  Future<void> _loadOnboardingProfiles({String? selectId}) async {
+    final profiles = await _storage.getOnboardingProfiles();
+    final lastId = selectId ?? await _storage.getLastOnboardingProfileId();
+    OnboardingProfile? selected;
+    if (lastId != null) {
+      for (final p in profiles) {
+        if (p.id == lastId) {
+          selected = p;
+          break;
+        }
+      }
+    }
+    selected ??= profiles.isNotEmpty ? profiles.first : null;
+
+    if (!mounted) return;
+    setState(() {
+      _onboardingProfiles = profiles;
+      _selectedProfileId = selected?.id;
+    });
+
+    if (selected != null) {
+      _applyProfile(selected, notify: false);
+    } else {
+      final url = await _storage.getServerUrl();
+      if (url != null && url.isNotEmpty && mounted) {
+        _urlCtrl.text = url;
+      }
+    }
+  }
+
+  void _applyProfile(OnboardingProfile profile, {bool notify = true}) {
+    _ssidCtrl.text = profile.ssid;
+    _passCtrl.text = profile.password;
+    _urlCtrl.text = profile.serverUrl;
+    _baudCtrl.text = profile.baudRate?.toString() ?? '19200';
+    if (notify && mounted) {
+      setState(() => _selectedProfileId = profile.id);
+    }
+    _storage.setLastOnboardingProfileId(profile.id);
+  }
+
+  void _selectProfile(OnboardingProfile profile) {
+    _applyProfile(profile);
+  }
+
+  OnboardingProfile? get _selectedProfile {
+    if (_selectedProfileId == null) return null;
+    for (final p in _onboardingProfiles) {
+      if (p.id == _selectedProfileId) return p;
+    }
+    return null;
+  }
+
+  bool get _profileDirty {
+    final selected = _selectedProfile;
+    final ssid = _ssidCtrl.text.trim();
+    final pass = _passCtrl.text.trim();
+    final url = _urlCtrl.text.trim();
+    final baud = int.tryParse(_baudCtrl.text.trim());
+    if (selected == null) {
+      return ssid.isNotEmpty || pass.isNotEmpty || url.isNotEmpty;
+    }
+    return selected.ssid != ssid ||
+        selected.password != pass ||
+        selected.serverUrl != url ||
+        selected.baudRate != baud;
+  }
+
+  String _shortUrl(String url) {
+    if (url.isEmpty) return 'No server';
+    return url.replaceFirst(RegExp(r'^https?://'), '');
+  }
+
+  OnboardingProfile _profileFromFields({String? id, String? name}) {
+    final baud = int.tryParse(_baudCtrl.text.trim());
+    return OnboardingProfile(
+      id: id ?? 'p${DateTime.now().millisecondsSinceEpoch}',
+      name: name ?? _ssidCtrl.text.trim(),
+      ssid: _ssidCtrl.text.trim(),
+      password: _passCtrl.text.trim(),
+      serverUrl: _urlCtrl.text.trim(),
+      baudRate: baud,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  Future<void> _updateCurrentProfile() async {
+    final selected = _selectedProfile;
+    if (selected == null) {
+      await _promptSaveProfile();
+      return;
+    }
+    await _persistCurrentProfile();
+    if (mounted) AppToast.success(context, 'Profile "${selected.name}" updated');
+  }
+
+  Future<void> _persistCurrentProfile() async {
+    final ssid = _ssidCtrl.text.trim();
+    if (ssid.isEmpty) return;
+
+    OnboardingProfile? existing;
+    if (_selectedProfileId != null) {
+      for (final p in _onboardingProfiles) {
+        if (p.id == _selectedProfileId) {
+          existing = p;
+          break;
+        }
+      }
+    }
+
+    final profile = _profileFromFields(
+      id: existing?.id,
+      name: existing?.name ?? ssid,
+    );
+    await _storage.saveOnboardingProfile(profile);
+    if (_urlCtrl.text.trim().isNotEmpty) {
+      await _storage.setServerUrl(_urlCtrl.text.trim());
+    }
+    await _loadOnboardingProfiles(selectId: profile.id);
+  }
+
+  Future<void> _promptSaveProfile() async {
+    final ssid = _ssidCtrl.text.trim();
+    if (ssid.isEmpty) {
+      AppToast.error(context, 'Enter a WiFi SSID before saving a profile.', persistent: false);
+      return;
+    }
+
+    final nameCtrl = TextEditingController(text: ssid);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          backgroundColor: cs.surfaceContainerHigh,
+          title: const Text('Save onboarding profile'),
+          content: TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Profile name',
+              hintText: 'e.g. Home lab',
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          ],
+        );
+      },
+    );
+
+    if (saved != true || !mounted) return;
+    final name = nameCtrl.text.trim().isEmpty ? ssid : nameCtrl.text.trim();
+    nameCtrl.dispose();
+
+    final profile = _profileFromFields(id: _selectedProfileId, name: name);
+    await _storage.saveOnboardingProfile(profile);
+    if (_urlCtrl.text.trim().isNotEmpty) {
+      await _storage.setServerUrl(_urlCtrl.text.trim());
+    }
+    await _loadOnboardingProfiles(selectId: profile.id);
+    if (mounted) AppToast.success(context, 'Profile "$name" saved');
+  }
+
+  Future<void> _confirmDeleteProfile(OnboardingProfile profile) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete profile'),
+        content: Text('Delete "${profile.name}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _storage.deleteOnboardingProfile(profile.id);
+    await _loadOnboardingProfiles();
+    if (mounted) AppToast.info(context, 'Profile deleted');
   }
 
   Future<void> _connect() async {
@@ -405,6 +591,7 @@ class _DeviceScreenState extends State<DeviceScreen>
 
       await _storage.saveWifiProfile(ssid, pass);
       if (url.isNotEmpty) await _storage.setServerUrl(url);
+      await _persistCurrentProfile();
 
       _onboardingProfiler.finishSuccess(uid: uid ?? claimedUid);
 
@@ -638,22 +825,34 @@ class _DeviceScreenState extends State<DeviceScreen>
         children: [
           _buildSectionHeader(cs, 'Onboarding', Icons.tune_rounded),
           const SizedBox(height: 12),
+          _buildOnboardingProfilesSection(cs),
+          const SizedBox(height: 12),
           _buildGlassCard(cs, [
+            _buildFormGroupLabel(cs, 'Network'),
+            const SizedBox(height: 8),
             _buildTextField(cs, _ssidCtrl, 'WiFi SSID', Icons.wifi_rounded),
             const SizedBox(height: 10),
             _buildTextField(cs, _passCtrl, 'WiFi Password', Icons.lock_rounded, obscure: true),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
+            _buildFormGroupLabel(cs, 'Device'),
+            const SizedBox(height: 8),
             _buildTextField(cs, _baudCtrl, 'Baud Rate', Icons.speed_rounded,
                 placeholder: 'e.g. 115200'),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
+            _buildFormGroupLabel(cs, 'Server'),
+            const SizedBox(height: 8),
             _buildTextField(cs, _urlCtrl, 'Server URL', Icons.dns_rounded,
                 placeholder: 'http://192.168.0.9:5050'),
-            const SizedBox(height: 14),
+            if (_profileDirty) ...[
+              const SizedBox(height: 14),
+              _buildProfileDirtyBanner(cs),
+            ],
+            const SizedBox(height: 16),
             _buildSendButton(cs),
           ]),
           if (_onboardingProfiler.steps.isNotEmpty) ...[
             const SizedBox(height: 16),
-            _buildSectionHeader(cs, 'Onboarding Profile', Icons.timeline_rounded),
+            _buildSectionHeader(cs, 'Step Timeline', Icons.timeline_rounded),
             const SizedBox(height: 12),
             _buildOnboardingProfileCard(cs),
           ],
@@ -705,6 +904,378 @@ class _DeviceScreenState extends State<DeviceScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildOnboardingProfilesSection(ColorScheme cs) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            cs.primary.withValues(alpha: 0.07),
+            cs.primary.withValues(alpha: 0.02),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.25), width: 0.5),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.layers_rounded, size: 15, color: cs.primary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Profiles',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    Text(
+                      _onboardingProfiles.isEmpty
+                          ? 'Save presets for quick onboarding'
+                          : '${_onboardingProfiles.length} saved',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 108,
+            child: _onboardingProfiles.isEmpty
+                ? _buildEmptyProfileCard(cs)
+                : ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _onboardingProfiles.length + 1,
+                    separatorBuilder: (_, _) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      if (index == _onboardingProfiles.length) {
+                        return _buildAddProfileTile(cs);
+                      }
+                      return _buildProfileTile(cs, _onboardingProfiles[index]);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyProfileCard(ColorScheme cs) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _promptSaveProfile,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: cs.surface.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: cs.primary.withValues(alpha: 0.25),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [cs.primary.withValues(alpha: 0.2), cs.primary.withValues(alpha: 0.08)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.bookmark_add_outlined, size: 20, color: cs.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Create a profile',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      'Store WiFi, server URL, and baud rate',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddProfileTile(ColorScheme cs) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _promptSaveProfile,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 88,
+          decoration: BoxDecoration(
+            color: cs.surface.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.35), width: 1),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_rounded, size: 22, color: cs.primary),
+              const SizedBox(height: 4),
+              Text(
+                'New',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileTile(ColorScheme cs, OnboardingProfile profile) {
+    final active = _selectedProfileId == profile.id;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _selectProfile(profile),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          width: 168,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: active
+                ? LinearGradient(
+                    colors: [
+                      cs.primary.withValues(alpha: 0.18),
+                      cs.primary.withValues(alpha: 0.06),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: active ? null : cs.surface.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: active ? cs.primary.withValues(alpha: 0.45) : cs.outline.withValues(alpha: 0.25),
+              width: active ? 1.2 : 0.5,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.wifi_rounded,
+                    size: 14,
+                    color: active ? cs.primary : cs.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      profile.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: active ? cs.onSurface : cs.onSurface.withValues(alpha: 0.9),
+                          ),
+                    ),
+                  ),
+                  _buildProfileMenu(cs, profile),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                profile.ssid,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.85),
+                      fontSize: 11,
+                    ),
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _shortUrl(profile.serverUrl),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                    ),
+                  ),
+                  if (profile.baudRate != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (active ? cs.primary : cs.onSurfaceVariant).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${profile.baudRate}',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: active ? cs.primary : cs.onSurfaceVariant,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileMenu(ColorScheme cs, OnboardingProfile profile) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: PopupMenuButton<String>(
+        padding: EdgeInsets.zero,
+        iconSize: 18,
+        icon: Icon(Icons.more_horiz_rounded, size: 18, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+        color: cs.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        onSelected: (action) {
+          if (action == 'rename') {
+            _promptRenameProfile(profile);
+          } else if (action == 'delete') {
+            _confirmDeleteProfile(profile);
+          }
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'rename', child: Text('Rename')),
+          PopupMenuItem(
+            value: 'delete',
+            child: Text('Delete', style: TextStyle(color: cs.error)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileDirtyBanner(ColorScheme cs) {
+    final hasSelection = _selectedProfile != null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.tertiary.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.edit_note_rounded, size: 18, color: cs.tertiary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              hasSelection ? 'Unsaved changes' : 'Unsaved configuration',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+            ),
+          ),
+          TextButton(
+            onPressed: hasSelection ? _updateCurrentProfile : _promptSaveProfile,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+            child: Text(hasSelection ? 'Update' : 'Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFormGroupLabel(ColorScheme cs, String label) {
+    return Text(
+      label.toUpperCase(),
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w600,
+          ),
+    );
+  }
+
+  Future<void> _promptRenameProfile(OnboardingProfile profile) async {
+    final nameCtrl = TextEditingController(text: profile.name);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          backgroundColor: cs.surfaceContainerHigh,
+          title: const Text('Rename profile'),
+          content: TextField(
+            controller: nameCtrl,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Profile name'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          ],
+        );
+      },
+    );
+    if (saved != true || !mounted) return;
+    final name = nameCtrl.text.trim();
+    nameCtrl.dispose();
+    if (name.isEmpty) return;
+
+    final updated = profile.copyWith(name: name, updatedAt: DateTime.now());
+    await _storage.saveOnboardingProfile(updated);
+    await _loadOnboardingProfiles(selectId: updated.id);
+    if (mounted) AppToast.success(context, 'Profile renamed');
   }
 
   Widget _buildSectionHeader(ColorScheme cs, String title, IconData icon) {
