@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
+import '../models/board_status.dart';
+import '../services/storage_service.dart';
+import '../widgets/app_toast.dart';
 import 'device_screen.dart';
 import 'settings_screen.dart';
 
@@ -14,10 +19,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final BleScanner _scanner = BleScanner();
+  final StorageService _storage = StorageService();
 
   List<ScanResult> _devices = [];
+  Map<String, BoardRegistryEntry> _boardsByMac = {};
+  Map<String, BoardRegistryEntry> _boardsByUid = {};
   bool _isScanning = false;
   StreamSubscription? _scanSub;
+  Timer? _boardRefreshTimer;
   int _scanElapsed = 0;
 
   late AnimationController _pulseCtrl;
@@ -34,11 +43,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOutSine),
     );
     _startScan();
+    _refreshBoardRegistry();
+    _boardRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _refreshBoardRegistry();
+    });
   }
 
   @override
   void dispose() {
     _scanSub?.cancel();
+    _boardRefreshTimer?.cancel();
     _scanner.stopScan();
     _pulseCtrl.dispose();
     super.dispose();
@@ -97,45 +111,44 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
-  void _showRegisteredNotice(String uid) {
-    final cs = Theme.of(context).colorScheme;
+  Future<void> _refreshBoardRegistry() async {
+    try {
+      final url = await _storage.getServerUrl();
+      final baseUrl = (url != null && url.isNotEmpty) ? url : 'http://192.168.0.9:5050';
+      final res = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200 || !mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: cs.surfaceContainerHigh,
-        elevation: 0,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: cs.outline.withValues(alpha: 0.35)),
-        ),
-        margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        content: Row(
-          children: [
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: cs.secondary.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.check_rounded, size: 16, color: cs.secondary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Successfully registered $uid',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurface,
-                    ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+      final byMac = <String, BoardRegistryEntry>{};
+      final byUid = <String, BoardRegistryEntry>{};
+      for (final raw in json.decode(res.body) as List) {
+        if (raw is! Map) continue;
+        final uid = raw['uid']?.toString() ?? '';
+        if (uid.isEmpty) continue;
+        final entry = BoardRegistryEntry(
+          uid: uid,
+          macAddress: raw['mac_address']?.toString() ?? '',
+          isActive: raw['is_active'] == true,
+          lastHeartbeat: DateTime.tryParse(raw['last_heartbeat']?.toString() ?? ''),
+        );
+        if (entry.macAddress.isNotEmpty) byMac[entry.macAddress] = entry;
+        byUid[uid] = entry;
+      }
+
+      setState(() {
+        _boardsByMac = byMac;
+        _boardsByUid = byUid;
+      });
+    } catch (_) {}
+  }
+
+  BoardRegistryEntry? _serverEntryFor(ScanResult device) {
+    final mac = device.device.remoteId.str;
+    final uid = BleScanner.parseUidFromAdData(device.advertisementData);
+    return _boardsByMac[mac] ?? (uid != null ? _boardsByUid[uid] : null);
+  }
+
+  void _showRegisteredNotice(String uid) {
+    AppToast.success(context, 'Successfully registered $uid');
   }
 
   void _onDeviceSelected(ScanResult device) async {
@@ -149,6 +162,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (registeredUid != null && registeredUid.isNotEmpty) {
       _showRegisteredNotice(registeredUid);
     }
+    await _refreshBoardRegistry();
     _startScan();
   }
 
@@ -369,7 +383,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDeviceCard(ColorScheme cs, ScanResult device) {
-    // Prefer advertisement local name (updated by device) to show Sentinel-0001
     final advName = device.advertisementData.advName;
     final name = advName.isNotEmpty ? advName : (device.device.platformName.isNotEmpty ? device.device.platformName : '');
     final displayName = name.isNotEmpty ? name : 'Sentinel Device';
@@ -377,6 +390,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final strength = rssi >= -55
         ? 4
         : rssi >= -65 ? 3 : rssi >= -75 ? 2 : rssi >= -85 ? 1 : 0;
+    final state = BoardStatusResolver.resolve(
+      adData: device.advertisementData,
+      deviceMac: device.device.remoteId.str,
+      serverEntry: _serverEntryFor(device),
+    );
+    final stateLabel = BoardStatusResolver.label(state);
+    final stateColor = BoardStatusResolver.color(state);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -442,16 +462,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: cs.primary.withValues(alpha: 0.08),
+                        color: stateColor.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: stateColor.withValues(alpha: 0.25)),
                       ),
                       child: Text(
-                        'UART',
+                        stateLabel,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: cs.primary,
-                          letterSpacing: 0.5,
+                          color: stateColor,
+                          letterSpacing: 0.3,
                         ),
                       ),
                     ),

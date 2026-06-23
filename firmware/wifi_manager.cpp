@@ -61,6 +61,7 @@ void wifi_connect(const String &ssid, const String &password) {
         connecting = false;
         pendingInitialHeartbeat = true;
         wifiConnectedAt = millis() - 3000; // fire on next wifi_loop (~immediate)
+        ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
         return;
     }
@@ -82,6 +83,7 @@ void wifi_loop() {
         pendingInitialHeartbeat = true;
         wifiConnectedAt = millis();
         Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+        ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
     }
 
@@ -95,8 +97,10 @@ void wifi_loop() {
 
         bool ok = wifi_send_heartbeat();
         if (ok) {
+            ble_set_server_registered(true);
             ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
         } else {
+            ble_set_server_registered(false);
             ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
         }
     }
@@ -112,13 +116,7 @@ void wifi_set_uid(const String &uid) {
     if (uid.length() == 0) return;
     board_uid = uid;
     Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
-    // update BLE advertised name to include UID: Sentinel-<UID>
-    String uid_padded = board_uid;
-    while (uid_padded.length() < 4) {
-        uid_padded = String("0") + uid_padded;
-    }
-    String advertised = String("Sentinel-") + uid_padded;
-    ble_update_name(advertised);
+    ble_set_uid(uid);
 }
 
 static int http_post(const String &path, const String &body) {

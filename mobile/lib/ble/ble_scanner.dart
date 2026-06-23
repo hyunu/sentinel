@@ -7,7 +7,80 @@ const String kUartNotifyCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartWriteCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartMacCharUuid = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
 
+enum SentinelBleState {
+  unregistered,
+  configured,
+  connecting,
+  registering,
+  online,
+}
+
 class BleScanner {
+  static const int mfgCompanyId = 0x02E5;
+  static const int flagSvr = 0x02;
+  static const int flagWifi = 0x04;
+  static const int flagCfg = 0x08;
+
+  static int _flagsFromMfg(List<int> mfgData) {
+    if (mfgData.isEmpty) return 0;
+    var offset = 0;
+    if (mfgData.length >= 3 && mfgData[0] == 0xE5 && mfgData[1] == 0x02) {
+      offset = 2;
+    }
+    return mfgData[offset];
+  }
+
+  static List<int> _uidBytesFromMfg(List<int> mfgData) {
+    if (mfgData.isEmpty) return const [];
+    var offset = 0;
+    if (mfgData.length >= 3 && mfgData[0] == 0xE5 && mfgData[1] == 0x02) {
+      offset = 2;
+    }
+    if (mfgData.length <= offset + 1) return const [];
+    return mfgData.sublist(offset + 1);
+  }
+
+  static String? parseUidFromAdData(AdvertisementData data) {
+    final name = data.advName;
+    final nameMatch = RegExp(r'Sentinel-(\d+)', caseSensitive: false).firstMatch(name);
+    if (nameMatch != null) return nameMatch.group(1);
+
+    final mfg = data.manufacturerData[mfgCompanyId];
+    if (mfg == null || mfg.isEmpty) return null;
+
+    final uidBytes = _uidBytesFromMfg(mfg);
+    if (uidBytes.isEmpty) return null;
+
+    final uidStr = String.fromCharCodes(uidBytes).replaceAll('\x00', '').trim();
+    if (uidStr.isEmpty) return null;
+    if (RegExp(r'^\d+$').hasMatch(uidStr)) return uidStr;
+    return null;
+  }
+
+  static SentinelBleState parseStateFromAdData(AdvertisementData data) {
+    final mfg = data.manufacturerData[mfgCompanyId];
+    if (mfg == null || mfg.isEmpty) {
+      return parseUidFromAdData(data) != null
+          ? SentinelBleState.configured
+          : SentinelBleState.unregistered;
+    }
+
+    final flags = _flagsFromMfg(mfg);
+    final cfg = (flags & flagCfg) != 0;
+    final wifi = (flags & flagWifi) != 0;
+    final svr = (flags & flagSvr) != 0;
+
+    if (!cfg) {
+      return parseUidFromAdData(data) != null
+          ? SentinelBleState.configured
+          : SentinelBleState.unregistered;
+    }
+    if (cfg && !wifi) return SentinelBleState.configured;
+    if (cfg && wifi && !svr) return SentinelBleState.registering;
+    if (cfg && wifi && svr) return SentinelBleState.online;
+    return SentinelBleState.connecting;
+  }
+
   final StreamController<List<ScanResult>> _scanController =
       StreamController<List<ScanResult>>.broadcast();
   StreamSubscription<List<ScanResult>>? _fbpSubscription;

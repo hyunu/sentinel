@@ -13,6 +13,9 @@
 
 #define BLE_DEVICE_NAME         "Sentinel"
 #define BLE_MANUFACTURER_ID     0x02E5
+#define BLE_FLAG_SVR            0x02  // server heartbeat OK
+#define BLE_FLAG_WIFI           0x04  // WiFi connected
+#define BLE_FLAG_CFG            0x08  // UID / config received
 
 // Use Nordic UART Service (NUS) UUIDs to match mobile nexio-style onboarding
 #define UART_SERVICE_UUID       "6e400001-b5a3-f393-e0a9-e50e24dcca9e"

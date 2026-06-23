@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
+import '../services/onboarding_profiler.dart';
 import '../services/storage_service.dart';
+import '../widgets/app_toast.dart';
 
 class _ProtocolField {
   final String name;
@@ -56,6 +58,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     with SingleTickerProviderStateMixin {
   final BleScanner _scanner = BleScanner();
   final StorageService _storage = StorageService();
+  final OnboardingProfiler _onboardingProfiler = OnboardingProfiler();
   final _ssidCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _baudCtrl = TextEditingController();
@@ -78,12 +81,18 @@ class _DeviceScreenState extends State<DeviceScreen>
   void initState() {
     super.initState();
     _tabCtrl = TabController(length: 3, vsync: this);
+    _onboardingProfiler.addListener(_onProfilerUpdated);
     _loadSaved();
     _connect();
   }
 
+  void _onProfilerUpdated() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _onboardingProfiler.removeListener(_onProfilerUpdated);
     _uartSub?.cancel();
     _connSub?.cancel();
     _ssidCtrl.dispose();
@@ -91,6 +100,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     _baudCtrl.dispose();
     _urlCtrl.dispose();
     _tabCtrl.dispose();
+    _onboardingProfiler.dispose();
     widget.device.disconnect();
     _scanner.clearCache();
     super.dispose();
@@ -134,7 +144,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     } catch (e) {
     if (mounted) {
         setState(() => _connecting = false);
-        _showSnack('Connection failed: $e', persistent: true);
+        _showError('Could not connect to the device.');
       }
       return;
     }
@@ -268,29 +278,34 @@ class _DeviceScreenState extends State<DeviceScreen>
     final pass = _passCtrl.text.trim();
     if (ssid.isEmpty) return;
 
+    _onboardingProfiler.begin();
     setState(() => _sendingWifi = true);
     try {
       final baud = int.tryParse(_baudCtrl.text.trim());
       final url = _urlCtrl.text.trim();
-
-      // 먼저 서버 연결 가능 여부를 확인합니다. (Wi‑Fi가 꺼져 있어도 테더링 등으로 연결되어 있으면 ok)
       final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
+
+      _onboardingProfiler.startStep('server_reachable');
       try {
         final pingRes =
             await http.get(Uri.parse('$baseUrl/api/v1/protocols')).timeout(const Duration(seconds: 3));
         if (pingRes.statusCode < 200 || pingRes.statusCode >= 400) {
-          if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl', persistent: true);
+          _onboardingProfiler.finishFailure('server_reachable', note: 'HTTP ${pingRes.statusCode}');
+          if (mounted) _showError('Cannot reach the server. Check the server URL.');
           return;
         }
-      } catch (_) {
-        if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl', persistent: true);
+        _onboardingProfiler.completeStep('server_reachable');
+      } catch (e) {
+        _onboardingProfiler.finishFailure('server_reachable', note: '$e');
+        if (mounted) _showError('Cannot reach the server. Check the server URL.');
         return;
       }
-      
-      // 1. 기존 보드 MAC 매칭 시 가장 먼저 할당된 UID 재사용 (0038 등 중복 방지)
+
       final mac = widget.device.remoteId.str;
       String? claimedUid;
       DateTime? heartbeatBaseline;
+
+      _onboardingProfiler.startStep('uid_claimed');
       try {
         final boardsRes = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
         if (boardsRes.statusCode == 200) {
@@ -300,33 +315,44 @@ class _DeviceScreenState extends State<DeviceScreen>
             heartbeatBaseline = _lastHeartbeatForUid(boards, claimedUid);
           }
         }
-      } catch (_) {
-        // ignore and fallback to claim
+      } catch (_) {}
+
+      try {
+        claimedUid ??= await _claimUid(baseUrl, mac);
+      } catch (e) {
+        _onboardingProfiler.finishFailure('uid_claimed', note: '$e');
+        rethrow;
       }
 
-      claimedUid ??= await _claimUid(baseUrl, mac);
-
-      if (claimedUid == null || claimedUid.isEmpty) throw Exception('No UID claimed');
+      if (claimedUid == null || claimedUid.isEmpty) {
+        _onboardingProfiler.finishFailure('uid_claimed', note: 'empty uid');
+        throw Exception('No UID claimed');
+      }
+      _onboardingProfiler.completeStep('uid_claimed', note: claimedUid);
       final claimTime = DateTime.now();
 
-      // BLE 로그는 config 전송 전에 구독 (sendWifiConfig는 cache를 건드리지 않음)
       final heartbeatOk = Completer<void>();
       var configSent = false;
       StreamSubscription<String>? logSub;
+
+      _onboardingProfiler.startStep('ble_subscribed');
       try {
         final logStream = await _scanner.subscribeToLogs(widget.device);
+        _onboardingProfiler.completeStep('ble_subscribed');
         logSub = logStream.listen((msg) {
           debugPrint('[BLE LOG] $msg');
+          _onboardingProfiler.markBleEvent(msg);
           if (!configSent) return;
           if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) {
             heartbeatOk.complete();
           }
         });
       } catch (e) {
+        _onboardingProfiler.finishFailure('ble_subscribed', note: '$e');
         debugPrint('BLE log subscribe failed: $e');
       }
 
-      // 2. Send config to device over BLE including claimed UID
+      _onboardingProfiler.startStep('config_sent');
       await _scanner.sendWifiConfig(
         widget.device,
         ssid: ssid,
@@ -336,8 +362,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         uid: claimedUid,
       );
       configSent = true;
+      _onboardingProfiler.completeStep('config_sent', note: claimedUid);
 
-      // 3. Wait for NEW heartbeat via BLE notify or server polling
+      _onboardingProfiler.startStep('board_ready');
       await _waitForBoardReady(
         baseUrl: baseUrl,
         uid: claimedUid,
@@ -345,9 +372,10 @@ class _DeviceScreenState extends State<DeviceScreen>
         newerThan: heartbeatBaseline,
         heartbeatOk: heartbeatOk,
       );
+      _onboardingProfiler.completeStep('board_ready');
       await logSub?.cancel();
 
-      // 4. Register device with server using claimed UID
+      _onboardingProfiler.startStep('registered');
       String? uid;
       try {
         final regRes = await http
@@ -363,29 +391,33 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (regRes.statusCode == 201) {
           final regBody = json.decode(regRes.body);
           uid = regBody['uid'] as String?;
+          _onboardingProfiler.completeStep('registered', note: uid);
         } else {
+          _onboardingProfiler.finishFailure('registered', note: 'HTTP ${regRes.statusCode}');
           throw Exception('Register failed: ${regRes.statusCode}');
         }
       } catch (e) {
+        if (!_onboardingProfiler.hasFailed) {
+          _onboardingProfiler.finishFailure('registered', note: '$e');
+        }
         throw Exception('Server registration failed: $e');
       }
 
       await _storage.saveWifiProfile(ssid, pass);
       if (url.isNotEmpty) await _storage.setServerUrl(url);
 
+      _onboardingProfiler.finishSuccess(uid: uid ?? claimedUid);
+
       if (mounted) {
         setState(() => _wifiConfigured = true);
-        // Clear scanner cache so HomeScreen will refresh device names (advertised name)
         _scanner.clearCache();
         Navigator.pop(context, uid ?? claimedUid);
       }
     } catch (e) {
-      if (mounted) {
-        final msg = e is TimeoutException
-            ? '보드가 서버에 연결되지 않았습니다. WiFi 설정과 서버 주소를 확인하세요.'
-            : '$e';
-        _showSnack(msg, persistent: true);
+      if (!_onboardingProfiler.hasFailed) {
+        _onboardingProfiler.finishFailure('board_ready', note: '$e');
       }
+      if (mounted) _showError(_onboardingErrorMessage(e));
     } finally {
       if (mounted) setState(() => _sendingWifi = false);
     }
@@ -405,27 +437,32 @@ class _DeviceScreenState extends State<DeviceScreen>
         });
       });
     } catch (e) {
-      if (mounted) _showSnack('UART stream failed: $e', persistent: true);
+      if (mounted) _showError('Failed to start the UART stream.');
     }
   }
 
-  void _showSnack(String msg, {bool persistent = false}) {
-    final snack = SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      duration: persistent ? const Duration(days: 1) : const Duration(seconds: 3),
-      action: persistent
-          ? SnackBarAction(
-              label: '닫기',
-              onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              },
-            )
-          : null,
-    );
-    ScaffoldMessenger.of(context).showSnackBar(snack);
+  String _onboardingErrorMessage(Object error) {
+    if (error is TimeoutException) {
+      return 'The board did not connect to the server. Check WiFi and server settings.';
+    }
+    final msg = error.toString();
+    if (msg.contains('Claim failed')) {
+      return 'Could not claim a board ID from the server.';
+    }
+    if (msg.contains('No UID claimed')) {
+      return 'Could not obtain a board ID from the server.';
+    }
+    if (msg.contains('Register failed') || msg.contains('Server registration failed')) {
+      return 'Server registration failed. Try again.';
+    }
+    if (msg.contains('sendWifiConfig failed')) {
+      return 'Failed to send configuration over Bluetooth.';
+    }
+    return 'Onboarding failed. Please try again.';
+  }
+
+  void _showError(String message) {
+    AppToast.error(context, message);
   }
 
   Map<String, String> _parseHex(String hex, _Protocol proto) {
@@ -614,6 +651,12 @@ class _DeviceScreenState extends State<DeviceScreen>
             const SizedBox(height: 14),
             _buildSendButton(cs),
           ]),
+          if (_onboardingProfiler.steps.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildSectionHeader(cs, 'Onboarding Profile', Icons.timeline_rounded),
+            const SizedBox(height: 12),
+            _buildOnboardingProfileCard(cs),
+          ],
           const SizedBox(height: 16),
           _buildSectionHeader(cs, 'Connection', Icons.bluetooth_rounded),
           const SizedBox(height: 12),
@@ -673,6 +716,112 @@ class _DeviceScreenState extends State<DeviceScreen>
           color: cs.onSurfaceVariant.withValues(alpha: 0.7),
         )),
       ],
+    );
+  }
+
+  Widget _buildOnboardingProfileCard(ColorScheme cs) {
+    final steps = _onboardingProfiler.steps.where((s) => s.status != OnboardingStepStatus.pending).toList();
+    final maxMs = steps.fold<int>(0, (max, s) {
+      final ms = s.durationMs ?? 0;
+      return ms > max ? ms : max;
+    }).clamp(1, 999999);
+
+    final headerColor = _onboardingProfiler.hasFailed
+        ? cs.tertiary
+        : _onboardingProfiler.isRunning
+            ? cs.primary
+            : cs.secondary;
+
+    return _buildGlassCard(cs, [
+      Row(
+        children: [
+          Icon(Icons.speed_rounded, size: 16, color: headerColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _onboardingProfiler.isRunning
+                  ? 'Profiling onboarding...'
+                  : _onboardingProfiler.hasFailed
+                      ? 'Onboarding failed'
+                      : 'Onboarding complete',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+          Text(
+            '${_onboardingProfiler.totalMs} ms',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontFamily: 'monospace',
+                ),
+          ),
+        ],
+      ),
+      if (steps.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        ...steps.map((step) => _buildProfileStepRow(cs, step, maxMs)),
+      ],
+    ]);
+  }
+
+  Widget _buildProfileStepRow(ColorScheme cs, OnboardingStepRecord step, int maxMs) {
+    final (Color color, IconData icon) = switch (step.status) {
+      OnboardingStepStatus.running => (cs.primary, Icons.hourglass_top_rounded),
+      OnboardingStepStatus.done => (cs.secondary, Icons.check_rounded),
+      OnboardingStepStatus.failed => (cs.tertiary, Icons.close_rounded),
+      OnboardingStepStatus.pending => (cs.onSurfaceVariant, Icons.circle_outlined),
+    };
+    final ms = step.durationMs ?? (_onboardingProfiler.isRunning && step.status == OnboardingStepStatus.running
+        ? DateTime.now().difference(step.startedAt ?? DateTime.now()).inMilliseconds
+        : 0);
+    final barWidth = maxMs > 0 ? (ms / maxMs).clamp(0.05, 1.0) : 0.05;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  step.label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurface),
+                ),
+              ),
+              Text(
+                step.status == OnboardingStepStatus.running ? '...' : '${ms}ms',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                    ),
+              ),
+            ],
+          ),
+          if (step.note != null && step.note!.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              step.note!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                    fontSize: 10,
+                  ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: step.status == OnboardingStepStatus.pending ? 0 : barWidth,
+              minHeight: 4,
+              backgroundColor: cs.outline.withValues(alpha: 0.15),
+              color: color.withValues(alpha: 0.8),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
