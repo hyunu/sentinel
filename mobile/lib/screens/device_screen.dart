@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
-import 'package:connectivity_plus/connectivity_plus.dart';
 import '../ble/ble_scanner.dart';
 import '../services/storage_service.dart';
 
@@ -133,9 +132,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         });
       }
     } catch (e) {
-      if (mounted) {
+    if (mounted) {
         setState(() => _connecting = false);
-        _showSnack('Connection failed: $e');
+        _showSnack('Connection failed: $e', persistent: true);
       }
       return;
     }
@@ -183,11 +182,11 @@ class _DeviceScreenState extends State<DeviceScreen>
         final pingRes =
             await http.get(Uri.parse('$baseUrl/api/v1/protocols')).timeout(const Duration(seconds: 3));
         if (pingRes.statusCode < 200 || pingRes.statusCode >= 400) {
-          if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl');
+          if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl', persistent: true);
           return;
         }
       } catch (_) {
-        if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl');
+        if (mounted) _showSnack('서버에 연결할 수 없습니다. 서버 주소를 확인하세요: $baseUrl', persistent: true);
         return;
       }
       
@@ -271,7 +270,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         _showSnack('Configuration sent and registered${uid != null ? ' (uid: $uid)' : ''}');
       }
     } catch (e) {
-      if (mounted) _showSnack('$e');
+      if (mounted) _showSnack('$e', persistent: true);
     } finally {
       if (mounted) setState(() => _sendingWifi = false);
     }
@@ -291,20 +290,27 @@ class _DeviceScreenState extends State<DeviceScreen>
         });
       });
     } catch (e) {
-      if (mounted) _showSnack('UART stream failed: $e');
+      if (mounted) _showSnack('UART stream failed: $e', persistent: true);
     }
   }
 
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(fontSize: 13)),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        duration: const Duration(seconds: 3),
-      ),
+  void _showSnack(String msg, {bool persistent = false}) {
+    final snack = SnackBar(
+      content: Text(msg, style: const TextStyle(fontSize: 13)),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      duration: persistent ? const Duration(days: 1) : const Duration(seconds: 3),
+      action: persistent
+          ? SnackBarAction(
+              label: '닫기',
+              onPressed: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              },
+            )
+          : null,
     );
+    ScaffoldMessenger.of(context).showSnackBar(snack);
   }
 
   Map<String, String> _parseHex(String hex, _Protocol proto) {
