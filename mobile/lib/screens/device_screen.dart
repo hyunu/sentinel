@@ -166,6 +166,52 @@ class _DeviceScreenState extends State<DeviceScreen>
     } catch (_) {}
   }
 
+  Future<bool> _serverHasRecentHeartbeat(
+    String baseUrl,
+    String uid, {
+    required DateTime since,
+  }) async {
+    try {
+      final res = await http
+          .get(Uri.parse('$baseUrl/api/v1/boards'))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return false;
+
+      for (final raw in json.decode(res.body) as List) {
+        if (raw is! Map || raw['uid'] != uid) continue;
+        final hbRaw = raw['last_heartbeat'];
+        if (hbRaw == null) continue;
+        final hb = DateTime.tryParse(hbRaw.toString());
+        if (hb == null || hb.year <= 1) continue;
+        if (!hb.toUtc().isBefore(since.toUtc().subtract(const Duration(seconds: 5)))) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> _waitForBoardReady({
+    required String baseUrl,
+    required String uid,
+    required DateTime since,
+    required Completer<void> heartbeatOk,
+    Duration timeout = const Duration(seconds: 90),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (heartbeatOk.isCompleted) return;
+      if (await _serverHasRecentHeartbeat(baseUrl, uid, since: since)) {
+        if (!heartbeatOk.isCompleted) heartbeatOk.complete();
+        return;
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    if (!heartbeatOk.isCompleted) {
+      throw TimeoutException('heartbeat not received within ${timeout.inSeconds}s');
+    }
+  }
+
   Future<void> _sendWifi() async {
     final ssid = _ssidCtrl.text.trim();
     final pass = _passCtrl.text.trim();
@@ -224,6 +270,22 @@ class _DeviceScreenState extends State<DeviceScreen>
       }
 
       if (claimedUid == null || claimedUid.isEmpty) throw Exception('No UID claimed');
+      final claimTime = DateTime.now();
+
+      // BLE 로그는 config 전송 전에 구독해야 초기 이벤트를 놓치지 않음
+      final heartbeatOk = Completer<void>();
+      StreamSubscription<String>? logSub;
+      try {
+        final logStream = await _scanner.subscribeToLogs(widget.device);
+        logSub = logStream.listen((msg) {
+          debugPrint('[BLE LOG] $msg');
+          if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) {
+            heartbeatOk.complete();
+          }
+        });
+      } catch (e) {
+        debugPrint('BLE log subscribe failed: $e');
+      }
 
       // 2. Send config to device over BLE including claimed UID
       await _scanner.sendWifiConfig(
@@ -235,26 +297,14 @@ class _DeviceScreenState extends State<DeviceScreen>
         uid: claimedUid,
       );
 
-      // 3. Wait for device to report WiFi connected and successful heartbeat via BLE logs
-      final logStream = await _scanner.subscribeToLogs(widget.device);
-      final wifiConnected = Completer<void>();
-      final heartbeatOk = Completer<void>();
-      final sub = logStream.listen((msg) {
-        if (msg.contains('EVENT:WIFI_CONNECTED') && !wifiConnected.isCompleted) wifiConnected.complete();
-        if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) heartbeatOk.complete();
-      });
-
-      try {
-        // wait up to 60s for both signals (firmware waits for stable WiFi before heartbeat)
-        await Future.wait([
-          wifiConnected.future.timeout(const Duration(seconds: 60)),
-          heartbeatOk.future.timeout(const Duration(seconds: 60)),
-        ]);
-      } catch (e) {
-        await sub.cancel();
-        throw Exception('Board did not become ready: $e');
-      }
-      await sub.cancel();
+      // 3. Wait for heartbeat via BLE notify or server polling (nexio 방식)
+      await _waitForBoardReady(
+        baseUrl: baseUrl,
+        uid: claimedUid,
+        since: claimTime,
+        heartbeatOk: heartbeatOk,
+      );
+      await logSub?.cancel();
 
       // 4. Register device with server using claimed UID
       String? uid;
@@ -289,7 +339,12 @@ class _DeviceScreenState extends State<DeviceScreen>
         Navigator.pop(context, uid ?? claimedUid);
       }
     } catch (e) {
-      if (mounted) _showSnack('$e', persistent: true);
+      if (mounted) {
+        final msg = e is TimeoutException
+            ? '보드가 서버에 연결되지 않았습니다. WiFi 설정과 서버 주소를 확인하세요.'
+            : '$e';
+        _showSnack(msg, persistent: true);
+      }
     } finally {
       if (mounted) setState(() => _sendingWifi = false);
     }

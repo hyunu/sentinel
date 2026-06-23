@@ -102,7 +102,8 @@ void ble_init() {
 }
 
 void ble_send_uart_data(const String &hex_str) {
-    if (!deviceConnected || !pUartNotifyChar) return;
+    Serial.println(hex_str);
+    if (!pUartNotifyChar || !deviceConnected) return;
     pUartNotifyChar->setValue(hex_str.c_str());
     pUartNotifyChar->notify();
 }
