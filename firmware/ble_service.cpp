@@ -1,4 +1,5 @@
 #include <NimBLEDevice.h>
+#include <NimBLE2902.h>
 #include <vector>
 
 #include "ble_service.h"
