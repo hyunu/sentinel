@@ -1,0 +1,40 @@
+{
+  "_id": "temperature-telemetry-v1",
+  "name": "Temperature Telemetry",
+  "version": "1.0",
+  "description": "ESP32 temperature sensor UART frame (LCP-compatible AA/BB, FID=T). Payload: sensor_id, temperature_celsius (float32), humidity_percent (uint16).",
+  "frame_def": {
+    "start_byte": "AA",
+    "end_byte": "BB",
+    "endian": "big",
+    "crc_position": "before_end",
+    "header": [
+      { "name": "length", "length": 2, "type": "uint16", "endian": "big" },
+      { "name": "fid", "length": 1, "type": "uint8" },
+      { "name": "seq_no", "length": 2, "type": "uint16", "endian": "big" },
+      { "name": "attr", "length": 1, "type": "uint8" }
+    ],
+    "tail": [
+      { "name": "crc16", "length": 2, "type": "uint16", "endian": "big" }
+    ]
+  },
+  "fields": [
+    { "name": "temperature_celsius", "type": "float", "unit": "°C" },
+    { "name": "humidity_percent", "type": "uint16", "unit": "%" },
+    { "name": "sensor_id", "type": "uint8" }
+  ],
+  "fid_payloads": [
+    {
+      "fid": "54",
+      "name": "Temperature Telemetry",
+      "description": "On-board temperature and humidity sample",
+      "fields": [
+        { "name": "sensor_id", "length": 1, "type": "uint8" },
+        { "name": "temperature_celsius", "length": 4, "type": "float", "endian": "little" },
+        { "name": "humidity_percent", "length": 2, "type": "uint16", "endian": "little" }
+      ]
+    }
+  ],
+  "created_at": { "$date": "2026-06-23T00:00:00.000Z" },
+  "updated_at": { "$date": "2026-06-23T00:00:00.000Z" }
+}

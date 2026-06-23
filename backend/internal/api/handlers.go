@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +57,17 @@ func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (stri
 		return "", fmt.Errorf("board not found by uid: %s", uid)
 	}
 	return board.ID, nil
+}
+
+func (h *Handler) parseUartFields(ctx context.Context, rawHex, protocolID string) map[string]interface{} {
+	var spec *models.ProtocolSpec
+	if protocolID != "" {
+		var proto models.ProtocolSpec
+		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": protocolID}).Decode(&proto); err == nil {
+			spec = &proto
+		}
+	}
+	return protocol.ParseForStorage(rawHex, protocolID, spec)
 }
 
 func (h *Handler) RegisterBoard(c *gin.Context) {
@@ -338,13 +350,8 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		Direction: req.Direction,
 	}
 
-	if req.ProtocolID != "" {
-		var proto models.ProtocolSpec
-		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": req.ProtocolID}).Decode(&proto); err == nil {
-			if parsed, err := protocol.ParseAndFlatten(req.RawHex, &proto); err == nil {
-				data.ParsedFields = parsed
-			}
-		}
+	if parsed := h.parseUartFields(ctx, req.RawHex, req.ProtocolID); parsed != nil {
+		data.ParsedFields = parsed
 	}
 
 	if _, err := h.db.UartData().InsertOne(ctx, data); err != nil {
@@ -410,11 +417,19 @@ func (h *Handler) QueryUART(c *gin.Context) {
 	sessionID := c.Query("session_id")
 	direction := c.Query("direction")
 	since := c.Query("since")
-	limit := c.DefaultQuery("limit", "100")
+	limitStr := c.DefaultQuery("limit", "2000")
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
 
 	filter := bson.M{}
-	if boardID != "" {
-		filter["board_id"] = boardID
+	if boardID != "" || c.Query("uid") != "" {
+		resolved, err := h.resolveBoardID(ctx, boardID, c.Query("uid"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		filter["board_id"] = resolved
 	}
 	if sessionID != "" {
 		filter["session_id"] = sessionID
@@ -429,10 +444,14 @@ func (h *Handler) QueryUART(c *gin.Context) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+	limit := int64(2000)
+	if limitStr != "" {
+		if n, err := strconv.ParseInt(limitStr, 10, 64); err == nil && n > 0 {
+			limit = n
+		}
+	}
 
-	opts := options.Find().SetSort(bson.M{"timestamp": -1})
+	opts := options.Find().SetSort(bson.M{"timestamp": -1}).SetLimit(limit)
 	cursor, err := h.db.UartData().Find(ctx, filter, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -449,7 +468,6 @@ func (h *Handler) QueryUART(c *gin.Context) {
 		results = []models.UartData{}
 	}
 
-	_ = limit
 	c.JSON(http.StatusOK, results)
 }
 
@@ -490,20 +508,49 @@ func (h *Handler) IngestTemperature(c *gin.Context) {
 		return
 	}
 
+	if err := h.db.InsertTemperatureUartFrame(ctx, boardID, req.Timestamp, req.ValueCelsius); err != nil {
+		h.logger.Warn("failed to mirror temperature to uart_data", zap.Error(err))
+	}
+
 	c.JSON(http.StatusCreated, temp)
 }
 
 func (h *Handler) QueryTemperature(c *gin.Context) {
 	boardID := c.Query("board_id")
+	uid := c.Query("uid")
+	since := c.Query("since")
+	limitStr := c.DefaultQuery("limit", "2000")
+
 	filter := bson.M{}
-	if boardID != "" {
-		filter["board_id"] = boardID
-	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := h.db.Temperatures().Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": -1}))
+	if boardID != "" || uid != "" {
+		resolved, err := h.resolveBoardID(ctx, boardID, uid)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		filter["board_id"] = resolved
+	}
+
+	if since != "" {
+		t, err := time.Parse(time.RFC3339, since)
+		if err == nil {
+			filter["timestamp"] = bson.M{"$gt": t}
+		}
+	}
+
+	limit := int64(2000)
+	if limitStr != "" {
+		if n, err := strconv.ParseInt(limitStr, 10, 64); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	opts := options.Find().SetSort(bson.M{"timestamp": -1}).SetLimit(limit)
+	cursor, err := h.db.Temperatures().Find(ctx, filter, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
 		return

@@ -40,6 +40,12 @@ function readField(data: number[], offset: number, spec: FieldSpec): { value: un
         ? ((slice[0] << 24) | (slice[1] << 16) | (slice[2] << 8) | slice[3]) >>> 0
         : ((slice[3] << 24) | (slice[2] << 16) | (slice[1] << 8) | slice[0]) >>> 0;
       break;
+    case 'float': {
+      const buf = new ArrayBuffer(4);
+      new Uint8Array(buf).set(slice);
+      value = new DataView(buf).getFloat32(0, endian !== 'big');
+      break;
+    }
     case 'ascii': value = String.fromCharCode(...slice).replace(/\x00+$/, ''); break;
     case 'hex': value = bytesToHex(slice); break;
     case 'raw': value = bytesToHex(slice); break;
@@ -188,7 +194,10 @@ function parseFrame(hex: string, proto: ProtocolSpec): Record<string, unknown> {
 
   // FID mapping
   const fidVal = result['header.fid'] as number | undefined;
-  const fidMap: Record<number, string> = { 0xCF: 'CF', 0xCD: 'CD', 0xCA: 'CA', 0xCE: 'CE', 0xCC: 'CC', 0xBC: 'BC', 0xC9: 'C9' };
+  const fidMap: Record<number, string> = {
+    0xCF: 'CF', 0xCD: 'CD', 0xCA: 'CA', 0xCE: 'CE', 0xCC: 'CC', 0xBC: 'BC', 0xC9: 'C9',
+    0x54: '54',
+  };
   const fidStr = fidVal !== undefined ? (fidMap[fidVal] || fidVal.toString(16).toUpperCase()) : '??';
   result.fid = fidStr;
 
@@ -247,6 +256,39 @@ function parseFrame(hex: string, proto: ProtocolSpec): Record<string, unknown> {
   return result;
 }
 
+const TEMPERATURE_PROTOCOL_ID = 'temperature-telemetry-v1';
+
+/** Merge payload.* keys and server parsed_fields into protocol field names. */
+function flattenProtocolFields(
+  parsed: Record<string, unknown>,
+  proto: ProtocolSpec,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...parsed };
+  for (const f of proto.fields) {
+    const payloadKey = `payload.${f.name}`;
+    if (out[f.name] === undefined && out[payloadKey] !== undefined) {
+      out[f.name] = out[payloadKey];
+    }
+  }
+  return out;
+}
+
+function parseRecord(d: UartData, proto: ProtocolSpec): Record<string, unknown> {
+  const fromServer = d.parsed_fields ?? {};
+  const fromClient = parseFrame(d.raw_hex, proto);
+  const merged = { ...fromClient, ...fromServer };
+  return flattenProtocolFields(merged, proto);
+}
+
+function formatFieldValue(v: unknown, unit?: string): string {
+  if (v === null || v === undefined) return '-';
+  if (typeof v === 'number') {
+    const n = Number.isInteger(v) ? String(v) : v.toFixed(2);
+    return unit ? `${n} ${unit}` : n;
+  }
+  return renderValue(v);
+}
+
 function renderValue(v: unknown): string {
   if (v === null || v === undefined) return '-';
   if (Array.isArray(v)) {
@@ -284,36 +326,43 @@ export default function DataViewerPage() {
 
   useEffect(() => {
     api.boards.list().then(setBoards).catch(console.error);
-    api.protocols.list().then(setProtocols).catch(console.error);
+    api.protocols.list().then(list => {
+      setProtocols(list);
+      const tempProto = list.find(p => p.id === TEMPERATURE_PROTOCOL_ID);
+      if (tempProto) setSelectedProto(tempProto.id);
+    }).catch(console.error);
   }, []);
 
   useEffect(() => {
     if (!selectedBoard) { setData([]); return; }
-    api.uart.list({ board_id: selectedBoard }).then(d => setData(d.reverse())).catch(console.error);
+    api.uart.list({ board_id: selectedBoard, limit: '2000' }).then(d => setData(d.reverse())).catch(console.error);
   }, [selectedBoard]);
 
   const proto = protocols.find(p => p.id === selectedProto);
 
   const parsedData = useMemo(() => {
-    if (!proto) return data.map(d => ({ ...d, parsedFields: {} as Record<string, unknown> }));
+    if (!proto) return { entries: data.map(d => ({ ...d, parsedFields: {} as Record<string, unknown> })), fieldColumns: [] as FieldSpec[] };
 
-    // Collect all possible keys from frame parsing
-    const allKeys = new Set<string>();
-    const entries = data.map(d => {
-      const parsed = parseFrame(d.raw_hex, proto);
-      Object.keys(parsed).forEach(k => allKeys.add(k));
-      return { ...d, parsedFields: parsed };
-    });
+    const fieldColumns = proto.fields.length > 0 ? proto.fields : [];
+    const entries = data.map(d => ({
+      ...d,
+      parsedFields: parseRecord(d, proto),
+    }));
 
-    return { entries, allKeys: [...allKeys].sort() };
+    return { entries, fieldColumns };
   }, [data, proto]);
 
-  const entries = Array.isArray(parsedData) ? parsedData : parsedData.entries;
-  const allKeys = Array.isArray(parsedData) ? [] : parsedData.allKeys;
+  const entries = parsedData.entries;
+  const fieldColumns = parsedData.fieldColumns;
 
   return (
-    <div className="page">
+    <div className="page data-viewer-page">
       <h1>UART Data Viewer</h1>
+      {proto && (
+        <p className="muted" style={{ marginTop: -8, marginBottom: 12 }}>
+          Protocol <strong>{proto.name}</strong> v{proto.version} — parsed fields shown per frame definition.
+        </p>
+      )}
       <div className="card">
         <div className="form-row">
           <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
@@ -327,7 +376,8 @@ export default function DataViewerPage() {
           <span className="muted">{data.length} records</span>
         </div>
       </div>
-      <div className="card" style={{ overflowX: 'auto' }}>
+      <div className="card data-viewer-table-card">
+        <div className="data-viewer-table-scroll">
         <table>
           <thead>
             <tr>
@@ -336,26 +386,38 @@ export default function DataViewerPage() {
               <th>Raw Hex</th>
               <th>ASCII</th>
               <th>FID</th>
-              {allKeys.filter(k => k.startsWith('payload.') || k.startsWith('header.') || k.startsWith('tail.') || k.startsWith('crc.') || k.startsWith('attr.')).map(k => (
-                <th key={k}>{k}</th>
+              {fieldColumns.map(f => (
+                <th key={f.name}>{f.unit ? `${f.name} (${f.unit})` : f.name}</th>
               ))}
+              {!fieldColumns.length && proto && (
+                <th className="muted">Select a protocol with field definitions</th>
+              )}
             </tr>
           </thead>
           <tbody>
-            {entries.map(d => (
+            {entries.length === 0 ? (
+              <tr>
+                <td colSpan={6 + fieldColumns.length} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                  No UART records. Temperature readings are stored as protocol frames after ingest.
+                </td>
+              </tr>
+            ) : entries.map(d => (
               <tr key={d.id}>
                 <td className="mono">{new Date(d.timestamp).toLocaleTimeString()}</td>
                 <td><span className={`badge ${d.direction === 'TX' ? 'badge-tx' : 'badge-rx'}`}>{d.direction}</span></td>
                 <td className="mono">{d.raw_hex}</td>
                 <td className="mono">{hexToAscii(d.raw_hex)}</td>
-                <td><span className="badge badge-tx">{(d as any).parsedFields?.fid as string || '-'}</span></td>
-                {allKeys.filter(k => k.startsWith('payload.') || k.startsWith('header.') || k.startsWith('tail.') || k.startsWith('crc.') || k.startsWith('attr.')).map(k => (
-                  <td key={k} className="mono">{renderValue((d as any).parsedFields?.[k])}</td>
+                <td><span className="badge badge-tx">{String(d.parsedFields?.fid ?? '-')}</span></td>
+                {fieldColumns.map(f => (
+                  <td key={f.name} className="mono">
+                    {formatFieldValue(d.parsedFields?.[f.name], f.unit)}
+                  </td>
                 ))}
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

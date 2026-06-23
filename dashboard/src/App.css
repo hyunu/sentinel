@@ -77,8 +77,14 @@ body {
 
 .main-content {
   flex: 1;
+  min-width: 0;
   padding: 24px;
   overflow-y: auto;
+}
+
+.main-content:has(.data-viewer-page) {
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 .page h1 {
@@ -161,6 +167,47 @@ th {
 
 tr:hover {
   background: var(--surface2);
+}
+
+.card.data-viewer-table-card {
+  padding: 0;
+  margin-bottom: 16px;
+}
+
+.data-viewer-table-scroll {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-viewer-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+}
+
+.data-viewer-table-scroll th,
+.data-viewer-table-scroll td {
+  white-space: nowrap;
+}
+
+.data-viewer-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.page.data-viewer-page {
+  width: 100%;
+  max-width: none;
+}
+
+.page.data-viewer-page .card:first-of-type {
+  margin-bottom: 12px;
 }
 
 button {

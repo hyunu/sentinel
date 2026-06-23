@@ -31,6 +31,14 @@ func main() {
 		logger.Warn("Failed to ensure indexes", zap.Error(err))
 	}
 
+	if err := database.EnsureProtocols(context.Background()); err != nil {
+		logger.Warn("Failed to seed protocols", zap.Error(err))
+	}
+
+	if err := database.BackfillTemperatureUart(context.Background()); err != nil {
+		logger.Warn("Failed to backfill temperature uart data", zap.Error(err))
+	}
+
 	router := api.SetupRouter(database, logger)
 
 	srv := &http.Server{

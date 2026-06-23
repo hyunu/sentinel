@@ -14,6 +14,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export interface Board {
   id: string;
+  uid?: string;
   name: string;
   mac_address: string;
   firmware_version?: string;
@@ -139,12 +140,13 @@ export const api = {
     request<{ message: string }>('/heartbeat', { method: 'POST', body: JSON.stringify({ board_id }) }),
 
   uart: {
-    list: (params?: { board_id?: string; session_id?: string; direction?: string; since?: string }) => {
+    list: (params?: { board_id?: string; session_id?: string; direction?: string; since?: string; limit?: string | number }) => {
       const qs = new URLSearchParams();
       if (params?.board_id) qs.set('board_id', params.board_id);
       if (params?.session_id) qs.set('session_id', params.session_id);
       if (params?.direction) qs.set('direction', params.direction);
       if (params?.since) qs.set('since', params.since);
+      if (params?.limit) qs.set('limit', String(params.limit));
       return request<UartData[]>(`/data/uart?${qs}`);
     },
     ingest: (board_id: string, raw_hex: string, direction: string) =>
@@ -152,9 +154,14 @@ export const api = {
   },
 
   temperature: {
-    list: (board_id?: string) => {
-      const qs = board_id ? `?board_id=${board_id}` : '';
-      return request<Temperature[]>(`/data/temperature${qs}`);
+    list: (params?: { board_id?: string; uid?: string; since?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.board_id) qs.set('board_id', params.board_id);
+      if (params?.uid) qs.set('uid', params.uid);
+      if (params?.since) qs.set('since', params.since);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      const q = qs.toString();
+      return request<Temperature[]>(`/data/temperature${q ? `?${q}` : ''}`);
     },
   },
 
