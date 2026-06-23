@@ -170,6 +170,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     String baseUrl,
     String uid, {
     required DateTime since,
+    DateTime? newerThan,
   }) async {
     try {
       final res = await http
@@ -183,7 +184,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (hbRaw == null) continue;
         final hb = DateTime.tryParse(hbRaw.toString());
         if (hb == null || hb.year <= 1) continue;
-        if (!hb.toUtc().isBefore(since.toUtc().subtract(const Duration(seconds: 5)))) {
+        final hbUtc = hb.toUtc();
+        if (newerThan != null && !hbUtc.isAfter(newerThan.toUtc())) continue;
+        if (!hbUtc.isBefore(since.toUtc().subtract(const Duration(seconds: 5)))) {
           return true;
         }
       }
@@ -196,12 +199,18 @@ class _DeviceScreenState extends State<DeviceScreen>
     required String uid,
     required DateTime since,
     required Completer<void> heartbeatOk,
+    DateTime? newerThan,
     Duration timeout = const Duration(seconds: 90),
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       if (heartbeatOk.isCompleted) return;
-      if (await _serverHasRecentHeartbeat(baseUrl, uid, since: since)) {
+      if (await _serverHasRecentHeartbeat(
+        baseUrl,
+        uid,
+        since: since,
+        newerThan: newerThan,
+      )) {
         if (!heartbeatOk.isCompleted) heartbeatOk.complete();
         return;
       }
@@ -210,6 +219,48 @@ class _DeviceScreenState extends State<DeviceScreen>
     if (!heartbeatOk.isCompleted) {
       throw TimeoutException('heartbeat not received within ${timeout.inSeconds}s');
     }
+  }
+
+  DateTime? _lastHeartbeatForUid(List boards, String uid) {
+    for (final raw in boards) {
+      if (raw is! Map || raw['uid'] != uid) continue;
+      final hb = DateTime.tryParse(raw['last_heartbeat']?.toString() ?? '');
+      if (hb != null && hb.year > 1) return hb;
+    }
+    return null;
+  }
+
+  String? _findExistingUidForMac(List boards, String mac) {
+    String? bestUid;
+    int? bestNum;
+    for (final raw in boards) {
+      if (raw is! Map) continue;
+      if (raw['mac_address'] != mac) continue;
+      final uid = raw['uid']?.toString();
+      if (uid == null || uid.isEmpty) continue;
+      final num = int.tryParse(uid);
+      if (num == null) continue;
+      if (bestNum == null || num < bestNum) {
+        bestNum = num;
+        bestUid = uid;
+      }
+    }
+    return bestUid;
+  }
+
+  Future<String?> _claimUid(String baseUrl, String mac) async {
+    final claimRes = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/boards/claim'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'mac_address': mac}),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (claimRes.statusCode == 200) {
+      final body = json.decode(claimRes.body);
+      return body['uid'] as String?;
+    }
+    throw Exception('Claim failed: ${claimRes.statusCode}');
   }
 
   Future<void> _sendWifi() async {
@@ -236,49 +287,37 @@ class _DeviceScreenState extends State<DeviceScreen>
         return;
       }
       
-      // 1. Try to find existing board by mac on server; if not found, claim a new UID
+      // 1. 기존 보드 MAC 매칭 시 가장 먼저 할당된 UID 재사용 (0038 등 중복 방지)
+      final mac = widget.device.remoteId.str;
       String? claimedUid;
+      DateTime? heartbeatBaseline;
       try {
         final boardsRes = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
         if (boardsRes.statusCode == 200) {
-          final list = json.decode(boardsRes.body) as List;
-          for (final b in list) {
-            if (b is Map && b['mac_address'] == widget.device.remoteId.str) {
-              claimedUid = b['uid'] as String?;
-              break;
-            }
+          final boards = json.decode(boardsRes.body) as List;
+          claimedUid = _findExistingUidForMac(boards, mac);
+          if (claimedUid != null) {
+            heartbeatBaseline = _lastHeartbeatForUid(boards, claimedUid);
           }
         }
       } catch (_) {
         // ignore and fallback to claim
       }
 
-      if (claimedUid == null) {
-        try {
-          final claimRes = await http
-              .post(Uri.parse('$baseUrl/api/v1/boards/claim'))
-              .timeout(const Duration(seconds: 5));
-          if (claimRes.statusCode == 200) {
-            final body = json.decode(claimRes.body);
-            claimedUid = body['uid'] as String?;
-          } else {
-            throw Exception('Claim failed: ${claimRes.statusCode}');
-          }
-        } catch (e) {
-          throw Exception('Failed to claim UID: $e');
-        }
-      }
+      claimedUid ??= await _claimUid(baseUrl, mac);
 
       if (claimedUid == null || claimedUid.isEmpty) throw Exception('No UID claimed');
       final claimTime = DateTime.now();
 
-      // BLE 로그는 config 전송 전에 구독해야 초기 이벤트를 놓치지 않음
+      // BLE 로그는 config 전송 전에 구독 (sendWifiConfig는 cache를 건드리지 않음)
       final heartbeatOk = Completer<void>();
+      var configSent = false;
       StreamSubscription<String>? logSub;
       try {
         final logStream = await _scanner.subscribeToLogs(widget.device);
         logSub = logStream.listen((msg) {
           debugPrint('[BLE LOG] $msg');
+          if (!configSent) return;
           if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) {
             heartbeatOk.complete();
           }
@@ -296,12 +335,14 @@ class _DeviceScreenState extends State<DeviceScreen>
         serverUrl: url.isNotEmpty ? url : null,
         uid: claimedUid,
       );
+      configSent = true;
 
-      // 3. Wait for heartbeat via BLE notify or server polling (nexio 방식)
+      // 3. Wait for NEW heartbeat via BLE notify or server polling
       await _waitForBoardReady(
         baseUrl: baseUrl,
         uid: claimedUid,
         since: claimTime,
+        newerThan: heartbeatBaseline,
         heartbeatOk: heartbeatOk,
       );
       await logSub?.cancel();
@@ -315,7 +356,7 @@ class _DeviceScreenState extends State<DeviceScreen>
               headers: {'Content-Type': 'application/json'},
               body: json.encode({
                 'uid': claimedUid,
-                'mac_address': widget.device.remoteId.str,
+                'mac_address': mac,
               }),
             )
             .timeout(const Duration(seconds: 5));

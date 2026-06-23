@@ -113,7 +113,6 @@ class BleScanner {
     String? uid,
   }) async {
     try {
-      clearCache();
       final writeCh = await _findChar(device, kUartWriteCharUuid);
 
       if (writeCh == null) throw Exception('WiFi config/write characteristic not found');

@@ -52,12 +52,23 @@ void wifi_init() {
 }
 
 void wifi_connect(const String &ssid, const String &password) {
-    if (connecting) return;
-    connecting = true;
     pendingInitialHeartbeat = false;
     wifiConnectedAt = 0;
 
+    // Same network already up — re-run onboarding heartbeat without reconnecting
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == ssid && hasValidIp()) {
+        Serial.printf("[WiFi] Already connected to %s — scheduling onboarding heartbeat\n", ssid.c_str());
+        connecting = false;
+        pendingInitialHeartbeat = true;
+        wifiConnectedAt = millis() - 3000; // fire on next wifi_loop (~immediate)
+        ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
+        return;
+    }
+
+    connecting = true;
     Serial.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
+    WiFi.disconnect(false);
+    delay(100);
     WiFi.begin(ssid.c_str(), password.c_str());
 }
 
