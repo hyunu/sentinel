@@ -131,10 +131,29 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"uid": board.UID, "board": board})
 }
 
-// ClaimBoard returns a new unique UID without creating a board record.
+// ClaimBoard returns a UID. If mac_address is provided and a board already exists,
+// returns the existing UID (lowest assigned) instead of creating a duplicate.
 func (h *Handler) ClaimBoard(c *gin.Context) {
+	var req struct {
+		MACAddress string `json:"mac_address"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+
+	if req.MACAddress != "" {
+		var existing models.Board
+		err := h.db.Boards().FindOne(
+			ctx,
+			bson.M{"mac_address": req.MACAddress},
+			options.FindOne().SetSort(bson.M{"uid": 1}),
+		).Decode(&existing)
+		if err == nil && existing.UID != "" {
+			c.JSON(http.StatusOK, gin.H{"uid": existing.UID, "reused": true})
+			return
+		}
+	}
 
 	seq, err := h.db.GetNextSequence(ctx, "device_uid")
 	if err != nil {

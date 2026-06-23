@@ -97,14 +97,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
+  void _showRegisteredNotice(String uid) {
+    final cs = Theme.of(context).colorScheme;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: cs.surfaceContainerHigh,
+        elevation: 0,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: cs.outline.withValues(alpha: 0.35)),
+        ),
+        margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        content: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: cs.secondary.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.check_rounded, size: 16, color: cs.secondary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Successfully registered $uid',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: cs.onSurface,
+                    ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _onDeviceSelected(ScanResult device) async {
-    await Navigator.push(
+    final registeredUid = await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => DeviceScreen(device: device.device),
       ),
     );
-    if (mounted) _startScan();
+    if (!mounted) return;
+    if (registeredUid != null && registeredUid.isNotEmpty) {
+      _showRegisteredNotice(registeredUid);
+    }
+    _startScan();
   }
 
   @override
