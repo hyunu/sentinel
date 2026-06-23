@@ -1,15 +1,14 @@
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
+#include <NimBLEDevice.h>
 #include <BLE2902.h>
+#include <vector>
 
 #include "ble_service.h"
 #include "config.h"
 #include "wifi_manager.h"
 
-static BLEServer *pServer = nullptr;
-static BLECharacteristic *pUartNotifyChar = nullptr;
-static BLECharacteristic *pUartWriteChar = nullptr;
+static NimBLEServer *pServer = nullptr;
+static NimBLECharacteristic *pUartNotifyChar = nullptr;
+static NimBLECharacteristic *pUartWriteChar = nullptr;
 static bool deviceConnected = false;
 
 extern void on_wifi_credentials_received(const String &ssid, const String &password);
@@ -25,21 +24,24 @@ static String _extract_json_field(const String &json, const char *key) {
     return json.substring(idx, end);
 }
 
-class ServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer *s) override {
+class ServerCallbacks : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer* pServer, ble_gap_conn_desc& desc) override {
+        (void)pServer; (void)desc;
         deviceConnected = true;
         Serial.println("[BLE] Connected");
     }
-    void onDisconnect(BLEServer *s) override {
+    void onDisconnect(NimBLEServer* pServer, ble_gap_conn_desc& desc, int reason) override {
+        (void)pServer; (void)desc; (void)reason;
         deviceConnected = false;
         Serial.println("[BLE] Disconnected");
-        pServer->getAdvertising()->start();
+        NimBLEDevice::getAdvertising()->start();
     }
 };
 
-class UartWriteCallback : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *c) override {
-        String value = c->getValue();
+class UartWriteCallback : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* c) override {
+        std::string val = c->getValue();
+        String value = String(val.c_str());
         if (value.length() == 0) return;
         Serial.printf("[BLE] Received write payload: %s\n", value.c_str());
 
@@ -52,9 +54,8 @@ class UartWriteCallback : public BLECharacteristicCallbacks {
             serverUrl = _extract_json_field(value, "url");
         }
         String uniqueId = _extract_json_field(value, "uniqueId");
-        String baudStr = _extract_json_field(value, "baudRate");
+        // update backend URL / UID if present
         if (serverUrl.length() > 0) {
-            // update firmware backend URL at runtime
             wifi_set_server_url(serverUrl);
         }
         if (uniqueId.length() > 0) {
@@ -71,63 +72,64 @@ class UartWriteCallback : public BLECharacteristicCallbacks {
 };
 
 void ble_init() {
-    BLEDevice::init(BLE_DEVICE_NAME);
-    pServer = BLEDevice::createServer();
+    NimBLEDevice::init(BLE_DEVICE_NAME);
+    pServer = NimBLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    BLEService *pService = pServer->createService(BLEUUID(UART_SERVICE_UUID));
+    NimBLEService *pService = pServer->createService(NimBLEUUID(UART_SERVICE_UUID));
 
     // Notify characteristic (board -> app)
     pUartNotifyChar = pService->createCharacteristic(
-        BLEUUID(UART_NOTIFY_CHAR_UUID),
-        BLECharacteristic::PROPERTY_NOTIFY
+        NimBLEUUID(UART_NOTIFY_CHAR_UUID),
+        NIMBLE_PROPERTY::NOTIFY
     );
     pUartNotifyChar->addDescriptor(new BLE2902());
 
     // Write characteristic (app -> board)
     pUartWriteChar = pService->createCharacteristic(
-        BLEUUID(UART_WRITE_CHAR_UUID),
-        BLECharacteristic::PROPERTY_WRITE
+        NimBLEUUID(UART_WRITE_CHAR_UUID),
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
     pUartWriteChar->setCallbacks(new UartWriteCallback());
 
     pService->start();
 
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID(BLEUUID(UART_SERVICE_UUID));
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);
-    pAdvertising->setMinPreferred(0x12);
-    BLEDevice::startAdvertising();
+    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(NimBLEUUID(UART_SERVICE_UUID));
+    pAdvertising->start();
 
-    Serial.printf("[BLE] Initialized. Name: %s\n", BLE_DEVICE_NAME);
+    Serial.printf("[BLE] NimBLE Initialized. Name: %s\n", BLE_DEVICE_NAME);
 }
 
 void ble_send_uart_data(const String &hex_str) {
     if (!deviceConnected || !pUartNotifyChar) return;
-    pUartNotifyChar->setValue(hex_str);
+    pUartNotifyChar->setValue(hex_str.c_str());
     pUartNotifyChar->notify();
 }
 
 void ble_update_name(const String &name) {
     if (name.length() == 0) return;
-    // Update advertisement name. Use advertisement data and enable scan response.
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-    BLEAdvertisementData adv;
-    adv.setName(name.c_str());
-    // include UID in manufacturer data so scanners show it reliably
-    {
-        String uid_str = name.substring(name.indexOf('-') + 1); // "0036"
-        // manufacturer data: ASCII "UID" + uid
-        String mdata = String("UID") + uid_str;
-        adv.setManufacturerData(mdata);
-    }
-    pAdvertising->setAdvertisementData(adv);
-    // enable scan response so phones pick up updated name reliably
-    pAdvertising->setScanResponse(true);
-    // restart advertising to ensure update
-    pAdvertising->stop();
-    delay(50);
-    pAdvertising->start();
-    Serial.printf("[BLE] Updated advertised name: %s\n", name.c_str());
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    // stop to ensure controller picks up changes
+    adv->stop();
+
+    // manufacturer data: company id (little endian) + flags(0) + ASCII UID (if present)
+    const uint16_t company = (uint16_t)BLE_MANUFACTURER_ID;
+    String uid_str = "";
+    int dash = name.indexOf('-');
+    if (dash >= 0 && dash + 1 < (int)name.length()) uid_str = name.substring(dash + 1);
+    size_t uidLen = uid_str.length();
+    size_t mfgLen = 2 + 1 + uidLen; // company_lo, company_hi, flags, [uid...]
+    std::vector<uint8_t> mfg(mfgLen);
+    mfg[0] = (uint8_t)(company & 0xFF);
+    mfg[1] = (uint8_t)(company >> 8);
+    mfg[2] = 0x00; // status flags (reserved)
+    for (size_t i = 0; i < uidLen; ++i) mfg[3 + i] = (uint8_t)uid_str[i];
+    adv->setManufacturerData(mfg.data(), (int)mfgLen);
+
+    // update GAP device name so mobile OSes display it
+    NimBLEDevice::setDeviceName(name.c_str());
+
+    adv->start();
+    Serial.printf("[BLE] Updated advertised name (nimble): %s\n", name.c_str());
 }
