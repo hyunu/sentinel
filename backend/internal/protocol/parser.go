@@ -221,6 +221,7 @@ func parseFieldsSequential(data []byte, fields []models.FieldSpec) (map[string]i
 			return result, offset, err
 		}
 		result[field.Name] = val
+		applyFieldDecoration(result, field.Name, field.Decoration, val)
 		offset = newOffset
 	}
 

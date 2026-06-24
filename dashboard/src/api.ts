@@ -35,6 +35,7 @@ export interface FieldSpec {
   unit?: string;
   enum_mapping?: Record<string, number>;
   endian?: string;
+  decoration?: string;
   fields?: FieldSpec[];
   flag?: string;
   condition?: string;

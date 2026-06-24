@@ -104,6 +104,9 @@ func FlattenTemperatureFields(fields map[string]interface{}) map[string]interfac
 		if v, ok := fields[src]; ok {
 			out[dst] = toFloat64(v)
 		}
+		if v, ok := fields[src+"_display"]; ok {
+			out[dst+"_display"] = v
+		}
 	}
 	return out
 }

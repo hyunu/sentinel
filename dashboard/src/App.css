@@ -828,6 +828,7 @@ tbody tr:last-child td {
 
 .field-table-wrap {
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .field-table {
@@ -844,11 +845,12 @@ tbody tr:last-child td {
 .field-table .col-endian { width: 68px; }
 .field-table .col-unit { width: 72px; }
 .field-table .col-flag { width: 72px; }
+.field-table .col-decoration { width: 140px; }
 .field-table .col-action { width: 36px; }
 
 .field-table th {
   text-align: left;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -931,6 +933,103 @@ tbody tr:last-child td {
 .field-table .field-unit,
 .field-table .field-flag {
   text-align: center;
+}
+
+.field-table .field-decoration {
+  font-size: 13px;
+}
+
+.col-decoration-header {
+  position: relative;
+  overflow: visible;
+}
+
+.th-label-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.decoration-help-popover {
+  position: fixed;
+  z-index: 1000;
+  padding: 14px 16px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  white-space: normal;
+}
+
+.info-icon-btn {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: var(--font-serif, Georgia, serif);
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.info-icon-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: var(--surface-hover);
+}
+
+.decoration-help-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.decoration-help-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.decoration-help-list div {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.decoration-help-list dt {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.decoration-help-list dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.decoration-help-list code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--surface-inset);
+  color: var(--text);
 }
 
 .field-table .col-action-cell {

@@ -34,6 +34,7 @@ type FieldSpec struct {
 	Flag         string            `json:"flag,omitempty" bson:"flag,omitempty"`
 	Condition    string            `json:"condition,omitempty" bson:"condition,omitempty"`
 	Repeat       string            `json:"repeat,omitempty" bson:"repeat,omitempty"`
+	Decoration   string            `json:"decoration,omitempty" bson:"decoration,omitempty"`
 }
 
 type FrameDef struct {

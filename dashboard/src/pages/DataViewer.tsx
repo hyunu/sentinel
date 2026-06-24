@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
 import type { UartData, ProtocolSpec, Board, FieldSpec } from '../api';
 import PageHeader from '../components/PageHeader';
+import { applyFieldDecoration } from '../lib/decoration';
 
 function hexToBytes(hex: string): number[] {
   const bytes: number[] = [];
@@ -96,6 +97,10 @@ function parseFieldsSequential(data: number[], fields: FieldSpec[]): { fields: R
 
     const { value, nextOffset } = readField(data, offset, field);
     result[field.name] = value;
+    const decorated = applyFieldDecoration(field.name, field.decoration, value);
+    if (decorated !== null) {
+      result[`${field.name}_display`] = decorated;
+    }
     offset = nextOffset;
   }
 
@@ -270,6 +275,11 @@ function flattenProtocolFields(
     if (out[f.name] === undefined && out[payloadKey] !== undefined) {
       out[f.name] = out[payloadKey];
     }
+    const displayKey = `${f.name}_display`;
+    const payloadDisplayKey = `payload.${f.name}_display`;
+    if (out[displayKey] === undefined && out[payloadDisplayKey] !== undefined) {
+      out[displayKey] = out[payloadDisplayKey];
+    }
   }
   return out;
 }
@@ -288,6 +298,19 @@ function formatFieldValue(v: unknown, unit?: string): string {
     return unit ? `${n} ${unit}` : n;
   }
   return renderValue(v);
+}
+
+function displayFieldValue(parsed: Record<string, unknown>, f: FieldSpec): string {
+  const displayKey = `${f.name}_display`;
+  if (parsed[displayKey] !== undefined && parsed[displayKey] !== null) {
+    const d = String(parsed[displayKey]);
+    return f.unit ? `${d} ${f.unit}` : d;
+  }
+  if (f.decoration) {
+    const dec = applyFieldDecoration(f.name, f.decoration, parsed[f.name]);
+    if (dec !== null) return f.unit ? `${dec} ${f.unit}` : dec;
+  }
+  return formatFieldValue(parsed[f.name], f.unit);
 }
 
 function renderValue(v: unknown): string {
@@ -411,7 +434,7 @@ export default function DataViewerPage() {
                 <td><span className="badge badge-tx">{String(d.parsedFields?.fid ?? '-')}</span></td>
                 {fieldColumns.map(f => (
                   <td key={f.name} className="mono">
-                    {formatFieldValue(d.parsedFields?.[f.name], f.unit)}
+                    {displayFieldValue(d.parsedFields ?? {}, f)}
                   </td>
                 ))}
               </tr>

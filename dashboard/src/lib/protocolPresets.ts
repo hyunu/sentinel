@@ -32,6 +32,7 @@ export function emptyField(partial?: Partial<FieldSpec>): FieldSpec {
     type: 'uint8',
     unit: '',
     endian: 'little',
+    decoration: '',
     fields: [],
     ...partial,
   };
@@ -54,6 +55,7 @@ export function deriveDisplayFields(fidPayloads: FIDPayload[]): FieldSpec[] {
         unit: f.unit,
         length: f.length,
         endian: f.endian,
+        decoration: f.decoration,
       });
     }
   }
