@@ -35,6 +35,8 @@ type FieldSpec struct {
 	Condition    string            `json:"condition,omitempty" bson:"condition,omitempty"`
 	Repeat       string            `json:"repeat,omitempty" bson:"repeat,omitempty"`
 	Decoration   string            `json:"decoration,omitempty" bson:"decoration,omitempty"`
+	BitOffset    *int              `json:"bit_offset,omitempty" bson:"bit_offset,omitempty"`
+	BitLength    int               `json:"bit_length,omitempty" bson:"bit_length,omitempty"`
 }
 
 type FrameDef struct {

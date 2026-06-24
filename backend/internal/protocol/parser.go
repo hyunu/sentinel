@@ -161,17 +161,20 @@ func readField(data []byte, offset int, spec models.FieldSpec) (interface{}, int
 
 func parseFieldsSequential(data []byte, fields []models.FieldSpec) (map[string]interface{}, int, error) {
 	result := make(map[string]interface{})
-	offset := 0
+	cur := &parseCursor{}
 
 	for _, field := range fields {
-		if field.Repeat == "until_end" || (field.Type == "raw" && field.Length == 0) {
-			remaining := data[offset:]
+		if field.Repeat == "until_end" || (field.Type == "raw" && field.Length == 0 && !isBitField(field)) {
+			cur.alignByte()
+			remaining := data[cur.byteOff:]
 			result[field.Name] = hex.EncodeToString(remaining)
-			offset = len(data)
+			cur.byteOff = len(data)
+			cur.bitOff = 0
 			continue
 		}
 
 		if field.Type == "function_args" || field.Type == "func_result" || len(field.Fields) > 0 {
+			cur.alignByte()
 			if field.Condition != "" {
 				condVal, ok := result[field.Condition]
 				if ok {
@@ -186,46 +189,90 @@ func parseFieldsSequential(data []byte, fields []models.FieldSpec) (map[string]i
 
 			switch field.Type {
 			case "function_args":
-				args, n, err := parseFunctionArgs(data[offset:], field)
+				args, n, err := parseFunctionArgs(data[cur.byteOff:], field)
 				if err != nil {
-					return result, offset, err
+					return result, cur.byteOff, err
 				}
 				result[field.Name] = args
-				offset += n
+				cur.byteOff += n
+				cur.bitOff = 0
 			case "func_result":
-				res, n, err := parseFunctionResult(data[offset:], field)
+				res, n, err := parseFunctionResult(data[cur.byteOff:], field)
 				if err != nil {
-					return result, offset, err
+					return result, cur.byteOff, err
 				}
 				result[field.Name] = res
-				offset += n
+				cur.byteOff += n
+				cur.bitOff = 0
 			default:
-				sub, n, err := parseFieldsSequential(data[offset:], field.Fields)
+				sub, n, err := parseFieldsSequential(data[cur.byteOff:], field.Fields)
 				if err != nil {
-					return result, offset, err
+					return result, cur.byteOff, err
 				}
 				for k, v := range sub {
 					result[field.Name+"."+k] = v
 				}
-				offset += n
+				cur.byteOff += n
+				cur.bitOff = 0
 			}
 			continue
 		}
+
+		if isBitField(field) {
+			val, err := readBitField(data, cur, field)
+			if err != nil {
+				return result, cur.byteOff, err
+			}
+			result[field.Name] = val
+			applyFieldDecoration(result, field.Name, field.Decoration, val)
+			continue
+		}
+
+		cur.alignByte()
 
 		if field.Length == 0 {
 			continue
 		}
 
-		val, newOffset, err := readField(data, offset, field)
+		val, newOffset, err := readField(data, cur.byteOff, field)
 		if err != nil {
-			return result, offset, err
+			return result, cur.byteOff, err
 		}
 		result[field.Name] = val
 		applyFieldDecoration(result, field.Name, field.Decoration, val)
-		offset = newOffset
+		cur.byteOff = newOffset
+		cur.bitOff = 0
 	}
 
-	return result, offset, nil
+	return result, cur.byteOff, nil
+}
+
+func parseFieldsAbsolute(data []byte, fields []models.FieldSpec) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, field := range fields {
+		if field.Name == "" {
+			continue
+		}
+		if isBitField(field) {
+			val, err := readBitFieldAbsolute(data, field)
+			if err != nil {
+				continue
+			}
+			result[field.Name] = val
+			applyFieldDecoration(result, field.Name, field.Decoration, val)
+			continue
+		}
+		if field.Length == 0 {
+			continue
+		}
+		val, _, err := readField(data, field.Offset, field)
+		if err != nil {
+			continue
+		}
+		result[field.Name] = val
+		applyFieldDecoration(result, field.Name, field.Decoration, val)
+	}
+	return result
 }
 
 func parseFunctionArgs(data []byte, spec models.FieldSpec) ([]map[string]interface{}, int, error) {

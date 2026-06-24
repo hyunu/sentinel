@@ -3,6 +3,14 @@ import { api } from '../api';
 import type { UartData, ProtocolSpec, Board, FieldSpec } from '../api';
 import PageHeader from '../components/PageHeader';
 import { applyFieldDecoration } from '../lib/decoration';
+import {
+  alignByte,
+  fieldsUseAbsoluteOffsets,
+  isBitField,
+  newParseCursor,
+  readBitField,
+  readBitFieldAbsolute,
+} from '../lib/bits';
 
 function hexToBytes(hex: string): number[] {
   const bytes: number[] = [];
@@ -60,31 +68,36 @@ function readField(data: number[], offset: number, spec: FieldSpec): { value: un
 
 function parseFieldsSequential(data: number[], fields: FieldSpec[]): { fields: Record<string, unknown>; offset: number } {
   const result: Record<string, unknown> = {};
-  let offset = 0;
+  const cur = newParseCursor();
 
   for (const field of fields) {
-    if (field.repeat === 'until_end' || (field.type === 'raw' && (!field.length || field.length === 0))) {
-      result[field.name] = bytesToHex(data.slice(offset));
-      offset = data.length;
+    if (field.repeat === 'until_end' || (field.type === 'raw' && (!field.length || field.length === 0) && !isBitField(field))) {
+      alignByte(cur);
+      result[field.name] = bytesToHex(data.slice(cur.byteOff));
+      cur.byteOff = data.length;
+      cur.bitOff = 0;
       continue;
     }
 
     if (field.type === 'function_args') {
-      const args = parseFunctionArgs(data.slice(offset), field);
+      alignByte(cur);
+      const args = parseFunctionArgs(data.slice(cur.byteOff), field);
       result[field.name] = args;
-      // Estimate consumed bytes (sum of FA entries)
       let consumed = 0;
       for (const a of args) {
         consumed += 2 + (a._length as number);
       }
-      offset += consumed || data.length;
+      cur.byteOff += consumed || data.length;
+      cur.bitOff = 0;
       continue;
     }
 
     if (field.type === 'func_result') {
-      const res = parseFunctionResult(data.slice(offset), field);
+      alignByte(cur);
+      const res = parseFunctionResult(data.slice(cur.byteOff), field);
       result[field.name] = res;
-      offset += (res._consumed as number) || data.length;
+      cur.byteOff += (res._consumed as number) || data.length;
+      cur.bitOff = 0;
       continue;
     }
 
@@ -93,18 +106,59 @@ function parseFieldsSequential(data: number[], fields: FieldSpec[]): { fields: R
       if (condVal === 0 || condVal === undefined || condVal === null) continue;
     }
 
+    if (isBitField(field)) {
+      try {
+        const value = readBitField(data, cur, field);
+        result[field.name] = value;
+        const decorated = applyFieldDecoration(field.name, field.decoration, value);
+        if (decorated !== null) result[`${field.name}_display`] = decorated;
+      } catch {
+        /* skip invalid bit read */
+      }
+      continue;
+    }
+
+    alignByte(cur);
+
     if (field.length === undefined || field.length === 0) continue;
 
-    const { value, nextOffset } = readField(data, offset, field);
+    const { value, nextOffset } = readField(data, cur.byteOff, field);
     result[field.name] = value;
     const decorated = applyFieldDecoration(field.name, field.decoration, value);
     if (decorated !== null) {
       result[`${field.name}_display`] = decorated;
     }
-    offset = nextOffset;
+    cur.byteOff = nextOffset;
+    cur.bitOff = 0;
   }
 
-  return { fields: result, offset };
+  return { fields: result, offset: cur.byteOff };
+}
+
+function parseFieldsAbsolute(data: number[], fields: FieldSpec[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (!field.name) continue;
+
+    if (isBitField(field)) {
+      try {
+        const value = readBitFieldAbsolute(data, field);
+        result[field.name] = value;
+        const decorated = applyFieldDecoration(field.name, field.decoration, value);
+        if (decorated !== null) result[`${field.name}_display`] = decorated;
+      } catch {
+        /* skip */
+      }
+      continue;
+    }
+
+    if (!field.length) continue;
+    const { value } = readField(data, field.offset ?? 0, field);
+    result[field.name] = value;
+    const decorated = applyFieldDecoration(field.name, field.decoration, value);
+    if (decorated !== null) result[`${field.name}_display`] = decorated;
+  }
+  return result;
 }
 
 function parseFunctionArgs(data: number[], spec: FieldSpec): Record<string, unknown>[] {
@@ -253,9 +307,9 @@ function parseFrame(hex: string, proto: ProtocolSpec): Record<string, unknown> {
     result['payload.raw'] = bytesToHex(payloadData);
   }
 
-  // Flat fields (backward compat)
-  if (proto.fields.length > 0) {
-    const { fields: flatParsed } = parseFieldsSequential(data, proto.fields);
+  // Flat fields (raw offset layout; LCP display fields skip re-parse when frame-based)
+  if (proto.fields.length > 0 && (!proto.frame_def || fieldsUseAbsoluteOffsets(proto.fields))) {
+    const flatParsed = parseFieldsAbsolute(data, proto.fields);
     Object.assign(result, flatParsed);
   }
 

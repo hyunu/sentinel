@@ -841,7 +841,9 @@ tbody tr:last-child td {
 
 .field-table .col-type { width: 108px; }
 .field-table .col-offset { width: 64px; }
-.field-table .col-len { width: 56px; }
+.field-table .col-len { width: 52px; }
+.field-table .col-bit-off { width: 64px; }
+.field-table .col-bit-len { width: 48px; }
 .field-table .col-endian { width: 68px; }
 .field-table .col-unit { width: 72px; }
 .field-table .col-flag { width: 72px; }
@@ -937,6 +939,14 @@ tbody tr:last-child td {
 
 .field-table .field-decoration {
   font-size: 13px;
+}
+
+.field-table .field-na {
+  display: block;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 32px;
 }
 
 .col-decoration-header {
