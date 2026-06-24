@@ -11,6 +11,7 @@ void wifi_send_temperature(float temp_celsius);
 bool wifi_is_connected();
 void wifi_loop();
 void wifi_set_server_url(const String &url);
+void wifi_startup();
 void wifi_set_uid(const String &uid);
 
 #endif

@@ -155,7 +155,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final registeredUid = await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) => DeviceScreen(device: device.device),
+        builder: (_) => DeviceScreen(
+          device: device.device,
+          advertisementData: device.advertisementData,
+        ),
       ),
     );
     if (!mounted) return;
@@ -383,9 +386,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDeviceCard(ColorScheme cs, ScanResult device) {
-    final advName = device.advertisementData.advName;
-    final name = advName.isNotEmpty ? advName : (device.device.platformName.isNotEmpty ? device.device.platformName : '');
-    final displayName = name.isNotEmpty ? name : 'Sentinel Device';
+    final displayName = BleScanner.displayName(
+      device.advertisementData,
+      platformName: device.device.platformName,
+    );
     final rssi = device.rssi;
     final strength = rssi >= -55
         ? 4

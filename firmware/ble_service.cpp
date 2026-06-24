@@ -1,4 +1,5 @@
 #include <NimBLEDevice.h>
+#include <WiFi.h>
 #include <vector>
 
 #include "ble_service.h"
@@ -129,6 +130,10 @@ void ble_refresh_advertising() {
     Serial.printf("[BLE] Advertising name=%s flags=0x%02X uid=%s\n", name, gStatusFlags, gUidStr);
 }
 
+void ble_preload_uid(const String &uid) {
+    _pad_uid(uid, gUidStr, sizeof(gUidStr));
+}
+
 void ble_set_uid(const String &uid) {
     _pad_uid(uid, gUidStr, sizeof(gUidStr));
     gStatusFlags &= ~BLE_FLAG_SVR;
@@ -162,6 +167,15 @@ void ble_init() {
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
     );
     pUartWriteChar->setCallbacks(new UartWriteCallback());
+
+    NimBLECharacteristic *pMacChar = pService->createCharacteristic(
+        NimBLEUUID(UART_MAC_CHAR_UUID),
+        NIMBLE_PROPERTY::READ
+    );
+    {
+        String mac = WiFi.macAddress();
+        pMacChar->setValue(mac.c_str());
+    }
 
     pService->start();
 

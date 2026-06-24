@@ -28,8 +28,9 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
     - Manufacturer Data (Company ID `0x02E5`): 상태 플래그 + UID
     - 상태 플래그: `CFG(0x08)` UID/설정 수신, `WIFI(0x04)` WiFi 연결, `SVR(0x02)` 서버 Heartbeat OK
 - **WiFi 통신**: 백엔드로 UART 데이터, 온도, Heartbeat 전송 (HTTP)
-- **Heartbeat**: 주기적 전송으로 활성 상태 알림
+- **Heartbeat**: 주기적 전송으로 활성 상태 알림 (`firmware_version`, `wifi_rssi` 포함)
 - **재온보딩**: 동일 SSID로 이미 연결된 경우 재연결 없이 Heartbeat 재시도
+- **NVS 영구 저장**: UID·WiFi·서버 URL을 Preferences(`sentinel`)에 저장 → 재부팅 후 `Sentinel-XXXX` 광고명·자동 WiFi 연결 유지
 
 ### 3.2 모바일 앱
 
@@ -53,7 +54,7 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
 4. BLE 로그 구독 (NUS Notify)
 5. BLE로 설정 전송 (JSON: `ssid`, `password`, `serverUrl`, `uniqueId`, `baudRate`)
 6. 보드 준비 대기: BLE `EVENT:HEARTBEAT_OK` + 서버 Heartbeat 폴링 (최대 90초)
-7. `POST /api/v1/boards/register` 로 MAC·UID 등록
+7. `POST /api/v1/boards/register` 로 BLE ID·WiFi MAC·UID 등록
 8. 스캔 화면 복귀 + 등록 완료 토스트
 
 #### 3.2.3 온보딩 설정 프로파일 (로컬)
@@ -106,7 +107,10 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
 
 ### 4.1 Board
 ```
-uid (4-digit string), board_id (uuid), name, mac_address, firmware_version,
+uid (4-digit string), board_id (uuid), name,
+mac_address (BLE remoteId — iOS에서는 UUID), wifi_mac (ESP32 WiFi MAC),
+location (사용자 수기 입력, 대시보드에서 편집),
+firmware_version (펌웨어 `FIRMWARE_VERSION`), wifi_rssi (dBm, Heartbeat마다 갱신),
 last_heartbeat (timestamp), is_active (bool),
 created_at, updated_at
 ```
@@ -258,7 +262,7 @@ sequenceDiagram
         E->>BE: POST /heartbeat
         M->>BE: GET /boards (poll heartbeat)
     end
-    M->>BE: POST /boards/register {uid, mac_address}
+    M->>BE: POST /boards/register {uid, mac_address, wifi_mac}
     BE->>DB: Update board record
     M->>M: Save onboarding profile locally
 
@@ -337,7 +341,19 @@ graph LR
 | GET | `/api/v1/boards` | 보드 목록 (활성 상태 포함) |
 | GET | `/api/v1/boards/:id` | 보드 상세 |
 | PUT | `/api/v1/boards/:id` | 보드 정보 수정 |
-| POST | `/api/v1/heartbeat` | Heartbeat 수신 |
+| POST | `/api/v1/heartbeat` | Heartbeat 수신 (`board_id`, `uid`, `firmware_version`, `wifi_rssi`) |
+
+#### Heartbeat 요청 본문
+```json
+{
+  "board_id": "sentinel_aabbccddeeff",
+  "uid": "0001",
+  "firmware_version": "1.0.0",
+  "wifi_rssi": -62
+}
+```
+- `firmware_version`: `config.h`의 `FIRMWARE_VERSION`
+- `wifi_rssi`: WiFi 연결 시 `WiFi.RSSI()` (dBm, 음수)
 
 ### 데이터 수집
 | Method | Path | Description |
@@ -397,7 +413,7 @@ graph LR
 | `6e400001-...` | UART Service |
 | `6e400002-...` | Notify (로그 / UART 데이터) |
 | `6e400003-...` | Write (온보딩 설정 JSON) |
-| `6e400004-...` | Read (WiFi MAC, 예약) |
+| `6e400004-...` | Read (WiFi MAC) |
 
 ### 10.2 온보딩 Write 페이로드 (JSON)
 ```json
@@ -418,6 +434,6 @@ graph LR
 - uid: 숫자 UID 문자열 (예: `"0042"`)
 
 ### 10.4 알려진 제약
-- iOS BLE `remoteId`는 WiFi MAC과 다를 수 있음 → 서버 MAC lookup은 BLE remoteId 기준
-- 펌웨어 Heartbeat `board_id`는 WiFi MAC 기반 UID 사용
+- iOS BLE `remoteId`는 WiFi MAC과 다르며 UUID 형식 → `mac_address`에 저장
+- ESP32 WiFi MAC은 BLE `6e400004` Read 및 Heartbeat `board_id`(`sentinel_<mac>`)로 `wifi_mac`에 저장
 - BLE 상태 플래그 변경 후 펌웨어 재플래시 필요

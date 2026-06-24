@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec } from '../api';
+import PageHeader from '../components/PageHeader';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -44,40 +45,56 @@ export default function AIQueryPage() {
 
   return (
     <div className="page">
-      <h1>AI Data Query</h1>
+      <PageHeader
+        title="AI Query"
+        subtitle="자연어로 보드 데이터를 질의합니다. 먼저 보드를 선택하세요."
+      />
+
       <div className="card">
-        <div className="form-row">
-          <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
-            <option value="">Select Board</option>
-            {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-          <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
-            <option value="">Protocol (context)</option>
-            {protocols.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+        <div className="form-grid">
+          <div className="form-field">
+            <label>Board</label>
+            <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
+              <option value="">Select Board</option>
+              {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Protocol (context)</label>
+            <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
+              <option value="">Optional</option>
+              {protocols.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
-      <div className="card chat-container">
-        {messages.map((m, i) => (
-          <div key={i} className={`chat-msg ${m.role}`}>
-            <strong>{m.role === 'user' ? 'You' : 'AI'}:</strong>
-            <p>{m.content}</p>
-            {m.data && <pre className="muted">{m.data}</pre>}
-          </div>
-        ))}
-        {loading && <div className="chat-msg assistant"><em>Thinking...</em></div>}
-      </div>
-
-      <div className="card">
-        <div className="form-row">
+      <div className="card chat-panel">
+        <div className="chat-container">
+          {messages.length === 0 && (
+            <p className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+              예: &quot;Find RPM over 3000&quot;, &quot;Show temperature anomalies&quot;
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`chat-msg ${m.role}`}>
+              <strong>{m.role === 'user' ? 'You' : 'Assistant'}</strong>
+              <p>{m.content}</p>
+              {m.data && <pre>{m.data}</pre>}
+            </div>
+          ))}
+          {loading && <div className="chat-msg assistant"><em>Thinking…</em></div>}
+        </div>
+        <div className="chat-input-row">
           <input
-            placeholder='Ask about data (e.g., "Find RPM over 3000", "Show temperature anomalies")'
+            placeholder="데이터에 대해 질문하세요…"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && send()}
           />
-          <button onClick={send} disabled={loading || !selectedBoard} className="btn-primary">Send</button>
+          <button type="button" onClick={send} disabled={loading || !selectedBoard} className="btn-primary">
+            Send
+          </button>
         </div>
       </div>
     </div>

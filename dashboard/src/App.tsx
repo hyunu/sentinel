@@ -4,24 +4,42 @@ import ProtocolsPage from './pages/Protocols';
 import DataViewerPage from './pages/DataViewer';
 import VizDashboardPage from './pages/VizDashboard';
 import AIQueryPage from './pages/AIQuery';
+import { IconBoards, IconProtocols, IconData, IconChart, IconAI } from './components/NavIcons';
 import './App.css';
+
+const NAV = [
+  { to: '/boards', label: 'Boards', Icon: IconBoards },
+  { to: '/protocols', label: 'Protocols', Icon: IconProtocols },
+  { to: '/data', label: 'Data Viewer', Icon: IconData },
+  { to: '/viz', label: 'Visualization', Icon: IconChart },
+  { to: '/ai', label: 'AI Query', Icon: IconAI },
+] as const;
 
 function App() {
   return (
     <BrowserRouter>
       <div className="app-layout">
         <nav className="sidebar">
-          <div className="sidebar-header">
-            <h2>Sentinel</h2>
-            <p className="muted">UART Monitor</p>
+          <div className="sidebar-brand">
+            <div className="brand-mark">S</div>
+            <div>
+              <h2>Sentinel</h2>
+              <p>UART Monitor</p>
+            </div>
           </div>
           <ul className="nav-links">
-            <li><NavLink to="/boards" className={({ isActive }) => isActive ? 'active' : ''}>Boards</NavLink></li>
-            <li><NavLink to="/protocols" className={({ isActive }) => isActive ? 'active' : ''}>Protocols</NavLink></li>
-            <li><NavLink to="/data" className={({ isActive }) => isActive ? 'active' : ''}>Data Viewer</NavLink></li>
-            <li><NavLink to="/viz" className={({ isActive }) => isActive ? 'active' : ''}>Visualization</NavLink></li>
-            <li><NavLink to="/ai" className={({ isActive }) => isActive ? 'active' : ''}>AI Query</NavLink></li>
+            {NAV.map(({ to, label, Icon }) => (
+              <li key={to}>
+                <NavLink to={to} className={({ isActive }) => (isActive ? 'active' : '')}>
+                  <Icon className="nav-icon" />
+                  <span>{label}</span>
+                </NavLink>
+              </li>
+            ))}
           </ul>
+          <div className="sidebar-footer">
+            <span className="sidebar-version">Dashboard v1</span>
+          </div>
         </nav>
         <main className="main-content">
           <Routes>

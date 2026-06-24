@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
 import type { UartData, ProtocolSpec, Board, FieldSpec } from '../api';
+import PageHeader from '../components/PageHeader';
 
 function hexToBytes(hex: string): number[] {
   const bytes: number[] = [];
@@ -357,23 +358,23 @@ export default function DataViewerPage() {
 
   return (
     <div className="page data-viewer-page">
-      <h1>UART Data Viewer</h1>
-      {proto && (
-        <p className="muted" style={{ marginTop: -8, marginBottom: 12 }}>
-          Protocol <strong>{proto.name}</strong> v{proto.version} — parsed fields shown per frame definition.
-        </p>
-      )}
+      <PageHeader
+        title="Data Viewer"
+        subtitle={proto
+          ? `${proto.name} v${proto.version} — 프레임 정의에 따라 UART 데이터를 파싱합니다.`
+          : '보드와 프로토콜을 선택해 UART 데이터를 확인합니다.'}
+      />
       <div className="card">
-        <div className="form-row">
+        <div className="toolbar">
           <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
             <option value="">Select Board</option>
-            {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {boards.map(b => <option key={b.id} value={b.id}>{b.name}{b.location ? ` · ${b.location}` : ''}</option>)}
           </select>
           <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
             <option value="">No Protocol</option>
             {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
           </select>
-          <span className="muted">{data.length} records</span>
+          <span className="toolbar-stat">{data.length} records</span>
         </div>
       </div>
       <div className="card data-viewer-table-card">

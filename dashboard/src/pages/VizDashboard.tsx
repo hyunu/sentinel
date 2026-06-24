@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
+import PageHeader from '../components/PageHeader';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
@@ -273,10 +274,15 @@ export default function VizDashboardPage() {
 
   return (
     <div className="page">
-      <h1>Visualization Dashboard</h1>
+      <PageHeader
+        title="Visualization"
+        subtitle="프로토콜 필드를 차트로 시각화합니다. Live 모드로 실시간 데이터를 확인할 수 있습니다."
+      />
 
       <div className="card">
-        <h2>Configuration</h2>
+        <div className="card-header">
+          <h2>Configuration</h2>
+        </div>
         <div className="form-row">
           <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
             <option value="">Select Board</option>
@@ -286,22 +292,18 @@ export default function VizDashboardPage() {
             <option value="">Select Protocol</option>
             {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
           </select>
-          <button onClick={addAllFields}>+ Add All Fields</button>
-          <button onClick={fetchAll} className="btn-primary" disabled={loading}>
-            {loading ? 'Loading...' : 'Refresh'}
+          <button type="button" onClick={addAllFields}>+ Add All Fields</button>
+          <button type="button" onClick={fetchAll} className="btn-primary" disabled={loading}>
+            {loading ? 'Loading…' : 'Refresh'}
           </button>
           <button
+            type="button"
+            className={`btn-live${liveMode ? ' active' : ''}`}
             onClick={() => setLiveMode(v => !v)}
-            style={{
-              background: liveMode ? '#22c55e' : undefined,
-              borderColor: liveMode ? '#22c55e' : undefined,
-              color: liveMode ? '#000' : undefined,
-              fontWeight: liveMode ? 600 : undefined,
-            }}
           >
             {liveMode ? '● LIVE' : 'Live'}
           </button>
-          {chartData.length > 0 && <button onClick={exportCSV}>Export CSV</button>}
+          {chartData.length > 0 && <button type="button" onClick={exportCSV}>Export CSV</button>}
         </div>
 
         <h3>Time Range {liveMode && <span className="muted">(disabled in Live mode)</span>}</h3>

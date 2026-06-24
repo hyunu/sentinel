@@ -92,6 +92,19 @@ class BleScanner {
   Stream<List<ScanResult>> get scanResults => _scanController.stream;
   bool get isScanning => _isScanning;
 
+  static String displayName(AdvertisementData data, {String? platformName}) {
+    final advName = data.advName;
+    final name = advName.isNotEmpty
+        ? advName
+        : (platformName != null && platformName.isNotEmpty ? platformName : '');
+    if (name.toLowerCase().startsWith('sentinel-')) return name;
+
+    final uid = parseUidFromAdData(data);
+    if (uid != null && uid.isNotEmpty) return 'Sentinel-$uid';
+
+    return name.isNotEmpty ? name : 'Sentinel Device';
+  }
+
   static bool isSentinelDevice(ScanResult r) {
     // Prefer advertisement local name when available (more up-to-date after adv change)
     final advName = r.advertisementData.advName;

@@ -38,11 +38,24 @@ func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (stri
 		if err := h.db.Boards().FindOne(ctx, bson.M{"uid": boardID}).Decode(&board); err == nil {
 			return board.ID, nil
 		}
-		// 3) try mac_address match (exact)
+		// 3) try mac_address match (BLE remote ID)
 		if err := h.db.Boards().FindOne(ctx, bson.M{"mac_address": boardID}).Decode(&board); err == nil {
 			return board.ID, nil
 		}
-		// 4) try name match
+		// 4) try wifi_mac match (exact or colon-normalized)
+		if mac := wifiMacFromBoardID(boardID); mac != "" {
+			if err := h.db.Boards().FindOne(ctx, bson.M{"wifi_mac": mac}).Decode(&board); err == nil {
+				return board.ID, nil
+			}
+		}
+		if hex := normalizeMacHex(boardID); len(hex) == 12 {
+			if mac := macHexToColon(hex); mac != "" {
+				if err := h.db.Boards().FindOne(ctx, bson.M{"wifi_mac": mac}).Decode(&board); err == nil {
+					return board.ID, nil
+				}
+			}
+		}
+		// 5) try name match
 		if err := h.db.Boards().FindOne(ctx, bson.M{"name": boardID}).Decode(&board); err == nil {
 			return board.ID, nil
 		}
@@ -74,6 +87,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 	var req struct {
 		Name       string `json:"name"`
 		MACAddress string `json:"mac_address" binding:"required"`
+		WifiMAC    string `json:"wifi_mac,omitempty"`
 		UID        string `json:"uid,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -93,6 +107,9 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 				"is_active":      true,
 				"updated_at":     time.Now(),
 				"last_heartbeat": time.Now(),
+			}
+			if req.WifiMAC != "" {
+				update["wifi_mac"] = macHexToColon(req.WifiMAC)
 			}
 			_, err = h.db.Boards().UpdateOne(ctx, bson.M{"uid": req.UID}, bson.M{"$set": update})
 			if err != nil {
@@ -128,6 +145,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		UID:           uid,
 		Name:          fmt.Sprintf("STN-%s", uid),
 		MACAddress:    req.MACAddress,
+		WifiMAC:       macHexToColon(req.WifiMAC),
 		LastHeartbeat: time.Now(),
 		IsActive:      true,
 		CreatedAt:     time.Now(),
@@ -148,17 +166,30 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 func (h *Handler) ClaimBoard(c *gin.Context) {
 	var req struct {
 		MACAddress string `json:"mac_address"`
+		WifiMAC    string `json:"wifi_mac,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&req)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	if req.MACAddress != "" {
+	if req.MACAddress != "" || req.WifiMAC != "" {
+		filter := bson.M{}
+		if req.MACAddress != "" && req.WifiMAC != "" {
+			wifiMac := macHexToColon(req.WifiMAC)
+			filter = bson.M{"$or": []bson.M{
+				{"mac_address": req.MACAddress},
+				{"wifi_mac": wifiMac},
+			}}
+		} else if req.MACAddress != "" {
+			filter = bson.M{"mac_address": req.MACAddress}
+		} else {
+			filter = bson.M{"wifi_mac": macHexToColon(req.WifiMAC)}
+		}
 		var existing models.Board
 		err := h.db.Boards().FindOne(
 			ctx,
-			bson.M{"mac_address": req.MACAddress},
+			filter,
 			options.FindOne().SetSort(bson.M{"uid": 1}),
 		).Decode(&existing)
 		if err == nil && existing.UID != "" {
@@ -236,8 +267,9 @@ func (h *Handler) GetBoard(c *gin.Context) {
 func (h *Handler) UpdateBoard(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name            string `json:"name,omitempty"`
-		FirmwareVersion string `json:"firmware_version,omitempty"`
+		Name            string  `json:"name,omitempty"`
+		FirmwareVersion string  `json:"firmware_version,omitempty"`
+		Location        *string `json:"location"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -250,6 +282,9 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 	}
 	if req.FirmwareVersion != "" {
 		update["firmware_version"] = req.FirmwareVersion
+	}
+	if req.Location != nil {
+		update["location"] = *req.Location
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -266,15 +301,20 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 
 func (h *Handler) Heartbeat(c *gin.Context) {
 	var req struct {
-		BoardID string `json:"board_id"`
-		UID     string `json:"uid"`
+		BoardID         string `json:"board_id"`
+		UID             string `json:"uid"`
+		FirmwareVersion string `json:"firmware_version"`
+		WifiRSSI        *int   `json:"wifi_rssi"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// Log inbound heartbeat for debugging
-	h.logger.Info("heartbeat received", zap.String("board_id", req.BoardID), zap.String("uid", req.UID))
+	h.logger.Info("heartbeat received",
+		zap.String("board_id", req.BoardID),
+		zap.String("uid", req.UID),
+		zap.String("firmware_version", req.FirmwareVersion),
+	)
 
 	now := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -286,9 +326,19 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 		return
 	}
 
+	update := bson.M{"last_heartbeat": now, "is_active": true, "updated_at": now}
+	if mac := wifiMacFromBoardID(req.BoardID); mac != "" {
+		update["wifi_mac"] = mac
+	}
+	if req.FirmwareVersion != "" {
+		update["firmware_version"] = req.FirmwareVersion
+	}
+	if req.WifiRSSI != nil {
+		update["wifi_rssi"] = *req.WifiRSSI
+	}
 	result, err := h.db.Boards().UpdateOne(ctx,
 		bson.M{"_id": boardID},
-		bson.M{"$set": bson.M{"last_heartbeat": now, "is_active": true, "updated_at": now}},
+		bson.M{"$set": update},
 	)
 	if err != nil {
 		h.logger.Error("heartbeat update failed", zap.Error(err))

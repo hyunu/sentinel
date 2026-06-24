@@ -6,8 +6,11 @@ type Board struct {
 	ID              string    `json:"id" bson:"_id"`
 	UID             string    `json:"uid" bson:"uid"`
 	Name            string    `json:"name" bson:"name"`
-	MACAddress      string    `json:"mac_address" bson:"mac_address"`
+	MACAddress      string    `json:"mac_address" bson:"mac_address"` // BLE remote ID (iOS: UUID)
+	WifiMAC         string    `json:"wifi_mac,omitempty" bson:"wifi_mac,omitempty"`
 	FirmwareVersion string    `json:"firmware_version,omitempty" bson:"firmware_version,omitempty"`
+	WifiRSSI        int       `json:"wifi_rssi,omitempty" bson:"wifi_rssi,omitempty"`
+	Location        string    `json:"location,omitempty" bson:"location,omitempty"`
 	LastHeartbeat   time.Time `json:"last_heartbeat" bson:"last_heartbeat"`
 	IsActive        bool      `json:"is_active" bson:"is_active"`
 	CreatedAt       time.Time `json:"created_at" bson:"created_at"`

@@ -1,112 +1,28 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { ProtocolSpec, FieldSpec, FrameDef, FIDPayload } from '../api';
+import PageHeader from '../components/PageHeader';
+import FieldTable from '../components/FieldTable';
+import {
+  LCP_FRAME,
+  emptyField,
+  emptyFidPayload,
+  deriveDisplayFields,
+  temperatureTemplate,
+  detectFormat,
+  type ProtocolFormat,
+} from '../lib/protocolPresets';
 
-function emptyField(): FieldSpec {
-  return { name: '', offset: 0, length: 1, type: 'uint8', unit: '', endian: 'little', fields: [] };
-}
-
-function FieldRow({ field, index, onChange, onDelete, depth }: {
-  field: FieldSpec;
-  index: number;
-  onChange: (i: number, key: string, value: unknown) => void;
-  onDelete: (i: number) => void;
-  depth: number;
-}) {
-  const hasChildren = field.type === 'function_args' || field.type === 'func_result' || (field.fields && field.fields.length > 0);
-
+function FramePreview({ frame }: { frame: FrameDef }) {
+  const header = (frame.header || []).map(f => f.name).join(' · ');
+  const tail = (frame.tail || []).map(f => f.name).join(' · ');
   return (
-    <div>
-      <div className="field-row" style={{ marginLeft: depth * 24 }}>
-        <input
-          placeholder="Name" value={field.name}
-          onChange={e => onChange(index, 'name', e.target.value)}
-          style={{ width: 100 }}
-        />
-        <select value={field.type} onChange={e => onChange(index, 'type', e.target.value)} style={{ width: 100 }}>
-          <option value="uint8">uint8</option>
-          <option value="uint16">uint16</option>
-          <option value="uint32">uint32</option>
-          <option value="int8">int8</option>
-          <option value="int16">int16</option>
-          <option value="float">float</option>
-          <option value="ascii">ascii</option>
-          <option value="enum">enum</option>
-          <option value="hex">hex</option>
-          <option value="raw">raw</option>
-          <option value="dynamic">dynamic</option>
-          <option value="function_args">function_args</option>
-          <option value="func_result">func_result</option>
-        </select>
-        <input
-          type="number" placeholder="Off" value={field.offset ?? 0}
-          onChange={e => onChange(index, 'offset', parseInt(e.target.value) || 0)}
-          style={{ width: 50 }}
-        />
-        <input
-          type="number" placeholder="Len" value={field.length ?? 1}
-          onChange={e => onChange(index, 'length', parseInt(e.target.value) || 0)}
-          style={{ width: 50 }}
-        />
-        <select value={field.endian || 'little'} onChange={e => onChange(index, 'endian', e.target.value)} style={{ width: 70 }}>
-          <option value="little">Little</option>
-          <option value="big">Big</option>
-        </select>
-        <input
-          placeholder="Flag" value={field.flag || ''}
-          onChange={e => onChange(index, 'flag', e.target.value)}
-          style={{ width: 50 }}
-        />
-        <input
-          placeholder="Condition" value={field.condition || ''}
-          onChange={e => onChange(index, 'condition', e.target.value)}
-          style={{ width: 80 }}
-        />
-        <button className="btn-danger" onClick={() => onDelete(index)}>×</button>
-      </div>
-      {hasChildren && (
-        <div style={{ borderLeft: '2px solid var(--border)', marginLeft: depth * 24 + 12, paddingLeft: 8, marginTop: 4, marginBottom: 4 }}>
-          <FieldList fields={field.fields || []} depth={depth + 1} onChange={onChange} parentIndex={index} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FieldList({ fields, depth, onChange, parentIndex }: {
-  fields: FieldSpec[];
-  depth: number;
-  onChange: (path: number[], key: string, value: unknown) => void;
-  parentIndex?: number;
-}) {
-  const pathFor = (i: number) => parentIndex !== undefined ? [parentIndex, i] : [i];
-
-  const handleChange = (path: number[], key: string, value: unknown) => {
-    onChange(path, key, value);
-  };
-
-  const addField = () => {
-    const next = fields.length;
-    handleChange([next], '$add', emptyField());
-  };
-
-  const deleteField = (idx: number) => {
-    handleChange([idx], '$delete', true);
-  };
-
-  return (
-    <div>
-      {fields.map((f, i) => (
-        <FieldRow
-          key={i}
-          field={f}
-          index={i}
-          onChange={(idx, key, val) => handleChange([idx], key, val)}
-          onDelete={() => deleteField(i)}
-          depth={depth}
-        />
-      ))}
-      <button onClick={addField} style={{ marginLeft: depth * 24, marginTop: 4, fontSize: 12 }}>+ Add Sub-field</button>
+    <div className="frame-preview">
+      <span className="frame-byte">{frame.start_byte || 'AA'}</span>
+      {header && <span className="frame-seg">{header}</span>}
+      <span className="frame-payload">payload</span>
+      {tail && <span className="frame-seg">{tail}</span>}
+      <span className="frame-byte">{frame.end_byte || 'BB'}</span>
     </div>
   );
 }
@@ -116,19 +32,64 @@ export default function ProtocolsPage() {
   const [name, setName] = useState('');
   const [version, setVersion] = useState('1.0');
   const [description, setDescription] = useState('');
+  const [format, setFormat] = useState<ProtocolFormat>('lcp');
   const [fields, setFields] = useState<FieldSpec[]>([emptyField()]);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [frameDef, setFrameDef] = useState<FrameDef | null>(null);
-  const [fidPayloads, setFidPayloads] = useState<FIDPayload[]>([]);
-  const [activeTab, setActiveTab] = useState<'basic' | 'frame' | 'fid'>('basic');
+  const [frameDef, setFrameDef] = useState<FrameDef>(structuredClone(LCP_FRAME));
+  const [fidPayloads, setFidPayloads] = useState<FIDPayload[]>([emptyFidPayload()]);
+  const [envelopeOpen, setEnvelopeOpen] = useState(false);
 
   useEffect(() => { api.protocols.list().then(setProtocols).catch(console.error); }, []);
 
+  const switchFormat = (next: ProtocolFormat) => {
+    setFormat(next);
+    if (next === 'lcp') {
+      setFrameDef(structuredClone(LCP_FRAME));
+      if (fidPayloads.length === 0) setFidPayloads([emptyFidPayload()]);
+    } else {
+      setFields([emptyField()]);
+    }
+  };
+
+  const applyTemplate = (tpl: 'blank' | 'temperature') => {
+    if (tpl === 'blank') {
+      resetForm();
+      return;
+    }
+    const t = temperatureTemplate();
+    setName(t.name);
+    setVersion(t.version);
+    setDescription(t.description);
+    setFormat(t.format);
+    setFrameDef(structuredClone(t.frameDef));
+    setFidPayloads(structuredClone(t.fidPayloads));
+    setEditingId(null);
+  };
+
   const save = async () => {
     if (!name) return;
-    const data: Record<string, unknown> = { name, version, description, fields: fields.filter(f => f.name) };
-    if (frameDef && frameDef.header.length > 0) data.frame_def = frameDef;
-    if (fidPayloads.length > 0) data.fid_payloads = fidPayloads.filter(p => p.fid);
+    const displayFields =
+      format === 'lcp'
+        ? deriveDisplayFields(fidPayloads)
+        : fields.filter(f => f.name);
+
+    const data: Record<string, unknown> = {
+      name,
+      version,
+      description,
+      fields: displayFields,
+    };
+
+    if (format === 'lcp') {
+      data.frame_def = frameDef;
+      data.fid_payloads = fidPayloads
+        .filter(p => p.fid)
+        .map(p => ({
+          ...p,
+          fields: (p.fields || []).filter(f => f.name),
+        }));
+    }
+
     if (editingId) {
       await api.protocols.update(editingId, data);
       setEditingId(null);
@@ -143,25 +104,32 @@ export default function ProtocolsPage() {
     setName('');
     setVersion('1.0');
     setDescription('');
+    setFormat('lcp');
     setFields([emptyField()]);
-    setFrameDef(null);
-    setFidPayloads([]);
+    setFrameDef(structuredClone(LCP_FRAME));
+    setFidPayloads([emptyFidPayload()]);
     setEditingId(null);
-    setActiveTab('basic');
+    setEnvelopeOpen(false);
   };
 
   const edit = (p: ProtocolSpec) => {
+    const fmt = detectFormat(p);
     setName(p.name);
     setVersion(p.version);
     setDescription(p.description || '');
-    setFields(p.fields.length ? p.fields : [emptyField()]);
-    setFrameDef(p.frame_def || {
-      start_byte: 'AA', end_byte: 'BB', endian: 'big', crc_position: 'before_end',
-      header: [{ name: 'length', length: 2, type: 'uint16', endian: 'big' }],
-      tail: [{ name: 'crc16', length: 2, type: 'uint16', endian: 'big' }],
-    });
-    setFidPayloads(p.fid_payloads || []);
+    setFormat(fmt);
+    if (fmt === 'lcp') {
+      setFrameDef(p.frame_def ? structuredClone(p.frame_def) : structuredClone(LCP_FRAME));
+      setFidPayloads(
+        p.fid_payloads?.length
+          ? structuredClone(p.fid_payloads)
+          : [emptyFidPayload()],
+      );
+    } else {
+      setFields(p.fields.length ? structuredClone(p.fields) : [emptyField()]);
+    }
     setEditingId(p.id);
+    setEnvelopeOpen(false);
   };
 
   const remove = async (id: string) => {
@@ -169,251 +137,252 @@ export default function ProtocolsPage() {
     setProtocols(await api.protocols.list());
   };
 
-  const updateField = (i: number, key: keyof FieldSpec, value: string | number) => {
-    setFields(prev => prev.map((f, idx) => idx === i ? { ...f, [key]: value } : f));
-  };
-
   const updateFrameHeader = (i: number, key: string, value: unknown) => {
-    if (!frameDef) return;
     setFrameDef({
       ...frameDef,
-      header: frameDef.header.map((f, idx) => idx === i ? { ...f, [key]: value } : f),
+      header: frameDef.header.map((f, idx) => (idx === i ? { ...f, [key]: value } : f)),
     });
   };
 
   const updateFrameTail = (i: number, key: string, value: unknown) => {
-    if (!frameDef) return;
     setFrameDef({
       ...frameDef,
-      tail: frameDef.tail.map((f, idx) => idx === i ? { ...f, [key]: value } : f),
+      tail: frameDef.tail.map((f, idx) => (idx === i ? { ...f, [key]: value } : f)),
     });
   };
 
-  const addFidPayload = () => {
-    setFidPayloads(prev => [...prev, { fid: '', name: '', fields: [emptyField()] }]);
-  };
-
-  const updateFidPayload = (i: number, key: string, value: unknown) => {
-    setFidPayloads(prev => prev.map((p, idx) => idx === i ? { ...p, [key]: value } : p));
-  };
-
-  const updateFidField = (pi: number, fi: number, key: string, value: unknown) => {
-    setFidPayloads(prev => prev.map((p, idx) => {
-      if (idx !== pi) return p;
-      const newFields = p.fields?.map((f, j) => j === fi ? { ...f, [key]: value } : f) || [];
-      return { ...p, fields: newFields };
-    }));
-  };
-
-  const addFidField = (pi: number) => {
-    setFidPayloads(prev => prev.map((p, idx) => {
-      if (idx !== pi) return p;
-      return { ...p, fields: [...(p.fields || []), emptyField()] };
-    }));
-  };
-
-  const removeFidField = (pi: number, fi: number) => {
-    setFidPayloads(prev => prev.map((p, idx) => {
-      if (idx !== pi) return p;
-      return { ...p, fields: (p.fields || []).filter((_, j) => j !== fi) };
-    }));
+  const updateFidPayload = (i: number, patch: Partial<FIDPayload>) => {
+    setFidPayloads(prev => prev.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
   };
 
   const removeFidPayload = (i: number) => {
-    setFidPayloads(prev => prev.filter((_, idx) => idx !== i));
+    setFidPayloads(prev => (prev.length <= 1 ? [emptyFidPayload()] : prev.filter((_, idx) => idx !== i)));
+  };
+
+  const formatLabel = (p: ProtocolSpec) => {
+    if (p.frame_def || p.fid_payloads?.length) {
+      const fids = p.fid_payloads?.map(fp => `0x${fp.fid}`).join(', ') || '';
+      return fids ? `LCP · ${fids}` : 'LCP';
+    }
+    return `Raw · ${p.fields.length} fields`;
   };
 
   return (
     <div className="page">
-      <h1>Protocol Specifications</h1>
-      <div className="card">
-        <h2>{editingId ? 'Edit' : 'New'} Protocol</h2>
+      <PageHeader
+        title="Protocols"
+        subtitle="UART 데이터 파싱 규칙. LCP는 AA/BB 프레임 + FID별 payload, Raw는 offset 기반 flat 파싱입니다."
+      />
 
-        <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-          <button className={activeTab === 'basic' ? 'btn-primary' : ''} onClick={() => setActiveTab('basic')}>Basic</button>
-          <button className={activeTab === 'frame' ? 'btn-primary' : ''} onClick={() => setActiveTab('frame')}>Frame Def</button>
-          <button className={activeTab === 'fid' ? 'btn-primary' : ''} onClick={() => setActiveTab('fid')}>FID Payloads</button>
+      <div className="card protocol-editor">
+        <div className="card-header">
+          <h2>{editingId ? 'Edit Protocol' : 'New Protocol'}</h2>
+          <div className="btn-group">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => applyTemplate('blank')}>Blank</button>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => applyTemplate('temperature')}>Temperature preset</button>
+            {editingId && (
+              <button type="button" className="btn-ghost btn-sm" onClick={resetForm}>Cancel</button>
+            )}
+          </div>
         </div>
 
-        {activeTab === 'basic' && (
-          <>
-            <div className="form-row">
-              <input placeholder="Protocol Name" value={name} onChange={e => setName(e.target.value)} />
-              <input style={{ width: 80 }} placeholder="Version" value={version} onChange={e => setVersion(e.target.value)} />
-            </div>
-            <textarea placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} rows={2} />
-            <h3>Fields</h3>
-            <div style={{ display: 'flex', gap: 4, fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, marginLeft: 4 }}>
-              <span style={{ width: 100 }}>Name</span>
-              <span style={{ width: 100 }}>Type</span>
-              <span style={{ width: 50 }}>Off</span>
-              <span style={{ width: 50 }}>Len</span>
-              <span style={{ width: 70 }}>Endian</span>
-              <span style={{ width: 50 }}>Flag</span>
-              <span style={{ width: 80 }}>Cond</span>
-            </div>
-            {fields.map((f, i) => (
-              <div key={i} className="field-row">
-                <input placeholder="Name" value={f.name} onChange={e => updateField(i, 'name', e.target.value)} style={{ width: 100 }} />
-                <select value={f.type} onChange={e => updateField(i, 'type', e.target.value)} style={{ width: 100 }}>
-                  <option value="uint8">uint8</option>
-                  <option value="uint16">uint16</option>
-                  <option value="uint32">uint32</option>
-                  <option value="int8">int8</option>
-                  <option value="int16">int16</option>
-                  <option value="float">float</option>
-                  <option value="ascii">ascii</option>
-                  <option value="hex">hex</option>
-                  <option value="raw">raw</option>
-                </select>
-                <input type="number" placeholder="Off" value={f.offset ?? 0} onChange={e => updateField(i, 'offset', parseInt(e.target.value) || 0)} style={{ width: 50 }} />
-                <input type="number" placeholder="Len" value={f.length ?? 1} onChange={e => updateField(i, 'length', parseInt(e.target.value) || 1)} style={{ width: 50 }} />
-                <select value={f.endian || 'little'} onChange={e => updateField(i, 'endian', e.target.value)} style={{ width: 70 }}>
-                  <option value="little">Little</option>
-                  <option value="big">Big</option>
-                </select>
-                {fields.length > 1 && <button className="btn-danger" onClick={() => setFields(prev => prev.filter((_, idx) => idx !== i))}>×</button>}
-              </div>
-            ))}
-            <div className="form-row">
-              <button onClick={() => setFields(prev => [...prev, emptyField()])}>+ Add Field</button>
-            </div>
-          </>
-        )}
+        <div className="protocol-meta-row">
+          <div className="form-field protocol-meta-name">
+            <label>Name</label>
+            <input placeholder="Temperature Telemetry" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div className="form-field protocol-meta-version">
+            <label>Version</label>
+            <input placeholder="1.0" value={version} onChange={e => setVersion(e.target.value)} />
+          </div>
+          <div className="form-field protocol-meta-desc">
+            <label>Description</label>
+            <input placeholder="프로토콜 설명" value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
+        </div>
 
-        {activeTab === 'frame' && (
-          <>
-            <h3>Frame Definition</h3>
-            <div className="form-row">
-              <label style={{ color: 'var(--text-muted)' }}>Start Byte (hex):</label>
-              <input value={frameDef?.start_byte || 'AA'} onChange={e => setFrameDef(prev => prev ? { ...prev, start_byte: e.target.value } : null)} style={{ width: 60 }} />
-              <label style={{ color: 'var(--text-muted)' }}>End Byte (hex):</label>
-              <input value={frameDef?.end_byte || 'BB'} onChange={e => setFrameDef(prev => prev ? { ...prev, end_byte: e.target.value } : null)} style={{ width: 60 }} />
-              <label style={{ color: 'var(--text-muted)' }}>Endian:</label>
-              <select value={frameDef?.endian || 'big'} onChange={e => setFrameDef(prev => prev ? { ...prev, endian: e.target.value } : null)}>
-                <option value="big">Big</option>
-                <option value="little">Little</option>
-              </select>
-              <label style={{ color: 'var(--text-muted)' }}>CRC:</label>
-              <select value={frameDef?.crc_position || 'before_end'} onChange={e => setFrameDef(prev => prev ? { ...prev, crc_position: e.target.value } : null)}>
-                <option value="before_end">Tail (before end)</option>
-                <option value="none">None</option>
-              </select>
-            </div>
-            <h4>Header Fields</h4>
-            {(frameDef?.header || []).map((f, i) => (
-              <div key={i} className="field-row">
-                <input value={f.name} onChange={e => updateFrameHeader(i, 'name', e.target.value)} placeholder="Name" style={{ width: 100 }} />
-                <select value={f.type} onChange={e => updateFrameHeader(i, 'type', e.target.value)} style={{ width: 80 }}>
-                  <option value="uint8">uint8</option>
-                  <option value="uint16">uint16</option>
-                  <option value="uint32">uint32</option>
-                </select>
-                <input type="number" value={f.length ?? 1} onChange={e => updateFrameHeader(i, 'length', parseInt(e.target.value) || 1)} style={{ width: 50 }} />
-                <select value={f.endian || 'big'} onChange={e => updateFrameHeader(i, 'endian', e.target.value)} style={{ width: 70 }}>
-                  <option value="little">Little</option>
-                  <option value="big">Big</option>
-                </select>
-              </div>
-            ))}
-            <h4>Tail Fields</h4>
-            {(frameDef?.tail || []).map((f, i) => (
-              <div key={i} className="field-row">
-                <input value={f.name} onChange={e => updateFrameTail(i, 'name', e.target.value)} placeholder="Name" style={{ width: 100 }} />
-                <select value={f.type} onChange={e => updateFrameTail(i, 'type', e.target.value)} style={{ width: 80 }}>
-                  <option value="uint8">uint8</option>
-                  <option value="uint16">uint16</option>
-                  <option value="uint32">uint32</option>
-                </select>
-                <input type="number" value={f.length ?? 1} onChange={e => updateFrameTail(i, 'length', parseInt(e.target.value) || 1)} style={{ width: 50 }} />
-                <select value={f.endian || 'big'} onChange={e => updateFrameTail(i, 'endian', e.target.value)} style={{ width: 70 }}>
-                  <option value="little">Little</option>
-                  <option value="big">Big</option>
-                </select>
-              </div>
-            ))}
-          </>
-        )}
+        <div className="format-toggle" role="radiogroup" aria-label="Protocol format">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={format === 'lcp'}
+            className={format === 'lcp' ? 'active' : ''}
+            onClick={() => switchFormat('lcp')}
+          >
+            LCP Frame
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={format === 'raw'}
+            className={format === 'raw' ? 'active' : ''}
+            onClick={() => switchFormat('raw')}
+          >
+            Raw bytes
+          </button>
+        </div>
 
-        {activeTab === 'fid' && (
+        {format === 'lcp' && (
           <>
-            <h3>FID Payloads</h3>
-            {fidPayloads.map((p, pi) => (
-              <div key={pi} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 8, marginBottom: 8 }}>
+            <FramePreview frame={frameDef} />
+
+            <button
+              type="button"
+              className="envelope-toggle"
+              onClick={() => setEnvelopeOpen(v => !v)}
+            >
+              {envelopeOpen ? '▾' : '▸'} Frame envelope (advanced)
+            </button>
+
+            {envelopeOpen && (
+              <div className="envelope-panel">
                 <div className="form-row">
-                  <input value={p.fid} onChange={e => updateFidPayload(pi, 'fid', e.target.value)} placeholder="FID (e.g. CF)" style={{ width: 60 }} />
-                  <input value={p.name} onChange={e => updateFidPayload(pi, 'name', e.target.value)} placeholder="Name" style={{ width: 120 }} />
-                  <input value={p.description || ''} onChange={e => updateFidPayload(pi, 'description', e.target.value)} placeholder="Description" style={{ flex: 1 }} />
-                  <button className="btn-danger" onClick={() => removeFidPayload(pi)}>×</button>
+                  <div className="form-field" style={{ flex: '0 0 auto' }}>
+                    <label>Start</label>
+                    <input className="mono" value={frameDef.start_byte} onChange={e => setFrameDef({ ...frameDef, start_byte: e.target.value })} style={{ width: 56 }} />
+                  </div>
+                  <div className="form-field" style={{ flex: '0 0 auto' }}>
+                    <label>End</label>
+                    <input className="mono" value={frameDef.end_byte} onChange={e => setFrameDef({ ...frameDef, end_byte: e.target.value })} style={{ width: 56 }} />
+                  </div>
+                  <div className="form-field" style={{ flex: '0 0 auto' }}>
+                    <label>Endian</label>
+                    <select value={frameDef.endian} onChange={e => setFrameDef({ ...frameDef, endian: e.target.value })}>
+                      <option value="big">Big</option>
+                      <option value="little">Little</option>
+                    </select>
+                  </div>
+                  <div className="form-field" style={{ flex: '0 0 auto' }}>
+                    <label>CRC</label>
+                    <select value={frameDef.crc_position || 'before_end'} onChange={e => setFrameDef({ ...frameDef, crc_position: e.target.value })}>
+                      <option value="before_end">Before end</option>
+                      <option value="none">None</option>
+                    </select>
+                  </div>
                 </div>
-                <div style={{ marginTop: 4 }}>
-                  {(p.fields || []).map((f, fi) => (
-                    <div key={fi} className="field-row" style={{ marginLeft: 12 }}>
-                      <input value={f.name} onChange={e => updateFidField(pi, fi, 'name', e.target.value)} placeholder="Name" style={{ width: 100 }} />
-                      <select value={f.type} onChange={e => updateFidField(pi, fi, 'type', e.target.value)} style={{ width: 100 }}>
-                        <option value="uint8">uint8</option>
-                        <option value="uint16">uint16</option>
-                        <option value="uint32">uint32</option>
-                        <option value="int8">int8</option>
-                        <option value="int16">int16</option>
-                        <option value="float">float</option>
-                        <option value="ascii">ascii</option>
-                        <option value="hex">hex</option>
-                        <option value="raw">raw</option>
-                        <option value="dynamic">dynamic</option>
-                        <option value="function_args">function_args</option>
-                        <option value="func_result">func_result</option>
-                      </select>
-                      <input type="number" value={f.length ?? 1} onChange={e => updateFidField(pi, fi, 'length', parseInt(e.target.value) || 1)} style={{ width: 50 }} />
-                      <select value={f.endian || 'little'} onChange={e => updateFidField(pi, fi, 'endian', e.target.value)} style={{ width: 70 }}>
-                        <option value="little">Little</option>
-                        <option value="big">Big</option>
-                      </select>
-                      <input value={f.flag || ''} onChange={e => updateFidField(pi, fi, 'flag', e.target.value)} placeholder="Flag" style={{ width: 50 }} />
-                      {fi > 0 && <button className="btn-danger" onClick={() => removeFidField(pi, fi)}>×</button>}
-                    </div>
-                  ))}
-                  <button onClick={() => addFidField(pi)} style={{ marginLeft: 12, marginTop: 4, fontSize: 12 }}>+ Add Field</button>
+                <p className="muted" style={{ margin: '8px 0 4px', fontSize: 12 }}>Header</p>
+                {(frameDef.header || []).map((f, i) => (
+                  <div key={i} className="field-row compact">
+                    <input value={f.name} onChange={e => updateFrameHeader(i, 'name', e.target.value)} style={{ width: 90 }} />
+                    <select value={f.type} onChange={e => updateFrameHeader(i, 'type', e.target.value)} style={{ width: 80 }}>
+                      <option value="uint8">uint8</option>
+                      <option value="uint16">uint16</option>
+                      <option value="uint32">uint32</option>
+                    </select>
+                    <input type="number" value={f.length ?? 1} onChange={e => updateFrameHeader(i, 'length', parseInt(e.target.value, 10) || 1)} style={{ width: 48 }} />
+                    <select value={f.endian || 'big'} onChange={e => updateFrameHeader(i, 'endian', e.target.value)} style={{ width: 64 }}>
+                      <option value="little">LE</option>
+                      <option value="big">BE</option>
+                    </select>
+                  </div>
+                ))}
+                <p className="muted" style={{ margin: '8px 0 4px', fontSize: 12 }}>Tail</p>
+                {(frameDef.tail || []).map((f, i) => (
+                  <div key={i} className="field-row compact">
+                    <input value={f.name} onChange={e => updateFrameTail(i, 'name', e.target.value)} style={{ width: 90 }} />
+                    <select value={f.type} onChange={e => updateFrameTail(i, 'type', e.target.value)} style={{ width: 80 }}>
+                      <option value="uint8">uint8</option>
+                      <option value="uint16">uint16</option>
+                      <option value="uint32">uint32</option>
+                    </select>
+                    <input type="number" value={f.length ?? 1} onChange={e => updateFrameTail(i, 'length', parseInt(e.target.value, 10) || 1)} style={{ width: 48 }} />
+                    <select value={f.endian || 'big'} onChange={e => updateFrameTail(i, 'endian', e.target.value)} style={{ width: 64 }}>
+                      <option value="little">LE</option>
+                      <option value="big">BE</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="section-header">
+              <h3>Messages (FID)</h3>
+              <button type="button" className="btn-sm" onClick={() => setFidPayloads(prev => [...prev, emptyFidPayload()])}>+ Add FID</button>
+            </div>
+            <p className="muted section-hint">header의 fid 값에 따라 payload 본문을 파싱합니다. Unit은 Data Viewer 컬럼에 표시됩니다.</p>
+
+            {fidPayloads.map((p, pi) => (
+              <div key={pi} className="fid-card">
+                <div className="fid-header">
+                  <input
+                    className="mono fid-hex"
+                    value={p.fid}
+                    onChange={e => updateFidPayload(pi, { fid: e.target.value.toUpperCase() })}
+                    placeholder="54"
+                    maxLength={2}
+                  />
+                  <input
+                    value={p.name}
+                    onChange={e => updateFidPayload(pi, { name: e.target.value })}
+                    placeholder="Message name"
+                  />
+                  <input
+                    value={p.description || ''}
+                    onChange={e => updateFidPayload(pi, { description: e.target.value })}
+                    placeholder="Description"
+                  />
+                  <button type="button" className="btn-danger btn-sm btn-icon" onClick={() => removeFidPayload(pi)} aria-label="Remove FID">×</button>
                 </div>
+                <FieldTable
+                  fields={p.fields || [emptyField()]}
+                  onChange={next => updateFidPayload(pi, { fields: next })}
+                  mode="payload"
+                  showUnit
+                />
               </div>
             ))}
-            <button onClick={addFidPayload}>+ Add FID</button>
           </>
         )}
 
-        {activeTab === 'basic' && (
-          <div className="form-row" style={{ marginTop: 8 }}>
-            <button onClick={save} className="btn-primary">{editingId ? 'Update' : 'Create'}</button>
-            {editingId && <button onClick={resetForm}>Cancel</button>}
-          </div>
+        {format === 'raw' && (
+          <>
+            <div className="section-header">
+              <h3>Fields</h3>
+            </div>
+            <p className="muted section-hint">전체 hex를 byte offset 기준으로 파싱합니다.</p>
+            <FieldTable fields={fields} onChange={setFields} mode="raw" />
+          </>
         )}
-        {activeTab !== 'basic' && (
-          <div className="form-row" style={{ marginTop: 8 }}>
-            <button onClick={save} className="btn-primary">{editingId ? 'Save All' : 'Create'}</button>
-          </div>
-        )}
+
+        <div className="form-row editor-actions">
+          <button type="button" onClick={save} className="btn-primary" disabled={!name}>
+            {editingId ? 'Save Changes' : 'Create Protocol'}
+          </button>
+        </div>
       </div>
 
       <div className="card">
-        <h2>Protocols ({protocols.length})</h2>
-        <div className="form-row" style={{ marginBottom: 8 }}>
-          <button onClick={async () => { await api.protocols.seedDefault(); setProtocols(await api.protocols.list()); }}>
-            Seed Default Protocol
+        <div className="card-header">
+          <h2>Saved Protocols</h2>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={async () => { await api.protocols.seedDefault(); setProtocols(await api.protocols.list()); }}
+          >
+            Seed Default
           </button>
         </div>
-        {protocols.map(p => (
-          <div key={p.id} className="list-item">
-            <div>
-              <strong>{p.name}</strong> v{p.version}
-              <p className="muted">{p.description}</p>
-              <span className="muted">{p.fields.length} fields{p.frame_def ? ' · frame def' : ''}{p.fid_payloads?.length ? ` · ${p.fid_payloads.length} FIDs` : ''}</span>
+        <div className="protocol-grid">
+          {protocols.length === 0 ? (
+            <p className="muted" style={{ padding: '12px 0' }}>저장된 프로토콜이 없습니다.</p>
+          ) : protocols.map(p => (
+            <div key={p.id} className="protocol-item">
+              <div>
+                <div className="protocol-item-title">
+                  {p.name} <span className="tag">v{p.version}</span>
+                </div>
+                {p.description && <p className="protocol-item-meta">{p.description}</p>}
+                <div className="protocol-item-meta" style={{ marginTop: 6 }}>
+                  {formatLabel(p)}
+                </div>
+              </div>
+              <div className="btn-group">
+                <button type="button" className="btn-sm" onClick={() => edit(p)}>Edit</button>
+                <button type="button" className="btn-danger btn-sm" onClick={() => remove(p.id)}>Delete</button>
+              </div>
             </div>
-            <div className="btn-group">
-              <button onClick={() => edit(p)}>Edit</button>
-              <button className="btn-danger" onClick={() => remove(p.id)}>Delete</button>
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

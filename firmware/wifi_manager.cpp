@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 
 #include "wifi_manager.h"
 #include "config.h"
@@ -13,6 +14,23 @@ static unsigned long wifiConnectedAt = 0;
 
 static String backend_url = String(BACKEND_URL);
 static String board_uid = String("");
+
+static const char *NVS_NS = "sentinel";
+
+static void nvs_save_string(const char *key, const String &val) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putString(key, val);
+    prefs.end();
+}
+
+static String nvs_load_string(const char *key, const String &fallback = "") {
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    String val = prefs.getString(key, fallback);
+    prefs.end();
+    return val;
+}
 
 static bool hasValidIp() {
     return WiFi.localIP() != IPAddress(0, 0, 0, 0);
@@ -46,14 +64,40 @@ static String getBoardId() {
 void wifi_init() {
     board_id = getBoardId();
     Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(false);
+
+    const String storedUid = nvs_load_string("uid");
+    if (storedUid.length() > 0) {
+        board_uid = storedUid;
+        ble_preload_uid(storedUid);
+        Serial.printf("[WiFi] Restored UID: %s\n", board_uid.c_str());
+    }
+
+    const String storedUrl = nvs_load_string("url");
+    if (storedUrl.length() > 0) {
+        backend_url = storedUrl;
+        Serial.printf("[WiFi] Restored backend URL: %s\n", backend_url.c_str());
+    }
+}
+
+void wifi_startup() {
+    const String ssid = nvs_load_string("ssid");
+    const String pass = nvs_load_string("pass");
+    if (ssid.length() > 0 && pass.length() > 0) {
+        Serial.printf("[WiFi] Auto-connect to stored network: %s\n", ssid.c_str());
+        wifi_connect(ssid, pass);
+    }
 }
 
 void wifi_connect(const String &ssid, const String &password) {
     pendingInitialHeartbeat = false;
     wifiConnectedAt = 0;
+
+    nvs_save_string("ssid", ssid);
+    nvs_save_string("pass", password);
 
     // Same network already up — re-run onboarding heartbeat without reconnecting
     if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == ssid && hasValidIp()) {
@@ -109,12 +153,14 @@ void wifi_loop() {
 void wifi_set_server_url(const String &url) {
     if (url.length() == 0) return;
     backend_url = url;
+    nvs_save_string("url", url);
     Serial.printf("[WiFi] Backend URL updated: %s\n", backend_url.c_str());
 }
 
 void wifi_set_uid(const String &uid) {
     if (uid.length() == 0) return;
     board_uid = uid;
+    nvs_save_string("uid", uid);
     Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
     ble_set_uid(uid);
 }
@@ -144,12 +190,27 @@ static bool httpOk(int code) {
     return code >= 200 && code < 300;
 }
 
-bool wifi_send_heartbeat() {
-    String body = "{\"board_id\":\"" + board_id + "\"";
+static String buildHeartbeatBody() {
+    char buf[320];
+    int pos = snprintf(buf, sizeof(buf), "{\"board_id\":\"%s\"", board_id.c_str());
     if (board_uid.length() > 0) {
-        body += ",\"uid\":\"" + board_uid + "\"";
+        pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"uid\":\"%s\"", board_uid.c_str());
     }
-    body += "}";
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    ",\"firmware_version\":\"%s\"", FIRMWARE_VERSION);
+    if (WiFi.status() == WL_CONNECTED) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, ",\"wifi_rssi\":%d", WiFi.RSSI());
+    }
+    if (pos < (int)sizeof(buf) - 1) {
+        buf[pos++] = '}';
+        buf[pos] = '\0';
+    }
+    return String(buf);
+}
+
+bool wifi_send_heartbeat() {
+    const String body = buildHeartbeatBody();
+    Serial.printf("[HTTP] Heartbeat body: %s\n", body.c_str());
 
     const int maxAttempts = 5;
     unsigned long backoffMs[] = {500, 1000, 2000, 3000, 4000};

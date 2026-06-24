@@ -49,7 +49,12 @@ class _Protocol {
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
-  const DeviceScreen({super.key, required this.device});
+  final AdvertisementData? advertisementData;
+  const DeviceScreen({
+    super.key,
+    required this.device,
+    this.advertisementData,
+  });
 
   @override
   State<DeviceScreen> createState() => _DeviceScreenState();
@@ -426,12 +431,21 @@ class _DeviceScreenState extends State<DeviceScreen>
     return null;
   }
 
-  String? _findExistingUidForMac(List boards, String mac) {
+  String? _findExistingUidForMac(List boards, String bleMac, {String? wifiMac}) {
     String? bestUid;
     int? bestNum;
+    final wifiNorm = wifiMac?.replaceAll(':', '').toLowerCase();
     for (final raw in boards) {
       if (raw is! Map) continue;
-      if (raw['mac_address'] != mac) continue;
+      final boardBle = raw['mac_address']?.toString() ?? '';
+      final boardWifi = raw['wifi_mac']?.toString() ?? '';
+      final boardWifiNorm = boardWifi.replaceAll(':', '').toLowerCase();
+      final bleMatch = boardBle.isNotEmpty && boardBle == bleMac;
+      final wifiMatch = wifiNorm != null &&
+          wifiNorm.isNotEmpty &&
+          boardWifiNorm.isNotEmpty &&
+          boardWifiNorm == wifiNorm;
+      if (!bleMatch && !wifiMatch) continue;
       final uid = raw['uid']?.toString();
       if (uid == null || uid.isEmpty) continue;
       final num = int.tryParse(uid);
@@ -444,12 +458,15 @@ class _DeviceScreenState extends State<DeviceScreen>
     return bestUid;
   }
 
-  Future<String?> _claimUid(String baseUrl, String mac) async {
+  Future<String?> _claimUid(String baseUrl, String bleMac, {String? wifiMac}) async {
     final claimRes = await http
         .post(
           Uri.parse('$baseUrl/api/v1/boards/claim'),
           headers: {'Content-Type': 'application/json'},
-          body: json.encode({'mac_address': mac}),
+          body: json.encode({
+            'mac_address': bleMac,
+            if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
+          }),
         )
         .timeout(const Duration(seconds: 5));
     if (claimRes.statusCode == 200) {
@@ -487,7 +504,12 @@ class _DeviceScreenState extends State<DeviceScreen>
         return;
       }
 
-      final mac = widget.device.remoteId.str;
+      final bleMac = widget.device.remoteId.str;
+      String? wifiMac;
+      try {
+        wifiMac = await _scanner.readWifiMac(widget.device);
+      } catch (_) {}
+
       String? claimedUid;
       DateTime? heartbeatBaseline;
 
@@ -496,7 +518,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         final boardsRes = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
         if (boardsRes.statusCode == 200) {
           final boards = json.decode(boardsRes.body) as List;
-          claimedUid = _findExistingUidForMac(boards, mac);
+          claimedUid = _findExistingUidForMac(boards, bleMac, wifiMac: wifiMac);
           if (claimedUid != null) {
             heartbeatBaseline = _lastHeartbeatForUid(boards, claimedUid);
           }
@@ -504,7 +526,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       } catch (_) {}
 
       try {
-        claimedUid ??= await _claimUid(baseUrl, mac);
+        claimedUid ??= await _claimUid(baseUrl, bleMac, wifiMac: wifiMac);
       } catch (e) {
         _onboardingProfiler.finishFailure('uid_claimed', note: '$e');
         rethrow;
@@ -570,7 +592,8 @@ class _DeviceScreenState extends State<DeviceScreen>
               headers: {'Content-Type': 'application/json'},
               body: json.encode({
                 'uid': claimedUid,
-                'mac_address': mac,
+                'mac_address': bleMac,
+                if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
               }),
             )
             .timeout(const Duration(seconds: 5));
@@ -738,9 +761,19 @@ class _DeviceScreenState extends State<DeviceScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        widget.device.platformName.isNotEmpty
-                            ? widget.device.platformName
-                            : 'Sentinel Device',
+                        BleScanner.displayName(
+                          widget.advertisementData ??
+                              AdvertisementData(
+                                advName: widget.device.platformName,
+                                txPowerLevel: null,
+                                appearance: null,
+                                connectable: true,
+                                manufacturerData: const {},
+                                serviceUuids: const [],
+                                serviceData: const {},
+                              ),
+                          platformName: widget.device.platformName,
+                        ),
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 2),

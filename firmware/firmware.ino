@@ -52,6 +52,7 @@ void setup() {
     uart_sniffer_init();
     wifi_init();
     ble_init();
+    wifi_startup();
 
     lastHeartbeat = millis();
     lastTemp = millis();

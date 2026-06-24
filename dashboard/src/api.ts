@@ -17,7 +17,10 @@ export interface Board {
   uid?: string;
   name: string;
   mac_address: string;
+  wifi_mac?: string;
   firmware_version?: string;
+  wifi_rssi?: number;
+  location?: string;
   last_heartbeat: string;
   is_active: boolean;
   created_at: string;
@@ -101,7 +104,7 @@ export interface VizItem {
   color: string;
   visible: boolean;
   field_ref: { protocol_id: string; field_name: string };
-  chart_type: 'line' | 'bar' | 'scatter';
+  chart_type: 'line' | 'bar' | 'scatter' | 'area';
   y_axis: YAxisConfig;
   offset: number;
   weight: number;
@@ -130,9 +133,10 @@ export const api = {
   boards: {
     list: () => request<Board[]>('/boards'),
     get: (id: string) => request<Board>(`/boards/${id}`),
-    register: (data: { name: string; mac_address: string }) =>
-      request<Board>('/boards/register', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<Board>) =>
+    register: (data: { name: string; mac_address: string; wifi_mac?: string }) =>
+      request<{ uid: string; board: Board }>('/boards/register', { method: 'POST', body: JSON.stringify(data) })
+        .then(r => r.board),
+    update: (id: string, data: { name?: string; firmware_version?: string; location?: string }) =>
       request<void>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
 
