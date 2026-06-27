@@ -54,6 +54,7 @@ const (
 	CollectionUartData    = "uart_data"
 	CollectionSessions    = "sessions"
 	CollectionProtocols   = "protocols"
+	CollectionSchemaPresets = "schema_presets"
 	CollectionTemperatures = "temperatures"
 	CollectionVizProfiles = "viz_profiles"
 	CollectionCounters    = "counters"
@@ -64,6 +65,7 @@ func (m *MongoDB) Heartbeats() *mongo.Collection   { return m.Collection(Collect
 func (m *MongoDB) UartData() *mongo.Collection     { return m.Collection(CollectionUartData) }
 func (m *MongoDB) Sessions() *mongo.Collection     { return m.Collection(CollectionSessions) }
 func (m *MongoDB) Protocols() *mongo.Collection    { return m.Collection(CollectionProtocols) }
+func (m *MongoDB) SchemaPresets() *mongo.Collection { return m.Collection(CollectionSchemaPresets) }
 func (m *MongoDB) Temperatures() *mongo.Collection { return m.Collection(CollectionTemperatures) }
 func (m *MongoDB) VizProfiles() *mongo.Collection  { return m.Collection(CollectionVizProfiles) }
 func (m *MongoDB) Counters() *mongo.Collection    { return m.Collection(CollectionCounters) }

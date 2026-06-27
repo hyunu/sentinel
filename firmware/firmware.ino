@@ -74,10 +74,11 @@ void loop() {
         lastHeartbeat = now;
         if (wifi_is_connected()) {
             bool ok = wifi_send_heartbeat();
-            if (ok) {
+            if (ok && wifi_has_board_uid()) {
                 ble_set_server_registered(true);
                 ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
-            } else {
+            } else if (!ok) {
+                ble_set_server_registered(false);
                 ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
             }
         }

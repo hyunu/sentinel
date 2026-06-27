@@ -35,6 +35,10 @@ func main() {
 		logger.Warn("Failed to seed protocols", zap.Error(err))
 	}
 
+	if err := database.EnsureSchemaPresets(context.Background()); err != nil {
+		logger.Warn("Failed to seed schema presets", zap.Error(err))
+	}
+
 	if err := database.BackfillTemperatureUart(context.Background()); err != nil {
 		logger.Warn("Failed to backfill temperature uart data", zap.Error(err))
 	}

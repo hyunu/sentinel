@@ -31,7 +31,7 @@ export interface FieldSpec {
   name: string;
   offset?: number;
   length?: number;
-  type: string;
+  type?: string;
   unit?: string;
   enum_mapping?: Record<string, number>;
   endian?: string;
@@ -42,6 +42,14 @@ export interface FieldSpec {
   flag?: string;
   condition?: string;
   repeat?: string;
+  /** "remaining" = consume rest of current container (e.g. FA body after fixed fields) */
+  length_mode?: string;
+  /** Combinators — protocol-agnostic layout primitives */
+  dispatch_on?: string;
+  dispatch_variants?: Record<string, FieldSpec[]>;
+  default_fields?: FieldSpec[];
+  tagged_layout?: string;
+  tagged_until?: string;
 }
 
 export interface FrameDef {
@@ -51,6 +59,10 @@ export interface FrameDef {
   tail: FieldSpec[];
   endian: string;
   crc_position?: string;
+  /** Header field used to route payload schema (default: fid) */
+  payload_key_field?: string;
+  /** Header field defining payload end offset (default: length) */
+  length_field?: string;
 }
 
 export interface FIDPayload {
@@ -68,6 +80,21 @@ export interface ProtocolSpec {
   frame_def?: FrameDef;
   fields: FieldSpec[];
   fid_payloads?: FIDPayload[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type SchemaPresetCategory = 'payload' | 'frame' | 'protocol';
+
+export interface SchemaPreset {
+  id: string;
+  name: string;
+  description?: string;
+  category: SchemaPresetCategory;
+  fields?: FieldSpec[];
+  frame_def?: FrameDef;
+  fid_payloads?: FIDPayload[];
+  protocol_version?: string;
   created_at: string;
   updated_at: string;
 }
@@ -136,11 +163,13 @@ export const api = {
   boards: {
     list: () => request<Board[]>('/boards'),
     get: (id: string) => request<Board>(`/boards/${id}`),
-    register: (data: { name: string; mac_address: string; wifi_mac?: string }) =>
+    register: (data: { name: string; mac_address: string; wifi_mac?: string; location?: string }) =>
       request<{ uid: string; board: Board }>('/boards/register', { method: 'POST', body: JSON.stringify(data) })
         .then(r => r.board),
     update: (id: string, data: { name?: string; firmware_version?: string; location?: string }) =>
       request<void>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<{ message: string; pending?: boolean; deleted?: Record<string, number> }>(`/boards/${id}`, { method: 'DELETE' }),
   },
 
   heartbeat: (board_id: string) =>
@@ -181,6 +210,20 @@ export const api = {
       request<void>(`/protocols/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/protocols/${id}`, { method: 'DELETE' }),
     seedDefault: () => request<{ message: string; id?: string }>('/protocols/seed-default', { method: 'POST' }),
+  },
+
+  schemaPresets: {
+    list: (category?: SchemaPresetCategory) => {
+      const qs = category ? `?category=${category}` : '';
+      return request<SchemaPreset[]>(`/schema-presets${qs}`);
+    },
+    get: (id: string) => request<SchemaPreset>(`/schema-presets/${id}`),
+    create: (data: Omit<SchemaPreset, 'id' | 'created_at' | 'updated_at'>) =>
+      request<SchemaPreset>('/schema-presets', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<SchemaPreset>) =>
+      request<void>(`/schema-presets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<void>(`/schema-presets/${id}`, { method: 'DELETE' }),
+    seedDefault: () => request<{ message: string; inserted: number }>('/schema-presets/seed-default', { method: 'POST' }),
   },
 
   sessions: {

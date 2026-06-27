@@ -1,9 +1,16 @@
 import type { FieldSpec } from '../api';
 
-export type ParseCursor = { byteOff: number; bitOff: number };
+export type ParseCursor = { byteOff: number; bitOff: number; maxByteOff?: number };
 
-export function newParseCursor(): ParseCursor {
-  return { byteOff: 0, bitOff: 0 };
+export function newParseCursor(maxByteOff?: number): ParseCursor {
+  return { byteOff: 0, bitOff: 0, maxByteOff: maxByteOff && maxByteOff > 0 ? maxByteOff : undefined };
+}
+
+export function boundEnd(cur: ParseCursor, dataLen: number): number {
+  if (cur.maxByteOff !== undefined && cur.maxByteOff > 0 && cur.maxByteOff <= dataLen) {
+    return cur.maxByteOff;
+  }
+  return dataLen;
 }
 
 export function alignByte(c: ParseCursor): void {

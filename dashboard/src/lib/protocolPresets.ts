@@ -1,10 +1,13 @@
-import type { FrameDef, FIDPayload, FieldSpec } from '../api';
+import type { FieldSpec, FrameDef, FIDPayload } from '../api';
 
+/** Default LCP frame used only as empty-form fallback when API presets are unavailable. */
 export const LCP_FRAME: FrameDef = {
   start_byte: 'AA',
   end_byte: 'BB',
   endian: 'big',
   crc_position: 'before_end',
+  payload_key_field: 'fid',
+  length_field: 'length',
   header: [
     { name: 'length', length: 2, type: 'uint16', endian: 'big' },
     { name: 'fid', length: 1, type: 'uint8' },
@@ -18,11 +21,22 @@ export const FIELD_TYPES = [
   'uint8', 'uint16', 'uint32', 'int8', 'int16', 'float', 'ascii', 'hex', 'raw',
 ] as const;
 
-export const FIELD_TYPES_ADVANCED = [
-  ...FIELD_TYPES, 'dynamic', 'function_args', 'func_result',
+export const FIELD_TYPES_COMPOSITOR = [
+  'struct', 'dispatch', 'tagged_repeat', 'tagged_block',
 ] as const;
 
-export type ProtocolFormat = 'lcp' | 'raw';
+/** @deprecated use compositors; kept for backward-compatible specs */
+export const FIELD_TYPES_LEGACY = [
+  'dynamic', 'function_args', 'func_result',
+] as const;
+
+export const FIELD_TYPES_ADVANCED = [
+  ...FIELD_TYPES,
+  ...FIELD_TYPES_COMPOSITOR,
+  ...FIELD_TYPES_LEGACY,
+] as const;
+
+export type ProtocolFormat = 'frame' | 'raw';
 
 export function emptyField(partial?: Partial<FieldSpec>): FieldSpec {
   return {
@@ -65,34 +79,7 @@ export function deriveDisplayFields(fidPayloads: FIDPayload[]): FieldSpec[] {
   return out;
 }
 
-export function temperatureTemplate(): {
-  name: string;
-  version: string;
-  description: string;
-  format: ProtocolFormat;
-  frameDef: FrameDef;
-  fidPayloads: FIDPayload[];
-} {
-  return {
-    name: 'Temperature Telemetry',
-    version: '1.0',
-    description: 'LCP AA/BB frame, FID=0x54 (T). Payload: sensor_id, temperature, humidity.',
-    format: 'lcp',
-    frameDef: structuredClone(LCP_FRAME),
-    fidPayloads: [{
-      fid: '54',
-      name: 'Temperature',
-      description: 'On-board temperature and humidity',
-      fields: [
-        { name: 'sensor_id', length: 1, type: 'uint8', unit: '' },
-        { name: 'temperature_celsius', length: 4, type: 'float', endian: 'little', unit: '°C' },
-        { name: 'humidity_percent', length: 2, type: 'uint16', endian: 'little', unit: '%' },
-      ],
-    }],
-  };
-}
-
 export function detectFormat(p: { frame_def?: FrameDef; fid_payloads?: FIDPayload[] }): ProtocolFormat {
-  if (p.frame_def?.header?.length || p.fid_payloads?.length) return 'lcp';
+  if (p.frame_def?.header?.length || p.fid_payloads?.length) return 'frame';
   return 'raw';
 }

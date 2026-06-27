@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -88,6 +89,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		Name       string `json:"name"`
 		MACAddress string `json:"mac_address" binding:"required"`
 		WifiMAC    string `json:"wifi_mac,omitempty"`
+		Location   string `json:"location,omitempty"`
 		UID        string `json:"uid,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -110,6 +112,9 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 			}
 			if req.WifiMAC != "" {
 				update["wifi_mac"] = macHexToColon(req.WifiMAC)
+			}
+			if req.Location != "" {
+				update["location"] = req.Location
 			}
 			_, err = h.db.Boards().UpdateOne(ctx, bson.M{"uid": req.UID}, bson.M{"$set": update})
 			if err != nil {
@@ -146,6 +151,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		Name:          fmt.Sprintf("STN-%s", uid),
 		MACAddress:    req.MACAddress,
 		WifiMAC:       macHexToColon(req.WifiMAC),
+		Location:      req.Location,
 		LastHeartbeat: time.Now(),
 		IsActive:      true,
 		CreatedAt:     time.Now(),
@@ -230,7 +236,9 @@ func (h *Handler) ListBoards(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := h.db.Boards().Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"created_at": -1}))
+	cursor, err := h.db.Boards().Find(ctx, bson.M{
+		"pending_action": bson.M{"$ne": "deleted"},
+	}, options.Find().SetSort(bson.M{"created_at": -1}))
 	if err != nil {
 		h.logger.Error("failed to list boards", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list boards"})
@@ -299,6 +307,61 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "updated"})
 }
 
+func (h *Handler) DeleteBoard(c *gin.Context) {
+	id := c.Param("id")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": id}).Decode(&board); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
+		return
+	}
+
+	if board.PendingAction == "deleted" {
+		c.JSON(http.StatusOK, gin.H{"message": "delete_pending", "pending": true})
+		return
+	}
+
+	now := time.Now()
+	if isBoardOnline(board, now) {
+		_, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{
+			"pending_action":    "deleted",
+			"pending_action_at": now,
+			"updated_at":        now,
+		}})
+		if err != nil {
+			h.logger.Error("failed to mark board for deletion", zap.String("board_id", id), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete board"})
+			return
+		}
+		h.logger.Info("board delete pending — will notify on next heartbeat", zap.String("board_id", id))
+		c.JSON(http.StatusOK, gin.H{"message": "delete_pending", "pending": true})
+		return
+	}
+
+	stats, err := h.db.DeleteBoardCascade(ctx, id)
+	if err != nil {
+		if errors.Is(err, db.ErrBoardNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
+			return
+		}
+		h.logger.Error("failed to delete board", zap.String("board_id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete board"})
+		return
+	}
+
+	h.logger.Info("board deleted",
+		zap.String("board_id", id),
+		zap.Int64("uart_data", stats.UartData),
+		zap.Int64("sessions", stats.Sessions),
+		zap.Int64("temperatures", stats.Temperatures),
+		zap.Int64("heartbeats", stats.Heartbeats),
+		zap.Int64("viz_profiles", stats.VizProfiles),
+	)
+	c.JSON(http.StatusOK, gin.H{"message": "deleted", "pending": false, "deleted": stats})
+}
+
 func (h *Handler) Heartbeat(c *gin.Context) {
 	var req struct {
 		BoardID         string `json:"board_id"`
@@ -323,6 +386,31 @@ func (h *Handler) Heartbeat(c *gin.Context) {
 	boardID, err := h.resolveBoardID(ctx, req.BoardID, req.UID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&board); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
+		return
+	}
+
+	if board.PendingAction == "deleted" {
+		stats, err := h.db.DeleteBoardCascade(ctx, boardID)
+		if err != nil {
+			h.logger.Error("failed to cascade delete board after notify", zap.String("board_id", boardID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
+			return
+		}
+		h.logger.Info("board deleted after device notification",
+			zap.String("board_id", boardID),
+			zap.Int64("uart_data", stats.UartData),
+			zap.Int64("sessions", stats.Sessions),
+			zap.Int64("temperatures", stats.Temperatures),
+			zap.Int64("heartbeats", stats.Heartbeats),
+			zap.Int64("viz_profiles", stats.VizProfiles),
+		)
+		c.JSON(http.StatusOK, gin.H{"message": "ok", "action": "deleted"})
 		return
 	}
 
@@ -621,10 +709,12 @@ func (h *Handler) QueryTemperature(c *gin.Context) {
 
 func (h *Handler) CreateProtocol(c *gin.Context) {
 	var req struct {
-		Name        string             `json:"name" binding:"required"`
-		Version     string             `json:"version" binding:"required"`
-		Description string             `json:"description,omitempty"`
-		Fields      []models.FieldSpec `json:"fields" binding:"required"`
+		Name        string              `json:"name" binding:"required"`
+		Version     string              `json:"version" binding:"required"`
+		Description string              `json:"description,omitempty"`
+		Fields      []models.FieldSpec  `json:"fields"`
+		FrameDef    *models.FrameDef    `json:"frame_def,omitempty"`
+		FIDPayloads []models.FIDPayload `json:"fid_payloads,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -637,6 +727,8 @@ func (h *Handler) CreateProtocol(c *gin.Context) {
 		Version:     req.Version,
 		Description: req.Description,
 		Fields:      req.Fields,
+		FrameDef:    req.FrameDef,
+		FIDPayloads: req.FIDPayloads,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -693,10 +785,12 @@ func (h *Handler) GetProtocol(c *gin.Context) {
 func (h *Handler) UpdateProtocol(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name        string             `json:"name,omitempty"`
-		Version     string             `json:"version,omitempty"`
-		Description string             `json:"description,omitempty"`
-		Fields      []models.FieldSpec `json:"fields,omitempty"`
+		Name        string              `json:"name,omitempty"`
+		Version     string              `json:"version,omitempty"`
+		Description string              `json:"description,omitempty"`
+		Fields      []models.FieldSpec  `json:"fields,omitempty"`
+		FrameDef    *models.FrameDef    `json:"frame_def,omitempty"`
+		FIDPayloads []models.FIDPayload `json:"fid_payloads,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -715,6 +809,12 @@ func (h *Handler) UpdateProtocol(c *gin.Context) {
 	}
 	if req.Fields != nil {
 		update["fields"] = req.Fields
+	}
+	if req.FrameDef != nil {
+		update["frame_def"] = req.FrameDef
+	}
+	if req.FIDPayloads != nil {
+		update["fid_payloads"] = req.FIDPayloads
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -753,26 +853,13 @@ func (h *Handler) SeedDefaultProtocol(c *gin.Context) {
 		return
 	}
 
+	fd := protocol.DefaultFrameDef
 	proto := models.ProtocolSpec{
 		ID:          uuid.New().String(),
 		Name:        "LCP Protocol",
 		Version:     "1.0",
 		Description: "LCP↔OSP UART binary protocol: AA header + FID-based payload + CRC16 + BB tail",
-		FrameDef: &models.FrameDef{
-			StartByte:   "AA",
-			EndByte:     "BB",
-			Endian:      "big",
-			CrcPosition: "before_end",
-			Header: []models.FieldSpec{
-				{Name: "length", Length: 2, Type: "uint16", Endian: "big"},
-				{Name: "fid", Length: 1, Type: "uint8"},
-				{Name: "seq_no", Length: 2, Type: "uint16", Endian: "big"},
-				{Name: "attr", Length: 1, Type: "uint8"},
-			},
-			Tail: []models.FieldSpec{
-				{Name: "crc16", Length: 2, Type: "uint16", Endian: "big"},
-			},
-		},
+		FrameDef:    &fd,
 		Fields: []models.FieldSpec{
 			{Name: "start_byte", Offset: 0, Length: 1, Type: "hex"},
 			{Name: "length", Offset: 1, Length: 2, Type: "uint16", Endian: "big"},
@@ -782,52 +869,7 @@ func (h *Handler) SeedDefaultProtocol(c *gin.Context) {
 			{Name: "crc16", Offset: 0, Length: 2, Type: "uint16", Endian: "big"},
 			{Name: "end_byte", Offset: 0, Length: 1, Type: "hex"},
 		},
-		FIDPayloads: []models.FIDPayload{
-			{
-				FID: "CF", Name: "Function Call",
-				Fields: []models.FieldSpec{
-					{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
-					{Name: "arguments", Type: "function_args", Fields: []models.FieldSpec{
-						{Flag: "FA", Name: "arg", Fields: []models.FieldSpec{
-							{Name: "type_id", Length: 1, Type: "uint8"},
-							{Name: "value", Type: "dynamic"},
-						}},
-					}},
-				},
-			},
-			{
-				FID: "CD", Name: "Function ACK",
-				Fields: []models.FieldSpec{
-					{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
-					{Name: "result", Type: "func_result", Fields: []models.FieldSpec{
-						{Flag: "FD", Name: "success", Fields: []models.FieldSpec{
-							{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
-							{Name: "result_data", Type: "raw"},
-						}},
-						{Flag: "FE", Name: "error", Fields: []models.FieldSpec{
-							{Name: "function_id", Length: 2, Type: "uint16", Endian: "little"},
-							{Name: "error_code", Length: 1, Type: "uint8"},
-						}},
-					}},
-				},
-			},
-			{FID: "CA", Name: "Data Transfer", Fields: []models.FieldSpec{
-				{Name: "raw_data", Type: "raw"},
-			}},
-			{FID: "CE", Name: "Ping"},
-			{FID: "CC", Name: "Packet ACK", Fields: []models.FieldSpec{
-				{Name: "ack_seq", Length: 2, Type: "uint16", Endian: "big"},
-				{Name: "error_code", Length: 1, Type: "uint8"},
-			}},
-			{FID: "BC", Name: "Heartbeat", Fields: []models.FieldSpec{
-				{Name: "timestamp_raw", Length: 4, Type: "uint32", Endian: "little"},
-				{Name: "status", Length: 1, Type: "uint8"},
-			}},
-			{FID: "C9", Name: "Event", Fields: []models.FieldSpec{
-				{Name: "event_id", Length: 1, Type: "uint8"},
-				{Name: "event_data", Type: "raw"},
-			}},
-		},
+		FIDPayloads: protocol.DefaultLCPFIDPayloads,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}

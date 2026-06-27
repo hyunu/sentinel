@@ -140,10 +140,10 @@ void wifi_loop() {
         }
 
         bool ok = wifi_send_heartbeat();
-        if (ok) {
+        if (ok && wifi_has_board_uid()) {
             ble_set_server_registered(true);
             ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
-        } else {
+        } else if (!ok) {
             ble_set_server_registered(false);
             ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
         }
@@ -165,7 +165,30 @@ void wifi_set_uid(const String &uid) {
     ble_set_uid(uid);
 }
 
-static int http_post(const String &path, const String &body) {
+bool wifi_has_board_uid() {
+    return board_uid.length() > 0;
+}
+
+void wifi_clear_board_registration() {
+    board_uid = "";
+    nvs_save_string("uid", "");
+    ble_preload_uid("");
+    ble_set_uid("");
+    ble_set_server_registered(false);
+    Serial.println("[WiFi] Board registration cleared (server deleted)");
+}
+
+static String extract_json_string_field(const String &json, const char *key) {
+    String pattern = String("\"") + String(key) + String("\":\"");
+    int idx = json.indexOf(pattern);
+    if (idx < 0) return String("");
+    idx += pattern.length();
+    int end = json.indexOf("\"", idx);
+    if (end < 0) return String("");
+    return json.substring(idx, end);
+}
+
+static int http_post(const String &path, const String &body, String *responseOut = nullptr) {
     if (!wifi_is_connected() || !hasValidIp()) return -1;
 
     HTTPClient http;
@@ -178,6 +201,9 @@ static int http_post(const String &path, const String &body) {
     int code = http.POST(body);
     if (code > 0) {
         Serial.printf("[HTTP] POST %s: %d\n", path.c_str(), code);
+        if (responseOut) {
+            *responseOut = http.getString();
+        }
     } else {
         Serial.printf("[HTTP] POST %s failed: %d\n", path.c_str(), code);
     }
@@ -221,10 +247,19 @@ bool wifi_send_heartbeat() {
         } else {
             Serial.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
             Serial.printf("[HTTP] WiFi.status=%d, IP=%s\n", WiFi.status(), WiFi.localIP().toString().c_str());
-            int code = http_post("/api/v1/heartbeat", body);
+            String response;
+            int code = http_post("/api/v1/heartbeat", body, &response);
             ok = httpOk(code);
             Serial.printf("[HTTP] Heartbeat result code: %d\n", code);
-            if (ok) break;
+            if (ok) {
+                const String action = extract_json_string_field(response, "action");
+                if (action == "deleted") {
+                    wifi_clear_board_registration();
+                    ble_send_uart_data(String("EVENT:BOARD_DELETED"));
+                    Serial.println("[HTTP] Server deleted this board — registration cleared");
+                }
+                break;
+            }
         }
         if (attempt < maxAttempts) delay(backoffMs[attempt - 1]);
     }

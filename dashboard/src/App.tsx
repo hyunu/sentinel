@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import BoardsPage from './pages/Boards';
-import ProtocolsPage from './pages/Protocols';
+import ProtocolsListPage from './pages/ProtocolsList';
+import ProtocolEditPage from './pages/ProtocolEdit';
 import DataViewerPage from './pages/DataViewer';
 import VizDashboardPage from './pages/VizDashboard';
 import AIQueryPage from './pages/AIQuery';
@@ -45,7 +46,9 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/boards" replace />} />
             <Route path="/boards" element={<BoardsPage />} />
-            <Route path="/protocols" element={<ProtocolsPage />} />
+            <Route path="/protocols" element={<ProtocolsListPage />} />
+            <Route path="/protocols/new" element={<ProtocolEditPage />} />
+            <Route path="/protocols/:id/edit" element={<ProtocolEditPage />} />
             <Route path="/data" element={<DataViewerPage />} />
             <Route path="/viz" element={<VizDashboardPage />} />
             <Route path="/ai" element={<AIQueryPage />} />

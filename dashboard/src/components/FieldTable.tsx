@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { FieldSpec } from '../api';
 import { FIELD_TYPES, FIELD_TYPES_ADVANCED } from '../lib/protocolPresets';
@@ -15,36 +15,63 @@ type FieldTableProps = {
 const TYPES = (mode: 'raw' | 'payload') =>
   mode === 'payload' ? FIELD_TYPES_ADVANCED : FIELD_TYPES;
 
-function ColumnHelp({ title, ariaLabel, children }: { title: string; ariaLabel: string; children: ReactNode }) {
+function ColumnHelp({
+  title,
+  ariaLabel,
+  children,
+  popoverClass,
+  width = POPOVER_W,
+}: {
+  title: string;
+  ariaLabel: string;
+  children: ReactNode;
+  popoverClass?: string;
+  width?: number;
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const updatePosition = useCallback(() => {
+  const clampPosition = useCallback((left: number, top: number) => {
+    const margin = 8;
+    let x = left;
+    let y = top;
+    if (x + width > window.innerWidth - margin) {
+      x = Math.max(margin, window.innerWidth - width - margin);
+    }
+    if (x < margin) x = margin;
+    const maxH = 480;
+    if (y + maxH > window.innerHeight - margin) {
+      y = Math.max(margin, window.innerHeight - maxH - margin);
+    }
+    if (y < margin) y = margin;
+    return { left: x, top: y };
+  }, [width]);
+
+  const positionFromMouse = useCallback((clientX: number, clientY: number) => {
+    const gap = 8;
+    return clampPosition(clientX + gap, clientY - 8);
+  }, [clampPosition]);
+
+  const positionFromButton = useCallback(() => {
     const btn = btnRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const margin = 8;
-    let left = rect.right - POPOVER_W;
-    if (left < margin) left = margin;
-    if (left + POPOVER_W > window.innerWidth - margin) {
-      left = window.innerWidth - POPOVER_W - margin;
-    }
-    setPos({ top: rect.bottom + 6, left });
-  }, []);
+    const gap = 8;
+    setPos(clampPosition(rect.right + gap, rect.top));
+  }, [clampPosition]);
 
   useEffect(() => {
     if (!open) return;
-    updatePosition();
-    const onScrollOrResize = () => updatePosition();
+    const onScrollOrResize = () => positionFromButton();
     window.addEventListener('resize', onScrollOrResize);
     window.addEventListener('scroll', onScrollOrResize, true);
     return () => {
       window.removeEventListener('resize', onScrollOrResize);
       window.removeEventListener('scroll', onScrollOrResize, true);
     };
-  }, [open, updatePosition]);
+  }, [open, positionFromButton]);
 
   useEffect(() => {
     if (!open) return;
@@ -57,6 +84,16 @@ function ColumnHelp({ title, ariaLabel, children }: { title: string; ariaLabel: 
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [open]);
 
+  const handleClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setPos(positionFromMouse(e.clientX, e.clientY));
+    setOpen(true);
+  };
+
   return (
     <>
       <button
@@ -65,17 +102,17 @@ function ColumnHelp({ title, ariaLabel, children }: { title: string; ariaLabel: 
         className="info-icon-btn"
         aria-label={ariaLabel}
         aria-expanded={open}
-        onClick={() => setOpen(v => !v)}
+        onClick={handleClick}
       >
         i
       </button>
       {open && createPortal(
         <div
           ref={popoverRef}
-          className="decoration-help-popover"
+          className={`decoration-help-popover${popoverClass ? ` ${popoverClass}` : ''}`}
           role="dialog"
           aria-label={ariaLabel}
-          style={{ top: pos.top, left: pos.left, width: POPOVER_W }}
+          style={{ top: pos.top, left: pos.left, width }}
         >
           <p className="decoration-help-title">{title}</p>
           {children}
@@ -99,14 +136,108 @@ function HelpList({ items }: { items: { term: string; desc: ReactNode }[] }) {
   );
 }
 
-function ThWithHelp({ label, ariaLabel, title, children }: { label: string; ariaLabel: string; title: string; children: ReactNode }) {
+function ThWithHelp({
+  label,
+  ariaLabel,
+  title,
+  children,
+  popoverClass,
+  popoverWidth,
+}: {
+  label: string;
+  ariaLabel: string;
+  title: string;
+  children: ReactNode;
+  popoverClass?: string;
+  popoverWidth?: number;
+}) {
   return (
     <th>
       <span className="th-label-with-info">
         {label}
-        <ColumnHelp title={title} ariaLabel={ariaLabel}>{children}</ColumnHelp>
+        <ColumnHelp title={title} ariaLabel={ariaLabel} popoverClass={popoverClass} width={popoverWidth}>
+          {children}
+        </ColumnHelp>
       </span>
     </th>
+  );
+}
+
+const BASE_TYPE_HELP: { term: string; desc: ReactNode }[] = [
+  { term: 'uint8', desc: '1바이트 부호 없는 정수 (0–255). Len=1' },
+  { term: 'uint16', desc: '2바이트 부호 없는 정수. Len=2, Endian(LE/BE) 적용' },
+  { term: 'uint32', desc: '4바이트 부호 없는 정수. Len=4, Endian 적용' },
+  { term: 'int8', desc: '1바이트 부호 있는 정수 (-128–127). Len=1' },
+  { term: 'int16', desc: '2바이트 부호 있는 정수. Len=2, Endian 적용' },
+  { term: 'float', desc: 'IEEE754 float32. Len=4, Endian 적용 (Temperature 등)' },
+  { term: 'ascii', desc: 'Len 바이트를 ASCII 문자열로. 끝의 null(0x00) 제거' },
+  { term: 'hex', desc: 'Len 바이트를 대문자 hex 문자열로 (예: AABBCC)' },
+  { term: 'raw', desc: '바이너리 blob. Len=0 + repeat=until_end 이면 남은 payload 전체를 hex로' },
+];
+
+const COMPOSITOR_TYPE_HELP: { term: string; desc: ReactNode }[] = [
+  {
+    term: 'struct',
+    desc: '하위 fields를 중첩 객체로 파싱. 결과가 트리(map)로 저장됨',
+  },
+  {
+    term: 'dispatch',
+    desc: (
+      <>
+        <strong>dispatch_on</strong> 필드 값으로 하위 스키마 분기.
+        dispatch_variants: &#123; &quot;01&quot;: [fields…] &#125; · default_fields 로 fallback
+      </>
+    ),
+  },
+  {
+    term: 'tagged_repeat',
+    desc: (
+      <>
+        <code>flag | len | body</code> 블록을 payload 끝까지 반복.
+        fields[] 각 항목의 Flag(FA/FB/…)로 body 스키마 선택 — 블록 종류 N개 확장 가능
+      </>
+    ),
+  },
+  {
+    term: 'tagged_block',
+    desc: (
+      <>
+        <code>flag | len | body</code> 한 덩어리. CD result 등 단일 분기에 사용.
+        Flag(FD/FE)별 fields 로 body 파싱
+      </>
+    ),
+  },
+];
+
+const LEGACY_TYPE_HELP: { term: string; desc: ReactNode }[] = [
+  {
+    term: 'function_args',
+    desc: 'tagged_repeat 로 대체 권장. FA|len|body 반복 (하위 Fields[0]=FA 템플릿)',
+  },
+  {
+    term: 'func_result',
+    desc: 'tagged_block 로 대체 권장. flag|len|body 단일 블록',
+  },
+  {
+    term: 'dynamic',
+    desc: 'dispatch_on + dispatch_variants 로 대체 권장. 미설정 시 hex dump',
+  },
+];
+
+function TypeHelp({ mode }: { mode: 'raw' | 'payload' }) {
+  return (
+    <>
+      <p className="decoration-help-section">기본 타입</p>
+      <HelpList items={BASE_TYPE_HELP} />
+      {mode === 'payload' && (
+        <>
+          <p className="decoration-help-section">Combinators (범용)</p>
+          <HelpList items={COMPOSITOR_TYPE_HELP} />
+          <p className="decoration-help-section">Legacy (호환)</p>
+          <HelpList items={LEGACY_TYPE_HELP} />
+        </>
+      )}
+    </>
   );
 }
 
@@ -116,19 +247,6 @@ function NameHelp() {
       { term: '역할', desc: '파싱 결과 키이자 Data Viewer 컬럼 이름' },
       { term: '형식', desc: 'snake_case 권장 (예: temperature_celsius)' },
       { term: '저장', desc: 'parsed_fields[field_name] 으로 저장됨' },
-    ]} />
-  );
-}
-
-function TypeHelp({ mode }: { mode: 'raw' | 'payload' }) {
-  return (
-    <HelpList items={[
-      { term: '정수/실수', desc: <>uint8 · uint16 · uint32 · int8 · int16 · float — Len과 함께 해석</> },
-      { term: '문자/바이너리', desc: 'ascii · hex · raw' },
-      ...(mode === 'payload' ? [
-        { term: 'LCP 전용', desc: 'dynamic · function_args · func_result — 가변/중첩 구조' },
-      ] : []),
-      { term: 'Endian', desc: '2바이트 이상 정수·float 에서 바이트 순서 (LE/BE)' },
     ]} />
   );
 }
@@ -180,7 +298,7 @@ function FlagHelp() {
     <HelpList items={[
       { term: '역할', desc: 'LCP 중첩 필드 분기용 1바이트 hex 코드' },
       { term: '예시', desc: 'FA(argument) · FD(success) · FE(error)' },
-      { term: '매칭', desc: 'function_args / func_result 파싱 시 해당 flag 행만 적용' },
+      { term: '매칭', desc: 'tagged_repeat / tagged_block 파싱 시 Flag 와 일치하는 variant 행 적용' },
       { term: '일반 FID', desc: 'Temperature 등 단순 payload 는 보통 비움' },
     ]} />
   );
@@ -257,7 +375,15 @@ export default function FieldTable({ fields, onChange, mode, showUnit }: FieldTa
         <thead>
           <tr>
             <ThWithHelp label="Name" title="Name (필드 이름)" ariaLabel="Name 도움말"><NameHelp /></ThWithHelp>
-            <ThWithHelp label="Type" title="Type (데이터 타입)" ariaLabel="Type 도움말"><TypeHelp mode={mode} /></ThWithHelp>
+            <ThWithHelp
+              label="Type"
+              title="Type (데이터 타입)"
+              ariaLabel="Type 도움말"
+              popoverClass="decoration-help-popover--scroll"
+              popoverWidth={400}
+            >
+              <TypeHelp mode={mode} />
+            </ThWithHelp>
             {mode === 'raw' && (
               <ThWithHelp label="Offset" title="Offset (바이트 인덱스)" ariaLabel="Offset 도움말"><OffsetHelp /></ThWithHelp>
             )}

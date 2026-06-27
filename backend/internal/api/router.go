@@ -19,6 +19,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 			boards.GET("", h.ListBoards)
 			boards.GET("/:id", h.GetBoard)
 			boards.PUT("/:id", h.UpdateBoard)
+			boards.DELETE("/:id", h.DeleteBoard)
 		}
 
 		v1.POST("/heartbeat", h.Heartbeat)
@@ -40,6 +41,16 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 			protocols.PUT("/:id", h.UpdateProtocol)
 			protocols.DELETE("/:id", h.DeleteProtocol)
 			protocols.POST("/seed-default", h.SeedDefaultProtocol)
+		}
+
+		presets := v1.Group("/schema-presets")
+		{
+			presets.GET("", h.ListSchemaPresets)
+			presets.POST("", h.CreateSchemaPreset)
+			presets.POST("/seed-default", h.SeedSchemaPresets)
+			presets.GET("/:id", h.GetSchemaPreset)
+			presets.PUT("/:id", h.UpdateSchemaPreset)
+			presets.DELETE("/:id", h.DeleteSchemaPreset)
 		}
 
 		sessions := v1.Group("/sessions")

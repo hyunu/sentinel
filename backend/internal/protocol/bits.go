@@ -7,8 +7,16 @@ import (
 )
 
 type parseCursor struct {
-	byteOff int
-	bitOff  int
+	byteOff    int
+	bitOff     int
+	maxByteOff int // exclusive end within buffer; 0 = use full len(data)
+}
+
+func (c *parseCursor) boundEnd(dataLen int) int {
+	if c.maxByteOff > 0 && c.maxByteOff <= dataLen {
+		return c.maxByteOff
+	}
+	return dataLen
 }
 
 func (c *parseCursor) alignByte() {
