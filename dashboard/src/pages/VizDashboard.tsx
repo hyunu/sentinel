@@ -5,6 +5,7 @@ import {
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import PageHeader from '../components/PageHeader';
+import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
@@ -185,9 +186,10 @@ export default function VizDashboardPage() {
     const proto = protocols.find(p => p.id === selectedProto);
     if (!proto) return;
     const existingLabels = new Set(items.map(i => i.label));
-    const newItems = proto.fields
-      .filter(f => !existingLabels.has(f.name))
-      .map((f, i) => makeItem(selectedProto, f.name, f.name, items.length + i));
+    const fieldNames = collectParseRuleFieldPaths(proto.parse_rules);
+    const newItems = fieldNames
+      .filter(name => !existingLabels.has(name))
+      .map((name, i) => makeItem(selectedProto, name, name, items.length + i));
     if (newItems.length) setItems(prev => [...prev, ...newItems]);
   };
 

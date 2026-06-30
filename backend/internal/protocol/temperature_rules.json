@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "name": "Temperature Telemetry",
+    "description": "ESP32 temperature sensor UART frame (AA/BB, FID=T/84)",
+    "version": "1.0",
+    "frame": "AA [LEN:2 BE] FID=T SEQ:2 ATTR PAYLOAD CRC16 BB"
+  },
+  "fields": [
+    {
+      "name": "stx",
+      "type": "Validate",
+      "inner": {"type": "U8"},
+      "validate_expr": "value == 0xAA"
+    },
+    {
+      "name": "length",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "fid",
+      "type": "U8"
+    },
+    {
+      "name": "seq_no",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "attr",
+      "type": "U8"
+    },
+    {
+      "name": "payload",
+      "type": "Switch",
+      "key_from": "fid",
+      "cases": {
+        "84": [
+          {"name": "sensor_id", "type": "U8"},
+          {"name": "temperature_celsius", "type": "Float", "endian": "little"},
+          {"name": "humidity_percent", "type": "U16", "endian": "little"}
+        ]
+      }
+    },
+    {
+      "name": "crc16",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "etx",
+      "type": "Validate",
+      "inner": {"type": "U8"},
+      "validate_expr": "value == 0xBB"
+    }
+  ]
+}

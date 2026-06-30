@@ -88,6 +88,7 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
 - **세션 관리**: 데이터 구간 분할 (수동/자동, 타임갭/패턴 기반)
 - **프로토콜 명세**: CRUD, 버전 관리
 - **데이터 파싱**: 명세 기반 raw bytes → 필드 변환
+- **파싱 DSL (v2 목표)**: [`docs/parsing-dsl.md`](docs/parsing-dsl.md) — 가변 길이·중첩 반복·len 위치 자유
 - **시각화 프로필**: 멀티 Y축, Offset, Weight, Visibility 관리
 - **AI 분석**: 자연어 질의 → 데이터 탐색 및 추론
 
@@ -102,6 +103,28 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
   - Visibility 토글
   - 프로필 저장/로드
 - AI 쿼리 인터페이스 (자연어 채팅)
+
+### 3.5 프로토콜 파싱 엔진 (v2 요구)
+
+상세 설계: [`docs/parsing-dsl.md` §3](docs/parsing-dsl.md)
+
+| ID | 요구 |
+|----|------|
+| REQ-LEN-01 | **길이 필드는 블록 내 임의 위치** 가능 (FLAG 직후 고정 아님). |
+| REQ-LEN-02 | 블록 `len` **semantics** 선택: body-only / self(블록 전체) / expr 등. |
+| REQ-LEN-03 | `len`으로 잘린 **컨테이너 밖으로 파싱이 넘어가면 안 됨**. |
+| REQ-LEN-04 | leaf 필드 길이: `fixed` · `remaining` · **expr** (`block_len - 2`). |
+| REQ-REP-01 | **`repeat` 중첩** (FC repeat → FA repeat …). |
+| REQ-REP-02 | 반복 종료: `count` / `container_end` / `no_matching` / expr — **독립 설정**. |
+| REQ-REP-03 | 안쪽 repeat·frame은 **바깥 bounded len** 안에서만 동작. |
+
+타입 구성 (v2):
+
+- `len_field` — 정수 읽고 블록 경계 선언
+- `bounded` / `seq` — fields 순서 + anchor + len_field
+- `repeat` — 중첩 반복
+- `field` — `length.mode` + expr
+- `frame` — 고정 TLV shortcut · `wire[]` — 만능
 
 ## 4. 데이터 모델
 

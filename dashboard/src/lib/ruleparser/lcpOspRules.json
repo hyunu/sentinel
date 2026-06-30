@@ -1,0 +1,148 @@
+{
+  "_meta": {
+    "name": "LCP/OSP 함수 실행 프로토콜",
+    "description": "시리얼 통신 패킷 파싱 규칙 - 함수 실행(0xCF) 및 함수 ACK(0xCD)",
+    "version": "1.0",
+    "frame": "AA [LEN:2] [FID] [SEQ:2] [ATTR] [PAYLOAD...] [CRC16:2] BB",
+    "notes": {
+      "endian": "big-endian (MSB first)",
+      "seq_no": "OSP요청/LCP응답: 0~32767, LCP요청/OSP응답: 32768~65535",
+      "tlv_len": "len 필드는 flag+len 자신을 포함한 전체 TLV 길이 (content = len - 2)",
+      "crc16": "CRC-16/XMODEM (poly 0x1021, init 0). 범위: STX(AA) ~ payload 마지막 바이트"
+    }
+  },
+  "fields": [
+    {
+      "name": "stx",
+      "type": "Validate",
+      "inner": {"type": "U8"},
+      "validate_expr": "value == 0xAA"
+    },
+    {
+      "name": "length",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "fid",
+      "type": "U8"
+    },
+    {
+      "name": "seq_no",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "attribute",
+      "type": "Bits",
+      "bits": [
+        {"name": "retry_count", "bits": 4},
+        {"name": "priority", "bits": 4}
+      ]
+    },
+    {
+      "name": "payload",
+      "type": "Switch",
+      "key_from": "fid",
+      "cases": {
+        "207": [
+          {
+            "name": "function_count",
+            "type": "U8"
+          },
+          {
+            "name": "functions",
+            "type": "RepeatCount",
+            "count_from": "function_count",
+            "item_rules": [
+              {
+                "name": "flag",
+                "type": "Validate",
+                "inner": {"type": "U8"},
+                "validate_expr": "value == 0xFC"
+              },
+              {
+                "name": "len",
+                "type": "U8"
+              },
+              {
+                "name": "function_id",
+                "type": "U8"
+              },
+              {
+                "name": "arg_count",
+                "type": "U8"
+              },
+              {
+                "name": "args",
+                "type": "RepeatCount",
+                "count_from": "arg_count",
+                "item_rules": [
+                  {
+                    "name": "flag",
+                    "type": "Validate",
+                    "inner": {"type": "U8"},
+                    "validate_expr": "value == 0xFA"
+                  },
+                  {
+                    "name": "len",
+                    "type": "U8"
+                  },
+                  {
+                    "name": "val",
+                    "type": "VarBytes",
+                    "length_from": {"expr": "len - 2"}
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "205": [
+          {
+            "name": "function_count",
+            "type": "U8"
+          },
+          {
+            "name": "functions",
+            "type": "RepeatCount",
+            "count_from": "function_count",
+            "item_rules": [
+              {
+                "name": "flag",
+                "type": "U8"
+              },
+              {
+                "name": "len",
+                "type": "U8"
+              },
+              {
+                "name": "function_id",
+                "type": "U8"
+              },
+              {
+                "name": "error",
+                "type": "Optional",
+                "predicate": {"expr": "flag == 0xFE"},
+                "rules": [
+                  {"name": "err_code", "type": "U8"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "crc16",
+      "type": "U16",
+      "endian": "big"
+    },
+    {
+      "name": "etx",
+      "type": "Validate",
+      "inner": {"type": "U8"},
+      "validate_expr": "value == 0xBB"
+    }
+  ]
+}

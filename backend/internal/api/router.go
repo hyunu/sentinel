@@ -36,6 +36,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 		protocols := v1.Group("/protocols")
 		{
 			protocols.POST("", h.CreateProtocol)
+			protocols.POST("/parse", h.ParseProtocolHex)
 			protocols.GET("", h.ListProtocols)
 			protocols.GET("/:id", h.GetProtocol)
 			protocols.PUT("/:id", h.UpdateProtocol)

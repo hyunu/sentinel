@@ -1,5 +1,17 @@
 const BASE = '/api/v1';
 
+import type { JsonRuleDocument, ParseResult } from './types/ruleparser';
+
+export type {
+  BitDef,
+  ExprDef,
+  JsonFieldRule,
+  JsonRuleDocument,
+  JsonRuleSet,
+  ParseResult,
+} from './types/ruleparser';
+export { hasParseRules } from './types/ruleparser';
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -27,74 +39,22 @@ export interface Board {
   updated_at: string;
 }
 
-export interface FieldSpec {
-  name: string;
-  offset?: number;
-  length?: number;
-  type?: string;
-  unit?: string;
-  enum_mapping?: Record<string, number>;
-  endian?: string;
-  decoration?: string;
-  bit_offset?: number;
-  bit_length?: number;
-  fields?: FieldSpec[];
-  flag?: string;
-  condition?: string;
-  repeat?: string;
-  /** "remaining" = consume rest of current container (e.g. FA body after fixed fields) */
-  length_mode?: string;
-  /** Combinators — protocol-agnostic layout primitives */
-  dispatch_on?: string;
-  dispatch_variants?: Record<string, FieldSpec[]>;
-  default_fields?: FieldSpec[];
-  tagged_layout?: string;
-  tagged_until?: string;
-}
-
-export interface FrameDef {
-  start_byte: string;
-  end_byte: string;
-  header: FieldSpec[];
-  tail: FieldSpec[];
-  endian: string;
-  crc_position?: string;
-  /** Header field used to route payload schema (default: fid) */
-  payload_key_field?: string;
-  /** Header field defining payload end offset (default: length) */
-  length_field?: string;
-}
-
-export interface FIDPayload {
-  fid: string;
-  name: string;
-  description?: string;
-  fields?: FieldSpec[];
-}
-
 export interface ProtocolSpec {
   id: string;
   name: string;
   version: string;
   description?: string;
-  frame_def?: FrameDef;
-  fields: FieldSpec[];
-  fid_payloads?: FIDPayload[];
+  parse_rules: JsonRuleDocument;
   created_at: string;
   updated_at: string;
 }
-
-export type SchemaPresetCategory = 'payload' | 'frame' | 'protocol';
 
 export interface SchemaPreset {
   id: string;
   name: string;
   description?: string;
-  category: SchemaPresetCategory;
-  fields?: FieldSpec[];
-  frame_def?: FrameDef;
-  fid_payloads?: FIDPayload[];
   protocol_version?: string;
+  parse_rules: JsonRuleDocument;
   created_at: string;
   updated_at: string;
 }
@@ -206,24 +166,23 @@ export const api = {
     get: (id: string) => request<ProtocolSpec>(`/protocols/${id}`),
     create: (data: Omit<ProtocolSpec, 'id' | 'created_at' | 'updated_at'>) =>
       request<ProtocolSpec>('/protocols', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<ProtocolSpec>) =>
+    update: (id: string, data: Partial<Omit<ProtocolSpec, 'id' | 'created_at' | 'updated_at'>>) =>
       request<void>(`/protocols/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/protocols/${id}`, { method: 'DELETE' }),
     seedDefault: () => request<{ message: string; id?: string }>('/protocols/seed-default', { method: 'POST' }),
+    parse: (data: { raw_hex: string; protocol_id?: string; parse_rules?: JsonRuleDocument }) =>
+      request<ParseResult>('/protocols/parse', { method: 'POST', body: JSON.stringify(data) }),
   },
 
   schemaPresets: {
-    list: (category?: SchemaPresetCategory) => {
-      const qs = category ? `?category=${category}` : '';
-      return request<SchemaPreset[]>(`/schema-presets${qs}`);
-    },
+    list: () => request<SchemaPreset[]>('/schema-presets'),
     get: (id: string) => request<SchemaPreset>(`/schema-presets/${id}`),
     create: (data: Omit<SchemaPreset, 'id' | 'created_at' | 'updated_at'>) =>
       request<SchemaPreset>('/schema-presets', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<SchemaPreset>) =>
+    update: (id: string, data: Partial<Omit<SchemaPreset, 'id' | 'created_at' | 'updated_at'>>) =>
       request<void>(`/schema-presets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<void>(`/schema-presets/${id}`, { method: 'DELETE' }),
-    seedDefault: () => request<{ message: string; inserted: number }>('/schema-presets/seed-default', { method: 'POST' }),
+    seedDefault: () => request<{ message: string }>('/schema-presets/seed-default', { method: 'POST' }),
   },
 
   sessions: {

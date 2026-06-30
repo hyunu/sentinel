@@ -13,6 +13,7 @@ import (
 	"github.com/hyunu/sentinel/internal/db"
 	"github.com/hyunu/sentinel/internal/models"
 	"github.com/hyunu/sentinel/internal/protocol"
+	"github.com/hyunu/sentinel/internal/ruleparser"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -709,15 +710,17 @@ func (h *Handler) QueryTemperature(c *gin.Context) {
 
 func (h *Handler) CreateProtocol(c *gin.Context) {
 	var req struct {
-		Name        string              `json:"name" binding:"required"`
-		Version     string              `json:"version" binding:"required"`
-		Description string              `json:"description,omitempty"`
-		Fields      []models.FieldSpec  `json:"fields"`
-		FrameDef    *models.FrameDef    `json:"frame_def,omitempty"`
-		FIDPayloads []models.FIDPayload `json:"fid_payloads,omitempty"`
+		Name        string                       `json:"name" binding:"required"`
+		Version     string                       `json:"version" binding:"required"`
+		Description string                       `json:"description,omitempty"`
+		ParseRules  *ruleparser.JsonRuleDocument `json:"parse_rules" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.ParseRules == nil || len(req.ParseRules.Fields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "parse_rules.fields required"})
 		return
 	}
 
@@ -726,9 +729,7 @@ func (h *Handler) CreateProtocol(c *gin.Context) {
 		Name:        req.Name,
 		Version:     req.Version,
 		Description: req.Description,
-		Fields:      req.Fields,
-		FrameDef:    req.FrameDef,
-		FIDPayloads: req.FIDPayloads,
+		ParseRules:  req.ParseRules,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -785,12 +786,10 @@ func (h *Handler) GetProtocol(c *gin.Context) {
 func (h *Handler) UpdateProtocol(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name        string              `json:"name,omitempty"`
-		Version     string              `json:"version,omitempty"`
-		Description string              `json:"description,omitempty"`
-		Fields      []models.FieldSpec  `json:"fields,omitempty"`
-		FrameDef    *models.FrameDef    `json:"frame_def,omitempty"`
-		FIDPayloads []models.FIDPayload `json:"fid_payloads,omitempty"`
+		Name        string                       `json:"name,omitempty"`
+		Version     string                       `json:"version,omitempty"`
+		Description string                       `json:"description,omitempty"`
+		ParseRules  *ruleparser.JsonRuleDocument `json:"parse_rules,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -807,14 +806,8 @@ func (h *Handler) UpdateProtocol(c *gin.Context) {
 	if req.Description != "" {
 		update["description"] = req.Description
 	}
-	if req.Fields != nil {
-		update["fields"] = req.Fields
-	}
-	if req.FrameDef != nil {
-		update["frame_def"] = req.FrameDef
-	}
-	if req.FIDPayloads != nil {
-		update["fid_payloads"] = req.FIDPayloads
+	if req.ParseRules != nil {
+		update["parse_rules"] = req.ParseRules
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -853,26 +846,9 @@ func (h *Handler) SeedDefaultProtocol(c *gin.Context) {
 		return
 	}
 
-	fd := protocol.DefaultFrameDef
-	proto := models.ProtocolSpec{
-		ID:          uuid.New().String(),
-		Name:        "LCP Protocol",
-		Version:     "1.0",
-		Description: "LCP↔OSP UART binary protocol: AA header + FID-based payload + CRC16 + BB tail",
-		FrameDef:    &fd,
-		Fields: []models.FieldSpec{
-			{Name: "start_byte", Offset: 0, Length: 1, Type: "hex"},
-			{Name: "length", Offset: 1, Length: 2, Type: "uint16", Endian: "big"},
-			{Name: "fid", Offset: 3, Length: 1, Type: "uint8"},
-			{Name: "seq_no", Offset: 4, Length: 2, Type: "uint16", Endian: "big"},
-			{Name: "attr", Offset: 6, Length: 1, Type: "uint8"},
-			{Name: "crc16", Offset: 0, Length: 2, Type: "uint16", Endian: "big"},
-			{Name: "end_byte", Offset: 0, Length: 1, Type: "hex"},
-		},
-		FIDPayloads: protocol.DefaultLCPFIDPayloads,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
+	proto := protocol.DefaultLCPProtocolSpec(uuid.New().String())
+	proto.CreatedAt = time.Now()
+	proto.UpdatedAt = time.Now()
 
 	if _, err := h.db.Protocols().InsertOne(ctx, proto); err != nil {
 		h.logger.Error("failed to seed default protocol", zap.Error(err))

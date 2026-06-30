@@ -1,56 +1,40 @@
 package protocol
 
 import (
+	_ "embed"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 
 	"github.com/hyunu/sentinel/internal/models"
+	"github.com/hyunu/sentinel/internal/ruleparser"
 )
 
 const TemperatureProtocolID = "temperature-telemetry-v1"
-const TemperatureFID = byte('T') // 0x54
+const TemperatureFID = byte('T')
 
-// TemperatureTelemetrySpec returns the UART protocol for ESP32 temperature telemetry frames.
+//go:embed temperature_rules.json
+var temperatureRulesJSON []byte
+
+func loadTemperatureRules() ruleparser.JsonRuleDocument {
+	var doc ruleparser.JsonRuleDocument
+	if err := json.Unmarshal(temperatureRulesJSON, &doc); err != nil {
+		panic("temperature_rules.json: " + err.Error())
+	}
+	return doc
+}
+
+// TemperatureTelemetrySpec returns the UART protocol for ESP32 temperature telemetry.
 func TemperatureTelemetrySpec(id string) models.ProtocolSpec {
+	rules := loadTemperatureRules()
 	return models.ProtocolSpec{
 		ID:          id,
 		Name:        "Temperature Telemetry",
 		Version:     "1.0",
-		Description: "ESP32 temperature sensor UART frame (LCP-compatible AA/BB, FID=T). Payload: sensor_id, temperature_celsius (float32), humidity_percent (uint16).",
-		FrameDef: &models.FrameDef{
-			StartByte:   "AA",
-			EndByte:     "BB",
-			Endian:      "big",
-			CrcPosition: "before_end",
-			Header: []models.FieldSpec{
-				{Name: "length", Length: 2, Type: "uint16", Endian: "big"},
-				{Name: "fid", Length: 1, Type: "uint8"},
-				{Name: "seq_no", Length: 2, Type: "uint16", Endian: "big"},
-				{Name: "attr", Length: 1, Type: "uint8"},
-			},
-			Tail: []models.FieldSpec{
-				{Name: "crc16", Length: 2, Type: "uint16", Endian: "big"},
-			},
-		},
-		Fields: []models.FieldSpec{
-			{Name: "temperature_celsius", Type: "float", Unit: "°C"},
-			{Name: "humidity_percent", Type: "uint16", Unit: "%"},
-			{Name: "sensor_id", Type: "uint8"},
-		},
-		FIDPayloads: []models.FIDPayload{
-			{
-				FID:         "54",
-				Name:        "Temperature Telemetry",
-				Description: "On-board temperature and humidity sample",
-				Fields: []models.FieldSpec{
-					{Name: "sensor_id", Length: 1, Type: "uint8"},
-					{Name: "temperature_celsius", Length: 4, Type: "float", Endian: "little"},
-					{Name: "humidity_percent", Length: 2, Type: "uint16", Endian: "little"},
-				},
-			},
-		},
+		Description: "ESP32 temperature sensor UART frame (AA/BB, FID=T). Payload: sensor_id, temperature_celsius, humidity_percent.",
+		ParseRules:  &rules,
 	}
 }
 
@@ -69,7 +53,7 @@ func BuildTemperatureFrame(seq uint16, sensorID uint8, tempC float32, humidity u
 }
 
 func buildLCPFrame(fid byte, seq uint16, payload []byte) ([]byte, error) {
-	const headerAfterLength = 1 + 2 + 1 // fid + seq + attr
+	const headerAfterLength = 1 + 2 + 1
 	lengthVal := uint16(2 + headerAfterLength + len(payload))
 
 	frameBody := make([]byte, 0, int(lengthVal)+2)
@@ -79,17 +63,15 @@ func buildLCPFrame(fid byte, seq uint16, payload []byte) ([]byte, error) {
 	frameBody = append(frameBody, 0x00)
 	frameBody = append(frameBody, payload...)
 
-	crc := crc16CCITT(frameBody)
-	frameBody = append(frameBody, byte(crc>>8), byte(crc))
-
-	out := make([]byte, 0, len(frameBody)+2)
+	out := make([]byte, 0, len(frameBody)+4)
 	out = append(out, 0xAA)
 	out = append(out, frameBody...)
-	out = append(out, 0xBB)
+	crc := crc16XMODEM(out)
+	out = append(out, byte(crc>>8), byte(crc&0xFF), 0xBB)
 	return out, nil
 }
 
-// FlattenTemperatureFields copies payload.* parse results to top-level keys for viz/dashboard.
+// FlattenTemperatureFields maps payload.* keys to top-level viz keys.
 func FlattenTemperatureFields(fields map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(fields)+3)
 	for k, v := range fields {
@@ -98,14 +80,11 @@ func FlattenTemperatureFields(fields map[string]interface{}) map[string]interfac
 	copyKeys := map[string]string{
 		"payload.temperature_celsius": "temperature_celsius",
 		"payload.humidity_percent":    "humidity_percent",
-		"payload.sensor_id":         "sensor_id",
+		"payload.sensor_id":           "sensor_id",
 	}
 	for src, dst := range copyKeys {
 		if v, ok := fields[src]; ok {
 			out[dst] = toFloat64(v)
-		}
-		if v, ok := fields[src+"_display"]; ok {
-			out[dst+"_display"] = v
 		}
 	}
 	return out
@@ -116,8 +95,6 @@ func toFloat64(v interface{}) interface{} {
 	case float64:
 		return n
 	case float32:
-		return float64(n)
-	case uint64:
 		return float64(n)
 	case int:
 		return float64(n)

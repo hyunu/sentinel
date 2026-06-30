@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import type { ProtocolSpec } from '../api';
 import PageHeader from '../components/PageHeader';
-import { protocolFormatLabel, protocolMessageCount } from '../lib/protocolFormat';
+import { protocolFieldCount, protocolFormatLabel } from '../lib/protocolFormat';
 
 export default function ProtocolsListPage() {
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
@@ -34,17 +34,17 @@ export default function ProtocolsListPage() {
   };
 
   return (
-    <div className="page">
+    <div className="page protocols-page">
       <PageHeader
         title="Protocols"
-        subtitle="UART 프레임·메시지 스키마를 관리합니다. 추가·편집은 별도 화면에서 진행합니다."
+        subtitle="Serial Parser parse_rules JSON으로 UART 패킷 구조를 정의합니다."
       />
 
       <div className="card table-card protocols-card">
         <div className="card-header">
           <h2>Saved Protocols</h2>
           <div className="btn-group">
-            <button type="button" className="btn-sm" onClick={seedDefault}>Seed Default</button>
+            <button type="button" className="btn-sm" onClick={seedDefault}>Seed LCP Default</button>
             <Link to="/protocols/new" className="btn-primary btn-sm protocols-add-link">+ New Protocol</Link>
           </div>
         </div>
@@ -65,16 +65,10 @@ export default function ProtocolsListPage() {
                     {p.name}
                     <span className="tag">v{p.version}</span>
                   </div>
-                  {p.description && (
-                    <p className="protocol-item-meta">{p.description}</p>
-                  )}
+                  {p.description && <p className="protocol-item-meta">{p.description}</p>}
                   <div className="protocol-list-tags">
                     <span className="tag tag-subtle">{protocolFormatLabel(p)}</span>
-                    {p.fid_payloads?.length ? (
-                      <span className="tag tag-subtle">{p.fid_payloads.length} messages</span>
-                    ) : (
-                      <span className="tag tag-subtle">{protocolMessageCount(p)} fields</span>
-                    )}
+                    <span className="tag tag-subtle">{protocolFieldCount(p)} top-level fields</span>
                   </div>
                 </div>
                 <div className="btn-group">
@@ -86,10 +80,6 @@ export default function ProtocolsListPage() {
           </div>
         )}
       </div>
-
-      <p className="muted protocols-list-footnote">
-        스키마 프리셋(CF/CD 등)은 프로토콜 편집 화면 하단에서 관리합니다.
-      </p>
     </div>
   );
 }

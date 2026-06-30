@@ -765,9 +765,8 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 
-.card.protocols-card {
-  padding: 0;
-  overflow: hidden;
+.protocols-page .page-subtitle {
+  max-width: none;
 }
 
 .card.protocols-card .card-header {

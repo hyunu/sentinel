@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hyunu/sentinel/internal/models"
-	"github.com/hyunu/sentinel/internal/protocol"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -18,12 +17,7 @@ func (h *Handler) ListSchemaPresets(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	filter := bson.M{}
-	if cat := c.Query("category"); cat != "" {
-		filter["category"] = cat
-	}
-
-	cursor, err := h.db.SchemaPresets().Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "category", Value: 1}, {Key: "name", Value: 1}}))
+	cursor, err := h.db.SchemaPresets().Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"name": 1}))
 	if err != nil {
 		h.logger.Error("list schema presets query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -33,7 +27,6 @@ func (h *Handler) ListSchemaPresets(c *gin.Context) {
 
 	var results []models.SchemaPreset
 	if err := cursor.All(ctx, &results); err != nil {
-		h.logger.Error("list schema presets decode failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
 		return
 	}
@@ -62,12 +55,8 @@ func (h *Handler) CreateSchemaPreset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Name == "" || req.Category == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and category required"})
-		return
-	}
-	if req.Category != "payload" && req.Category != "frame" && req.Category != "protocol" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "category must be payload, frame, or protocol"})
+	if req.Name == "" || req.ParseRules == nil || len(req.ParseRules.Fields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and parse_rules.fields required"})
 		return
 	}
 
@@ -76,11 +65,8 @@ func (h *Handler) CreateSchemaPreset(c *gin.Context) {
 		ID:              uuid.New().String(),
 		Name:            req.Name,
 		Description:     req.Description,
-		Category:        req.Category,
-		Fields:          req.Fields,
-		FrameDef:        req.FrameDef,
-		FIDPayloads:     req.FIDPayloads,
 		ProtocolVersion: req.ProtocolVersion,
+		ParseRules:      req.ParseRules,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -109,20 +95,11 @@ func (h *Handler) UpdateSchemaPreset(c *gin.Context) {
 		update["name"] = req.Name
 	}
 	update["description"] = req.Description
-	if req.Category != "" {
-		update["category"] = req.Category
-	}
-	if req.Fields != nil {
-		update["fields"] = req.Fields
-	}
-	if req.FrameDef != nil {
-		update["frame_def"] = req.FrameDef
-	}
-	if req.FIDPayloads != nil {
-		update["fid_payloads"] = req.FIDPayloads
-	}
 	if req.ProtocolVersion != "" {
 		update["protocol_version"] = req.ProtocolVersion
+	}
+	if req.ParseRules != nil {
+		update["parse_rules"] = req.ParseRules
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -153,21 +130,10 @@ func (h *Handler) SeedSchemaPresets(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	inserted := 0
-	for _, preset := range protocol.DefaultSchemaPresets(time.Now()) {
-		count, err := h.db.SchemaPresets().CountDocuments(ctx, bson.M{"_id": preset.ID})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "count failed"})
-			return
-		}
-		if count > 0 {
-			continue
-		}
-		if _, err := h.db.SchemaPresets().InsertOne(ctx, preset); err != nil {
-			h.logger.Error("failed to seed preset", zap.String("id", preset.ID), zap.Error(err))
-			continue
-		}
-		inserted++
+	if err := h.db.EnsureSchemaPresets(ctx); err != nil {
+		h.logger.Error("seed schema presets failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "seed failed"})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "schema presets seeded", "inserted": inserted})
+	c.JSON(http.StatusOK, gin.H{"message": "schema presets seeded"})
 }
