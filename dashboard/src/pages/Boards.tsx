@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
-import type { Board } from '../api';
+import type { Board, ProtocolSpec } from '../api';
 import { formatDateTime } from '../utils/date';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
+
+const DEFAULT_PROTOCOL_ID = 'temperature-telemetry-v1';
 
 function rssiClass(rssi: number): string {
   if (rssi >= -60) return 'rssi-good';
@@ -16,11 +18,12 @@ function isBoardOnline(b: Board, now: number): boolean {
 }
 
 function emptyRegisterForm() {
-  return { name: '', bleId: '', wifiMac: '', location: '' };
+  return { name: '', bleId: '', wifiMac: '', location: '', protocolId: DEFAULT_PROTOCOL_ID };
 }
 
 export default function BoardsPage() {
   const [boards, setBoards] = useState<Board[]>([]);
+  const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [loading, setLoading] = useState(true);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [registerForm, setRegisterForm] = useState(emptyRegisterForm);
@@ -29,6 +32,7 @@ export default function BoardsPage() {
   useEffect(() => {
     const load = (showLoading = false) => {
       if (document.activeElement?.classList.contains('table-inline-input')) return;
+      if (document.activeElement?.classList.contains('table-inline-select')) return;
       if (showLoading) setLoading(true);
       api.boards.list()
         .then(setBoards)
@@ -36,6 +40,7 @@ export default function BoardsPage() {
         .finally(() => { if (showLoading) setLoading(false); });
     };
     load(true);
+    api.protocols.list().then(setProtocols).catch(console.error);
     const timer = setInterval(() => load(false), 30_000);
     return () => clearInterval(timer);
   }, []);
@@ -49,6 +54,16 @@ export default function BoardsPage() {
     if (registering) return;
     setRegisterOpen(false);
     setRegisterForm(emptyRegisterForm());
+  };
+
+  const saveProtocol = async (id: string, protocolId: string) => {
+    try {
+      const updated = await api.boards.update(id, { protocol_id: protocolId });
+      setBoards(prev => prev.map(row => (row.id === id ? updated : row)));
+    } catch (err) {
+      console.error(err);
+      api.boards.list().then(setBoards).catch(console.error);
+    }
   };
 
   const saveLocation = async (id: string, location: string) => {
@@ -79,7 +94,7 @@ export default function BoardsPage() {
   };
 
   const register = async () => {
-    const { name, bleId, wifiMac, location } = registerForm;
+    const { name, bleId, wifiMac, location, protocolId } = registerForm;
     if (!name || !bleId || registering) return;
     setRegistering(true);
     try {
@@ -88,6 +103,7 @@ export default function BoardsPage() {
         mac_address: bleId,
         ...(wifiMac ? { wifi_mac: wifiMac } : {}),
         ...(location ? { location } : {}),
+        ...(protocolId ? { protocol_id: protocolId } : {}),
       });
       setBoards(prev => [board, ...prev]);
       setRegisterOpen(false);
@@ -130,6 +146,7 @@ export default function BoardsPage() {
                 <tr>
                   <th>Name</th>
                   <th>UID</th>
+                  <th>Protocol</th>
                   <th className="col-location">Location</th>
                   <th>BLE ID</th>
                   <th>WiFi MAC</th>
@@ -143,7 +160,7 @@ export default function BoardsPage() {
               <tbody>
                 {boards.length === 0 ? (
                   <tr className="empty-row">
-                    <td colSpan={10}>등록된 보드가 없습니다.</td>
+                    <td colSpan={11}>등록된 보드가 없습니다.</td>
                   </tr>
                 ) : boards.map(b => {
                   const online = isBoardOnline(b, now);
@@ -151,6 +168,24 @@ export default function BoardsPage() {
                     <tr key={b.id}>
                       <td><strong>{b.name}</strong></td>
                       <td className="mono-cell">{b.uid || '—'}</td>
+                      <td>
+                        <select
+                          className="table-inline-select"
+                          value={b.protocol_id ?? ''}
+                          onChange={e => {
+                            const protocol_id = e.target.value;
+                            setBoards(prev => prev.map(row =>
+                              row.id === b.id ? { ...row, protocol_id: protocol_id || undefined } : row,
+                            ));
+                            saveProtocol(b.id, protocol_id);
+                          }}
+                        >
+                          <option value="">—</option>
+                          {protocols.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td className="col-location">
                         <input
                           className="table-inline-input"
@@ -243,6 +278,18 @@ export default function BoardsPage() {
               value={registerForm.wifiMac}
               onChange={e => setRegisterForm(f => ({ ...f, wifiMac: e.target.value }))}
             />
+          </div>
+          <div className="form-field">
+            <label>Protocol</label>
+            <select
+              value={registerForm.protocolId}
+              onChange={e => setRegisterForm(f => ({ ...f, protocolId: e.target.value }))}
+            >
+              <option value="">—</option>
+              {protocols.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
           </div>
           <div className="form-field">
             <label>Location</label>

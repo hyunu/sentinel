@@ -33,6 +33,7 @@ export interface Board {
   firmware_version?: string;
   wifi_rssi?: number;
   location?: string;
+  protocol_id?: string;
   last_heartbeat: string;
   is_active: boolean;
   created_at: string;
@@ -67,6 +68,18 @@ export interface UartData {
   raw_hex: string;
   parsed_fields?: Record<string, unknown>;
   direction: 'TX' | 'RX';
+}
+
+export interface UartCursor {
+  timestamp: string;
+  id: string;
+}
+
+export interface UartQueryResult {
+  items: UartData[];
+  total?: number;
+  has_more: boolean;
+  next_before?: UartCursor;
 }
 
 export interface Session {
@@ -123,11 +136,11 @@ export const api = {
   boards: {
     list: () => request<Board[]>('/boards'),
     get: (id: string) => request<Board>(`/boards/${id}`),
-    register: (data: { name: string; mac_address: string; wifi_mac?: string; location?: string }) =>
+    register: (data: { name?: string; mac_address: string; wifi_mac?: string; location?: string; uid?: string; protocol_id?: string }) =>
       request<{ uid: string; board: Board }>('/boards/register', { method: 'POST', body: JSON.stringify(data) })
         .then(r => r.board),
-    update: (id: string, data: { name?: string; firmware_version?: string; location?: string }) =>
-      request<void>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    update: (id: string, data: { name?: string; firmware_version?: string; location?: string; protocol_id?: string | null }) =>
+      request<Board>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<{ message: string; pending?: boolean; deleted?: Record<string, number> }>(`/boards/${id}`, { method: 'DELETE' }),
   },
@@ -136,14 +149,28 @@ export const api = {
     request<{ message: string }>('/heartbeat', { method: 'POST', body: JSON.stringify({ board_id }) }),
 
   uart: {
-    list: (params?: { board_id?: string; session_id?: string; direction?: string; since?: string; limit?: string | number }) => {
+    list: (params?: {
+      board_id?: string;
+      session_id?: string;
+      direction?: string;
+      since?: string;
+      until?: string;
+      before_ts?: string;
+      before_id?: string;
+      limit?: string | number;
+      include_total?: boolean;
+    }) => {
       const qs = new URLSearchParams();
       if (params?.board_id) qs.set('board_id', params.board_id);
       if (params?.session_id) qs.set('session_id', params.session_id);
       if (params?.direction) qs.set('direction', params.direction);
       if (params?.since) qs.set('since', params.since);
+      if (params?.until) qs.set('until', params.until);
+      if (params?.before_ts) qs.set('before_ts', params.before_ts);
+      if (params?.before_id) qs.set('before_id', params.before_id);
       if (params?.limit) qs.set('limit', String(params.limit));
-      return request<UartData[]>(`/data/uart?${qs}`);
+      if (params?.include_total) qs.set('include_total', 'true');
+      return request<UartQueryResult>(`/data/uart?${qs}`);
     },
     ingest: (board_id: string, raw_hex: string, direction: string) =>
       request<UartData>('/data/uart', { method: 'POST', body: JSON.stringify({ board_id, raw_hex, direction }) }),

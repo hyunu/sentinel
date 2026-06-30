@@ -9,6 +9,8 @@ import '../services/onboarding_profiler.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
 
+const String kTemperatureProtocolId = 'temperature-telemetry-v1';
+
 class _ProtocolField {
   final String name;
   final int offset;
@@ -36,13 +38,17 @@ class _Protocol {
   _Protocol(this.id, this.name, this.version, this.fields);
 
   factory _Protocol.fromJson(Map<String, dynamic> j) {
+    final fieldsRaw = j['fields'];
+    final fields = fieldsRaw is List
+        ? fieldsRaw
+            .map((f) => _ProtocolField.fromJson(f as Map<String, dynamic>))
+            .toList()
+        : <_ProtocolField>[];
     return _Protocol(
-      j['id'] ?? '',
-      j['name'] ?? '',
-      j['version'] ?? '',
-      (j['fields'] as List)
-          .map((f) => _ProtocolField.fromJson(f))
-          .toList(),
+      j['id']?.toString() ?? '',
+      j['name']?.toString() ?? '',
+      j['version']?.toString() ?? '',
+      fields,
     );
   }
 }
@@ -360,9 +366,37 @@ class _DeviceScreenState extends State<DeviceScreen>
         final list = json.decode(res.body) as List;
         if (mounted) {
           setState(() {
-            _protocols = list.map((p) => _Protocol.fromJson(p)).toList();
+            _protocols = list.map((p) => _Protocol.fromJson(p as Map<String, dynamic>)).toList();
+            if (_selectedProtoId == null || _selectedProtoId!.isEmpty) {
+              final defaultProto = _protocols.where((p) => p.id == kTemperatureProtocolId);
+              _selectedProtoId = defaultProto.isNotEmpty
+                  ? defaultProto.first.id
+                  : (_protocols.isNotEmpty ? _protocols.first.id : null);
+            }
           });
         }
+      }
+    } catch (_) {}
+    await _syncBoardFromServer();
+  }
+
+  Future<void> _syncBoardFromServer() async {
+    try {
+      final base = _urlCtrl.text.isNotEmpty ? _urlCtrl.text : 'http://192.168.0.9:5050';
+      final bleMac = widget.device.remoteId.str;
+      final res = await http.get(Uri.parse('$base/api/v1/boards')).timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200 || !mounted) return;
+
+      for (final raw in json.decode(res.body) as List) {
+        if (raw is! Map) continue;
+        if (raw['mac_address']?.toString() != bleMac) continue;
+        final protocolId = raw['protocol_id']?.toString();
+        setState(() {
+          if (protocolId != null && protocolId.isNotEmpty) {
+            _selectedProtoId = protocolId;
+          }
+        });
+        break;
       }
     } catch (_) {}
   }
@@ -594,6 +628,8 @@ class _DeviceScreenState extends State<DeviceScreen>
                 'uid': claimedUid,
                 'mac_address': bleMac,
                 if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
+                if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty)
+                  'protocol_id': _selectedProtoId,
               }),
             )
             .timeout(const Duration(seconds: 5));
@@ -876,6 +912,54 @@ class _DeviceScreenState extends State<DeviceScreen>
             const SizedBox(height: 8),
             _buildTextField(cs, _urlCtrl, 'Server URL', Icons.dns_rounded,
                 placeholder: 'http://192.168.0.9:5050'),
+            const SizedBox(height: 16),
+            _buildFormGroupLabel(cs, 'Protocol'),
+            const SizedBox(height: 8),
+            if (_protocols.isEmpty)
+              Text(
+                'Load protocols from the server URL above.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                    ),
+              )
+            else
+              DropdownButtonFormField<String>(
+                value: _selectedProtoId,
+                decoration: InputDecoration(
+                  labelText: 'UART parse protocol',
+                  filled: true,
+                  fillColor: cs.surface.withValues(alpha: 0.45),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                items: _protocols
+                    .map((p) => DropdownMenuItem(
+                          value: p.id,
+                          child: Text('${p.name} v${p.version}', overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _selectedProtoId = v),
+              ),
+            if (_protocols.isEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _loadProtocols,
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('Reload protocols'),
+                ),
+              ),
+            ],
+            if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Saved on the server for this board. ESP32 does not need the protocol ID.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                      height: 1.35,
+                    ),
+              ),
+            ],
             if (_profileDirty) ...[
               const SizedBox(height: 14),
               _buildProfileDirtyBanner(cs),
@@ -1549,8 +1633,12 @@ class _DeviceScreenState extends State<DeviceScreen>
                 underline: const SizedBox(),
                 items: _protocols.map((p) => DropdownMenuItem(
                   value: p.id,
-                  child: Text('${p.name} v${p.version} · ${p.fields.length} fields',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  child: Text(
+                    p.fields.isNotEmpty
+                        ? '${p.name} v${p.version} · ${p.fields.length} fields'
+                        : '${p.name} v${p.version}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
                 )).toList(),
                 onChanged: (v) => setState(() => _selectedProtoId = v),
               ),

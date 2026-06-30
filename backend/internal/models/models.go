@@ -15,6 +15,7 @@ type Board struct {
 	FirmwareVersion string    `json:"firmware_version,omitempty" bson:"firmware_version,omitempty"`
 	WifiRSSI        int       `json:"wifi_rssi,omitempty" bson:"wifi_rssi,omitempty"`
 	Location        string    `json:"location,omitempty" bson:"location,omitempty"`
+	ProtocolID      string    `json:"protocol_id,omitempty" bson:"protocol_id,omitempty"`
 	PendingAction   string    `json:"pending_action,omitempty" bson:"pending_action,omitempty"`
 	PendingActionAt time.Time `json:"pending_action_at,omitempty" bson:"pending_action_at,omitempty"`
 	LastHeartbeat   time.Time `json:"last_heartbeat" bson:"last_heartbeat"`
@@ -57,6 +58,18 @@ type UartData struct {
 	RawHex       string                 `json:"raw_hex" bson:"raw_hex"`
 	ParsedFields map[string]interface{} `json:"parsed_fields,omitempty" bson:"parsed_fields,omitempty"`
 	Direction    string                 `json:"direction" bson:"direction"`
+}
+
+type UartCursor struct {
+	Timestamp time.Time `json:"timestamp"`
+	ID        string    `json:"id"`
+}
+
+type UartQueryResult struct {
+	Items      []UartData  `json:"items"`
+	Total      *int64      `json:"total,omitempty"`
+	HasMore    bool        `json:"has_more"`
+	NextBefore *UartCursor `json:"next_before,omitempty"`
 }
 
 type Session struct {

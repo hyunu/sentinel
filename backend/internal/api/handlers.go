@@ -74,15 +74,42 @@ func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (stri
 	return board.ID, nil
 }
 
-func (h *Handler) parseUartFields(ctx context.Context, rawHex, protocolID string) map[string]interface{} {
+func (h *Handler) validateProtocolID(ctx context.Context, protocolID string) error {
+	if protocolID == "" {
+		return nil
+	}
+	n, err := h.db.Protocols().CountDocuments(ctx, bson.M{"_id": protocolID})
+	if err != nil {
+		return fmt.Errorf("protocol lookup failed")
+	}
+	if n == 0 {
+		return fmt.Errorf("protocol not found: %s", protocolID)
+	}
+	return nil
+}
+
+func (h *Handler) boardProtocolID(ctx context.Context, boardID string) string {
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&board); err != nil {
+		return ""
+	}
+	return board.ProtocolID
+}
+
+func (h *Handler) parseUartFields(ctx context.Context, rawHex, protocolID, boardID string) map[string]interface{} {
+	effective := protocolID
+	if effective == "" && boardID != "" {
+		effective = h.boardProtocolID(ctx, boardID)
+	}
+
 	var spec *models.ProtocolSpec
-	if protocolID != "" {
+	if effective != "" {
 		var proto models.ProtocolSpec
-		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": protocolID}).Decode(&proto); err == nil {
+		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": effective}).Decode(&proto); err == nil {
 			spec = &proto
 		}
 	}
-	return protocol.ParseForStorage(rawHex, protocolID, spec)
+	return protocol.ParseForStorage(rawHex, effective, spec)
 }
 
 func (h *Handler) RegisterBoard(c *gin.Context) {
@@ -92,6 +119,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		WifiMAC    string `json:"wifi_mac,omitempty"`
 		Location   string `json:"location,omitempty"`
 		UID        string `json:"uid,omitempty"`
+		ProtocolID string `json:"protocol_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -100,6 +128,11 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+
+	if err := h.validateProtocolID(ctx, req.ProtocolID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	// If UID provided and placeholder exists, update that record (fill mac and activate)
 	if req.UID != "" {
 		var existing models.Board
@@ -116,6 +149,9 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 			}
 			if req.Location != "" {
 				update["location"] = req.Location
+			}
+			if req.ProtocolID != "" {
+				update["protocol_id"] = req.ProtocolID
 			}
 			_, err = h.db.Boards().UpdateOne(ctx, bson.M{"uid": req.UID}, bson.M{"$set": update})
 			if err != nil {
@@ -153,6 +189,7 @@ func (h *Handler) RegisterBoard(c *gin.Context) {
 		MACAddress:    req.MACAddress,
 		WifiMAC:       macHexToColon(req.WifiMAC),
 		Location:      req.Location,
+		ProtocolID:    req.ProtocolID,
 		LastHeartbeat: time.Now(),
 		IsActive:      true,
 		CreatedAt:     time.Now(),
@@ -279,13 +316,18 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 		Name            string  `json:"name,omitempty"`
 		FirmwareVersion string  `json:"firmware_version,omitempty"`
 		Location        *string `json:"location"`
+		ProtocolID      *string `json:"protocol_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
 	update := bson.M{"updated_at": time.Now()}
+	unset := bson.M{}
 	if req.Name != "" {
 		update["name"] = req.Name
 	}
@@ -295,17 +337,35 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 	if req.Location != nil {
 		update["location"] = *req.Location
 	}
+	if req.ProtocolID != nil {
+		if *req.ProtocolID == "" {
+			unset["protocol_id"] = ""
+		} else if err := h.validateProtocolID(ctx, *req.ProtocolID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		} else {
+			update["protocol_id"] = *req.ProtocolID
+		}
+	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
+	updateDoc := bson.M{"$set": update}
+	if len(unset) > 0 {
+		updateDoc["$unset"] = unset
+	}
 
-	result, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
+	result, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": id}, updateDoc)
 	if err != nil || result.MatchedCount == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "updated"})
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": id}).Decode(&board); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		return
+	}
+
+	c.JSON(http.StatusOK, board)
 }
 
 func (h *Handler) DeleteBoard(c *gin.Context) {
@@ -489,7 +549,7 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		Direction: req.Direction,
 	}
 
-	if parsed := h.parseUartFields(ctx, req.RawHex, req.ProtocolID); parsed != nil {
+	if parsed := h.parseUartFields(ctx, req.RawHex, req.ProtocolID, boardID); parsed != nil {
 		data.ParsedFields = parsed
 	}
 
@@ -533,13 +593,17 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 		if ts.IsZero() {
 			ts = now
 		}
-		docs[i] = models.UartData{
+		doc := models.UartData{
 			ID:        uuid.New().String(),
 			BoardID:   boardID,
 			Timestamp: ts,
 			RawHex:    e.RawHex,
 			Direction: e.Direction,
 		}
+		if parsed := h.parseUartFields(ctx, e.RawHex, "", boardID); parsed != nil {
+			doc.ParsedFields = parsed
+		}
+		docs[i] = doc
 	}
 
 	if _, err := h.db.UartData().InsertMany(ctx, docs); err != nil {
@@ -551,46 +615,135 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"inserted": len(docs)})
 }
 
-func (h *Handler) QueryUART(c *gin.Context) {
-	boardID := c.Query("board_id")
-	sessionID := c.Query("session_id")
-	direction := c.Query("direction")
-	since := c.Query("since")
-	limitStr := c.DefaultQuery("limit", "2000")
+const (
+	uartQueryDefaultLimit = 100
+	uartQueryMaxLimit     = 5000
+)
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
+func parseTimeQuery(value string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, value)
+}
 
+func (h *Handler) uartQueryFilter(ctx context.Context, c *gin.Context) (bson.M, error) {
 	filter := bson.M{}
+	boardID := c.Query("board_id")
 	if boardID != "" || c.Query("uid") != "" {
 		resolved, err := h.resolveBoardID(ctx, boardID, c.Query("uid"))
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+			return nil, err
 		}
 		filter["board_id"] = resolved
 	}
-	if sessionID != "" {
+	if sessionID := c.Query("session_id"); sessionID != "" {
 		filter["session_id"] = sessionID
 	}
-	if direction != "" {
+	if direction := c.Query("direction"); direction != "" {
 		filter["direction"] = direction
 	}
-	if since != "" {
-		t, err := time.Parse(time.RFC3339, since)
-		if err == nil {
-			filter["timestamp"] = bson.M{"$gt": t}
+
+	timeFilter := bson.M{}
+	if since := c.Query("since"); since != "" {
+		t, err := parseTimeQuery(since)
+		if err != nil {
+			return nil, fmt.Errorf("invalid since: %w", err)
 		}
+		timeFilter["$gte"] = t
+	}
+	if until := c.Query("until"); until != "" {
+		t, err := parseTimeQuery(until)
+		if err != nil {
+			return nil, fmt.Errorf("invalid until: %w", err)
+		}
+		timeFilter["$lte"] = t
 	}
 
-	limit := int64(2000)
+	var andParts []bson.M
+	if len(timeFilter) > 0 {
+		andParts = append(andParts, bson.M{"timestamp": timeFilter})
+	}
+
+	beforeTS := c.Query("before_ts")
+	beforeID := c.Query("before_id")
+	if beforeTS != "" && beforeID != "" {
+		bt, err := parseTimeQuery(beforeTS)
+		if err != nil {
+			return nil, fmt.Errorf("invalid before_ts: %w", err)
+		}
+		andParts = append(andParts, bson.M{
+			"$or": bson.A{
+				bson.M{"timestamp": bson.M{"$lt": bt}},
+				bson.M{"timestamp": bt, "_id": bson.M{"$lt": beforeID}},
+			},
+		})
+	}
+
+	if len(andParts) > 0 {
+		filter["$and"] = andParts
+	}
+
+	return filter, nil
+}
+
+func (h *Handler) QueryUART(c *gin.Context) {
+	limitStr := c.DefaultQuery("limit", strconv.Itoa(uartQueryDefaultLimit))
+	includeTotal := c.Query("include_total") == "true"
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	filter, err := h.uartQueryFilter(ctx, c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	limit := int64(uartQueryDefaultLimit)
 	if limitStr != "" {
 		if n, err := strconv.ParseInt(limitStr, 10, 64); err == nil && n > 0 {
 			limit = n
 		}
 	}
+	if limit > uartQueryMaxLimit {
+		limit = uartQueryMaxLimit
+	}
 
-	opts := options.Find().SetSort(bson.M{"timestamp": -1}).SetLimit(limit)
+	var total *int64
+	if includeTotal {
+		countFilter := bson.M{}
+		for k, v := range filter {
+			if k == "$and" {
+				parts, ok := v.([]bson.M)
+				if !ok {
+					continue
+				}
+				trimmed := make([]bson.M, 0, len(parts))
+				for _, part := range parts {
+					if _, hasOr := part["$or"]; hasOr {
+						continue
+					}
+					trimmed = append(trimmed, part)
+				}
+				if len(trimmed) > 0 {
+					countFilter["$and"] = trimmed
+				}
+				continue
+			}
+			countFilter[k] = v
+		}
+		n, err := h.db.UartData().CountDocuments(ctx, countFilter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "count failed"})
+			return
+		}
+		total = &n
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: -1}, {Key: "_id", Value: -1}}).
+		SetLimit(limit + 1)
 	cursor, err := h.db.UartData().Find(ctx, filter, opts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
@@ -607,7 +760,25 @@ func (h *Handler) QueryUART(c *gin.Context) {
 		results = []models.UartData{}
 	}
 
-	c.JSON(http.StatusOK, results)
+	hasMore := int64(len(results)) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	resp := models.UartQueryResult{
+		Items:   results,
+		Total:   total,
+		HasMore: hasMore,
+	}
+	if hasMore && len(results) > 0 {
+		last := results[len(results)-1]
+		resp.NextBefore = &models.UartCursor{
+			Timestamp: last.Timestamp,
+			ID:        last.ID,
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *Handler) IngestTemperature(c *gin.Context) {

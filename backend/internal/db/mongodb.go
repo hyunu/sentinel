@@ -78,6 +78,18 @@ func (m *MongoDB) EnsureIndexes(ctx context.Context) error {
 	if err != nil {
 		m.logger.Warn("failed to create uid index", zap.Error(err))
 	}
+
+	_, err = m.UartData().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "board_id", Value: 1},
+			{Key: "timestamp", Value: -1},
+			{Key: "_id", Value: -1},
+		},
+	})
+	if err != nil {
+		m.logger.Warn("failed to create uart_data board/timestamp index", zap.Error(err))
+	}
+
 	return nil
 }
 

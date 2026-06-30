@@ -620,6 +620,26 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 
+.boards-table .table-inline-select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: var(--surface-inset);
+  color: inherit;
+}
+
+.boards-table .table-inline-select:hover {
+  border-color: var(--border);
+}
+
+.boards-table .table-inline-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .boards-table .col-actions {
   width: 88px;
   max-width: 88px;
