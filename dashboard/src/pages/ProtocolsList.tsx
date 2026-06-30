@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import type { ProtocolSpec } from '../api';
-import PageHeader from '../components/PageHeader';
+import ProtocolsSectionHeader from '../components/ProtocolsSectionHeader';
 import { protocolFieldCount, protocolFormatLabel } from '../lib/protocolFormat';
 
 export default function ProtocolsListPage() {
@@ -23,7 +23,7 @@ export default function ProtocolsListPage() {
   useEffect(() => { reload(); }, []);
 
   const remove = async (id: string, name: string) => {
-    if (!window.confirm(`"${name}" 프로토콜을 삭제할까요?`)) return;
+    if (!window.confirm(`Delete protocol "${name}"?`)) return;
     await api.protocols.delete(id);
     await reload();
   };
@@ -35,10 +35,7 @@ export default function ProtocolsListPage() {
 
   return (
     <div className="page protocols-page">
-      <PageHeader
-        title="Protocols"
-        subtitle="Serial Parser parse_rules JSON으로 UART 패킷 구조를 정의합니다."
-      />
+      <ProtocolsSectionHeader />
 
       <div className="card table-card protocols-card">
         <div className="card-header">
@@ -50,11 +47,11 @@ export default function ProtocolsListPage() {
         </div>
 
         {loading ? (
-          <p className="muted protocols-list-empty">불러오는 중…</p>
+          <p className="muted protocols-list-empty">Loading…</p>
         ) : protocols.length === 0 ? (
           <div className="protocols-list-empty">
-            <p className="muted">저장된 프로토콜이 없습니다.</p>
-            <Link to="/protocols/new" className="btn-primary btn-sm">첫 프로토콜 만들기</Link>
+            <p className="muted">No saved protocols.</p>
+            <Link to="/protocols/new" className="btn-primary btn-sm">Create first protocol</Link>
           </div>
         ) : (
           <div className="protocol-list">

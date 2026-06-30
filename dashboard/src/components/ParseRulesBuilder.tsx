@@ -21,6 +21,7 @@ import {
   getTypeCategory,
   moveRule,
   nestedChildSummary,
+  normalizeParseRulesDocument,
   refToDisplay,
   removeSwitchCase,
   setSwitchCase,
@@ -92,11 +93,11 @@ function InlineRef({
       <select
         className="rb-inline-ref-mode"
         value={mode}
-        title="참조 방식"
+        title="Reference mode"
         onChange={e => onChange(displayToRef(e.target.value as 'field' | 'expr', text))}
       >
-        <option value="field">필드</option>
-        <option value="expr">식</option>
+        <option value="field">Field</option>
+        <option value="expr">Expr</option>
       </select>
       <input
         className="rb-inline-ref-val mono"
@@ -124,7 +125,7 @@ function InlineExtras({
         <input
           className="rb-inline-input mono"
           value={(rule.delimiter ?? []).join(', ')}
-          title="구분자 (10진수)"
+          title="Delimiter (decimal)"
           placeholder="187"
           onChange={e => {
             const delimiter = e.target.value
@@ -208,7 +209,7 @@ function InlineExtras({
         <input
           className="rb-inline-input rb-inline-grow mono"
           value={rule.predicate?.expr ?? ''}
-          placeholder="종료 조건"
+          placeholder="end predicate"
           onChange={e => onChange({ predicate: { expr: e.target.value } })}
         />
       );
@@ -218,7 +219,7 @@ function InlineExtras({
         <input
           className="rb-inline-input rb-inline-grow mono"
           value={rule.predicate?.expr ?? ''}
-          placeholder="조건식"
+          placeholder="predicate"
           onChange={e => onChange({ predicate: { expr: e.target.value } })}
         />
       );
@@ -234,7 +235,7 @@ function InlineExtras({
               className="rb-inline-input rb-inline-num"
               type="number"
               min={1}
-              title="크기 (bytes)"
+              title="Size (bytes)"
               value={rule.size ?? 1}
               onChange={e => onChange({ size: parseInt(e.target.value, 10) || 1 })}
             />
@@ -306,8 +307,8 @@ function BitsSubRows({ bits, onChange }: { bits: BitDef[]; onChange: (bits: BitD
   return (
     <div className="rb-bits-list">
       <div className="rb-bits-head">
-        <span>이름</span>
-        <span>비트 수</span>
+        <span>Name</span>
+        <span>Bits</span>
         <span />
       </div>
       {bits.map((b, i) => (
@@ -328,11 +329,11 @@ function BitsSubRows({ bits, onChange }: { bits: BitDef[]; onChange: (bits: BitD
             />
             <span className="rb-bits-unit">bits</span>
           </div>
-          <button type="button" className="rb-icon-btn rb-icon-btn--danger" onClick={() => remove(i)} aria-label="삭제">×</button>
+          <button type="button" className="rb-icon-btn rb-icon-btn--danger" onClick={() => remove(i)} aria-label="Remove">×</button>
         </div>
       ))}
       <button type="button" className="rb-add-sub" onClick={() => onChange([...bits, { name: '', bits: 1 }])}>
-        + 비트 필드
+        + Add bit field
       </button>
     </div>
   );
@@ -375,21 +376,21 @@ function NestedChildren({
             <CollapsiblePanel
               key={key}
               title={`Case ${key}`}
-              summary={`${caseRules.length} 필드`}
+              summary={`${caseRules.length} fields`}
               defaultOpen={depth < 1}
               actions={
                 <button
                   type="button"
                   className="rb-icon-btn rb-icon-btn--danger"
                   onClick={() => onChange({ cases: removeSwitchCase(rule, key).cases })}
-                  aria-label="케이스 삭제"
+                  aria-label="Remove case"
                 >
                   ×
                 </button>
               }
             >
               <div className="rb-case-key-row">
-                <span className="rb-inline-tag">키</span>
+                <span className="rb-inline-tag">Key</span>
                 <input
                   className="rb-inline-input rb-inline-num mono"
                   value={key}
@@ -406,12 +407,12 @@ function NestedChildren({
             </CollapsiblePanel>
           ))}
           <button type="button" className="rb-add-sub" onClick={() => onChange(addSwitchCase(rule))}>
-            + 케이스 추가
+            + Add case
           </button>
           {(rule.default?.length ?? 0) > 0 ? (
             <CollapsiblePanel
               title="Default (fallback)"
-              summary={`${rule.default!.length} 필드`}
+              summary={`${rule.default!.length} fields`}
             >
               <FieldRulesEditor
                 rules={rule.default!}
@@ -426,7 +427,7 @@ function NestedChildren({
               className="rb-add-sub rb-add-sub--ghost"
               onClick={() => onChange({ default: [emptyField()] })}
             >
-              + default 추가
+              + Add default
             </button>
           )}
         </>
@@ -445,7 +446,7 @@ function NestedChildren({
         <>
           <CollapsiblePanel
             title="Then"
-            summary={`${rule.then?.length ?? 0} 필드`}
+            summary={`${rule.then?.length ?? 0} fields`}
             defaultOpen
           >
             <FieldRulesEditor
@@ -458,7 +459,7 @@ function NestedChildren({
           {(rule.else?.length ?? 0) > 0 ? (
             <CollapsiblePanel
               title="Else"
-              summary={`${rule.else!.length} 필드`}
+              summary={`${rule.else!.length} fields`}
             >
               <FieldRulesEditor
                 rules={rule.else!}
@@ -473,7 +474,7 @@ function NestedChildren({
               className="rb-add-sub rb-add-sub--ghost"
               onClick={() => onChange({ else: [emptyField()] })}
             >
-              + else 추가
+              + Add else
             </button>
           )}
         </>
@@ -502,7 +503,7 @@ function NestedChildren({
           className="rb-add-sub rb-add-sub--ghost"
           onClick={() => onChange({ item_rules: [emptyField()] })}
         >
-          + payload 필드
+          + Add payload field
         </button>
       );
     default:
@@ -527,10 +528,10 @@ function FieldRowActions({
 }) {
   return (
     <div className="rb-actions">
-      <button type="button" className="rb-icon-btn" disabled={index === 0} onClick={onMoveUp} title="위로" aria-label="위로">↑</button>
-      <button type="button" className="rb-icon-btn" disabled={index === total - 1} onClick={onMoveDown} title="아래로" aria-label="아래로">↓</button>
-      <button type="button" className="rb-icon-btn" onClick={onDuplicate} title="복제" aria-label="복제">⎘</button>
-      <button type="button" className="rb-icon-btn rb-icon-btn--danger" onClick={onRemove} title="삭제" aria-label="삭제">×</button>
+      <button type="button" className="rb-icon-btn" disabled={index === 0} onClick={onMoveUp} title="Move up" aria-label="Move up">↑</button>
+      <button type="button" className="rb-icon-btn" disabled={index === total - 1} onClick={onMoveDown} title="Move down" aria-label="Move down">↓</button>
+      <button type="button" className="rb-icon-btn" onClick={onDuplicate} title="Duplicate" aria-label="Duplicate">⎘</button>
+      <button type="button" className="rb-icon-btn rb-icon-btn--danger" onClick={onRemove} title="Remove" aria-label="Remove">×</button>
     </div>
   );
 }
@@ -570,11 +571,11 @@ function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'roo
 
       {depth === 0 && (
         <div className="rb-list-toolbar">
-          <span className="rb-list-count">패킷 필드 <strong>{rules.length}</strong></span>
+          <span className="rb-list-count">Packet fields <strong>{rules.length}</strong></span>
           {collapseCtx && (
             <div className="rb-list-toolbar-btns">
-              <button type="button" className="rb-text-btn" onClick={() => collapseCtx.triggerAll(true)}>모두 펼치기</button>
-              <button type="button" className="rb-text-btn" onClick={() => collapseCtx.triggerAll(false)}>모두 접기</button>
+              <button type="button" className="rb-text-btn" onClick={() => collapseCtx.triggerAll(true)}>Expand all</button>
+              <button type="button" className="rb-text-btn" onClick={() => collapseCtx.triggerAll(false)}>Collapse all</button>
             </div>
           )}
         </div>
@@ -584,16 +585,16 @@ function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'roo
         <div className="rb-table-head">
           <span />
           <span>#</span>
-          <span>이름</span>
-          <span>타입</span>
-          <span>옵션</span>
+          <span>Name</span>
+          <span>Type</span>
+          <span>Options</span>
           <span />
         </div>
       )}
 
       <div className="rb-fields">
         {rules.length === 0 ? (
-          <div className="rb-empty">필드가 없습니다.</div>
+          <div className="rb-empty">No fields.</div>
         ) : rules.map((rule, i) => (
           <FieldBlock
             key={`${pathPrefix}-${i}-${rule.name}`}
@@ -613,7 +614,7 @@ function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'roo
       </div>
 
       <button type="button" className="rb-add" onClick={() => onChange([...rules, emptyField()])}>
-        + 필드 추가
+        + Add field
       </button>
     </div>
   );
@@ -660,7 +661,7 @@ function FieldBlock({
     <div className={`rb-field-card${hasNested ? ' has-children' : ''}${hasNested && open ? ' is-expanded' : ''}${hasNested && !open ? ' is-collapsed' : ''}`}>
       <div className="rb-row">
         {hasNested ? (
-          <button type="button" className="rb-chevron-btn" onClick={() => collapse.setOpen(!open)} aria-expanded={open} aria-label={open ? '접기' : '펼치기'}>
+          <button type="button" className="rb-chevron-btn" onClick={() => collapse.setOpen(!open)} aria-expanded={open} aria-label={open ? 'Collapse' : 'Expand'}>
             {open ? '▾' : '▸'}
           </button>
         ) : (
@@ -670,7 +671,7 @@ function FieldBlock({
         <input
           className="rb-name"
           value={rule.name}
-          placeholder="필드명"
+          placeholder="field name"
           onChange={e => onChange({ name: e.target.value })}
         />
         <div className="rb-type-wrap">
@@ -702,11 +703,12 @@ function FieldBlock({
 }
 
 type ParseRulesBuilderProps = {
-  document: JsonRuleDocument;
+  document: JsonRuleDocument | null | undefined;
   onChange: (doc: JsonRuleDocument) => void;
 };
 
-export default function ParseRulesBuilder({ document, onChange }: ParseRulesBuilderProps) {
+export default function ParseRulesBuilder({ document: rawDocument, onChange }: ParseRulesBuilderProps) {
+  const document = normalizeParseRulesDocument(rawDocument);
   const meta = document._meta ?? {};
   const hasMeta = Boolean(meta.name || meta.version || meta.frame || meta.description);
 
@@ -726,12 +728,12 @@ export default function ParseRulesBuilder({ document, onChange }: ParseRulesBuil
     <CollapseProvider>
       <div className="parse-rules-builder">
         <details className="rb-meta" open={hasMeta}>
-          <summary>문서 메타데이터 (선택)</summary>
+          <summary>Document metadata (optional)</summary>
           <div className="rb-meta-row">
-            <input value={String(meta.name ?? '')} onChange={e => updateMeta('name', e.target.value)} placeholder="규칙 이름" />
-            <input value={String(meta.version ?? '')} onChange={e => updateMeta('version', e.target.value)} placeholder="버전" className="rb-meta-short" />
-            <input className="mono rb-meta-grow" value={String(meta.frame ?? '')} onChange={e => updateMeta('frame', e.target.value)} placeholder="프레임 구조" />
-            <input className="rb-meta-grow" value={String(meta.description ?? '')} onChange={e => updateMeta('description', e.target.value)} placeholder="설명" />
+            <input value={String(meta.name ?? '')} onChange={e => updateMeta('name', e.target.value)} placeholder="Rule name" />
+            <input value={String(meta.version ?? '')} onChange={e => updateMeta('version', e.target.value)} placeholder="Version" className="rb-meta-short" />
+            <input className="mono rb-meta-grow" value={String(meta.frame ?? '')} onChange={e => updateMeta('frame', e.target.value)} placeholder="Frame layout" />
+            <input className="rb-meta-grow" value={String(meta.description ?? '')} onChange={e => updateMeta('description', e.target.value)} placeholder="Description" />
           </div>
         </details>
 

@@ -28,10 +28,10 @@ export const ALL_FIELD_TYPES = [
 ] as const;
 
 export const TYPE_GROUPS: { label: string; types: readonly string[] }[] = [
-  { label: '정수 / 실수', types: PRIMITIVE_TYPES },
-  { label: '고정 길이', types: FIXED_TYPES },
-  { label: '가변 길이', types: VARIABLE_TYPES },
-  { label: '구조 / 조건', types: COMPOSITE_TYPES },
+  { label: 'Integer / Float', types: PRIMITIVE_TYPES },
+  { label: 'Fixed length', types: FIXED_TYPES },
+  { label: 'Variable length', types: VARIABLE_TYPES },
+  { label: 'Structure / Control', types: COMPOSITE_TYPES },
 ];
 
 export type TypeCategory = 'primitive' | 'fixed' | 'variable' | 'composite';
@@ -46,12 +46,12 @@ export function getTypeCategory(type: string): TypeCategory {
 export function fieldSummary(rule: JsonFieldRule): string {
   switch (rule.type) {
     case 'Switch':
-      return rule.key_from ? `분기: ${rule.key_from}` : 'Switch';
+      return rule.key_from ? `key: ${rule.key_from}` : 'Switch';
     case 'RepeatCount':
       return typeof rule.count_from === 'string'
-        ? `반복 × ${rule.count_from}`
+        ? `repeat × ${rule.count_from}`
         : rule.count_from && typeof rule.count_from === 'object'
-          ? `반복 × ${rule.count_from.expr}`
+          ? `repeat × ${rule.count_from.expr}`
           : 'RepeatCount';
     case 'Validate':
       return rule.validate_expr ? rule.validate_expr.slice(0, 32) : 'Validate';
@@ -77,6 +77,18 @@ const SIZE_TYPES = new Set(['Fixed', 'String', 'Padding']);
 
 export function emptyField(name = 'field'): JsonFieldRule {
   return { name, type: 'U8' };
+}
+
+/** Minimal parse_rules for a new protocol (not the LCP/OSP template). */
+export function blankParseRules(): JsonRuleDocument {
+  return { fields: [emptyField()] };
+}
+
+/** Coalesce null/empty API payloads into a usable document for the builder. */
+export function normalizeParseRulesDocument(raw?: JsonRuleDocument | null): JsonRuleDocument {
+  if (!raw) return blankParseRules();
+  if (raw.fields?.length) return raw;
+  return { ...raw, fields: [emptyField()] };
 }
 
 export function emptyInnerType(type = 'U8'): JsonFieldRule {
@@ -125,11 +137,11 @@ export function nestedChildSummary(rule: JsonFieldRule): string {
     case 'RepeatCount':
     case 'RepeatUntilEnd':
     case 'RepeatUntil':
-      return `${rule.item_rules?.length ?? 0} 항목`;
+      return `${rule.item_rules?.length ?? 0} items`;
     case 'Bits':
       return `${rule.bits?.length ?? 0} bit`;
     case 'Optional':
-      return `${rule.rules?.length ?? 0} 필드`;
+      return `${rule.rules?.length ?? 0} fields`;
     case 'If': {
       const t = rule.then?.length ?? 0;
       const e = rule.else?.length ?? 0;
@@ -137,11 +149,11 @@ export function nestedChildSummary(rule: JsonFieldRule): string {
     }
     case 'Struct':
     case 'Nested':
-      return `${rule.fields?.length ?? 0} 필드`;
+      return `${rule.fields?.length ?? 0} fields`;
     case 'LengthPrefixed':
       return `${rule.item_rules?.length ?? 0} payload`;
     default:
-      return '하위 항목';
+      return 'nested';
   }
 }
 

@@ -228,7 +228,7 @@
 .rb-bits-head,
 .rb-bits-row {
   display: grid;
-  grid-template-columns: minmax(100px, 160px) auto 28px;
+  grid-template-columns: minmax(200px, 320px) auto 28px;
   gap: 8px;
   align-items: center;
 }
@@ -584,10 +584,10 @@
   display: inline-flex;
   align-items: center;
   margin-top: 6px;
-  padding: 4px 8px;
+  padding: 4px 10px;
   font-size: 12px;
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -595,8 +595,7 @@
 }
 
 .rb-add:hover {
-  color: var(--text);
-  background: var(--surface-hover);
+  background: var(--primary-dim);
 }
 
 .rb-empty {
@@ -673,6 +672,14 @@
 
 .protocol-info-grid .form-field {
   margin: 0;
+}
+
+.template-info-grid {
+  grid-template-columns: minmax(160px, 2fr) 100px 1fr;
+}
+
+.template-info-grid .template-desc-field {
+  grid-column: 1 / -1;
 }
 
 .protocol-info-card .card-header {

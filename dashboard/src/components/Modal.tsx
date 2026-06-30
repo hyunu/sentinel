@@ -7,9 +7,10 @@ type ModalProps = {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  wide?: boolean;
 };
 
-export default function Modal({ open, onClose, title, children, footer }: ModalProps) {
+export default function Modal({ open, onClose, title, children, footer, wide }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -29,7 +30,7 @@ export default function Modal({ open, onClose, title, children, footer }: ModalP
   return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="modal-card"
+        className={`modal-card${wide ? ' modal-card--wide' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"

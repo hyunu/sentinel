@@ -1,12 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { JsonRuleDocument, ParseResult, SchemaPreset } from '../api';
+import type { JsonRuleDocument, ParseResult } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
-import ParseRulesManual from '../components/ParseRulesManual';
-import { DEFAULT_LCP_PARSE_RULES } from '../lib/protocolFormat';
 import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '../lib/ruleBuilderUtils';
+import '../styles/ruleBuilder.css';
 
 function normalizeParseRules(raw?: JsonRuleDocument | null): JsonRuleDocument {
   return structuredClone(normalizeParseRulesDocument(raw));
@@ -16,7 +15,7 @@ function isParseError(result: ParseResult | { error: string }): result is { erro
   return 'error' in result && typeof result.error === 'string';
 }
 
-export default function ProtocolEditPage() {
+export default function TemplateEditPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = !id;
@@ -31,10 +30,8 @@ export default function ProtocolEditPage() {
   const [legacyNoRules, setLegacyNoRules] = useState(false);
   const [testHex, setTestHex] = useState('');
   const [testResult, setTestResult] = useState<ParseResult | { error: string } | null>(null);
-  const [presets, setPresets] = useState<SchemaPreset[]>([]);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState<'ui' | 'json'>('ui');
-  const [manualOpen, setManualOpen] = useState(false);
 
   const applyRules = useCallback((doc: JsonRuleDocument) => {
     if (!doc.fields?.length) {
@@ -48,22 +45,18 @@ export default function ProtocolEditPage() {
   }, []);
 
   useEffect(() => {
-    api.schemaPresets.list().then(setPresets).catch(console.error);
-  }, []);
-
-  useEffect(() => {
     if (isNew || !id) return;
     setLoading(true);
-    api.protocols.get(id)
+    api.schemaPresets.get(id)
       .then(p => {
         setName(p.name);
-        setVersion(p.version);
+        setVersion(p.protocol_version || '1.0');
         setDescription(p.description || '');
         const hasRules = Boolean(p.parse_rules?.fields?.length);
         setLegacyNoRules(!hasRules);
         applyRules(normalizeParseRules(p.parse_rules));
       })
-      .catch(() => navigate('/protocols'))
+      .catch(() => navigate('/protocols/templates'))
       .finally(() => setLoading(false));
   }, [id, isNew, navigate, applyRules]);
 
@@ -96,35 +89,27 @@ export default function ProtocolEditPage() {
   }, [runParseTest]);
 
   const save = async () => {
-    if (!name || saving || rulesError) return;
+    if (!name.trim() || saving || rulesError) return;
     setSaving(true);
     try {
-      const body = { name, version, description, parse_rules: rules };
-      if (isNew) await api.protocols.create(body);
-      else if (id) await api.protocols.update(id, body);
-      navigate('/protocols');
+      const body = {
+        name: name.trim(),
+        description,
+        protocol_version: version,
+        parse_rules: rules,
+      };
+      if (isNew) await api.schemaPresets.create(body);
+      else if (id) await api.schemaPresets.update(id, body);
+      navigate('/protocols/templates');
     } finally {
       setSaving(false);
     }
   };
 
-  const applyPreset = (presetId: string) => {
-    if (presetId === 'lcp') {
-      applyRules(structuredClone(DEFAULT_LCP_PARSE_RULES));
-      return;
-    }
-    const preset = presets.find(p => p.id === presetId);
-    if (!preset) return;
-    setName(preset.name);
-    setVersion(preset.protocol_version || '1.0');
-    setDescription(preset.description || '');
-    applyRules(normalizeParseRules(preset.parse_rules));
-  };
-
   if (loading) {
     return (
       <div className="page protocol-edit-page">
-        <p className="muted">Loading protocol…</p>
+        <p className="muted">Loading template…</p>
       </div>
     );
   }
@@ -136,23 +121,20 @@ export default function ProtocolEditPage() {
   return (
     <div className="page protocol-edit-page">
       <div className="page-breadcrumb">
-        <Link to="/protocols" className="page-back-link">← Protocols</Link>
+        <Link to="/protocols/templates" className="page-back-link">← Templates</Link>
       </div>
 
       <div className="protocol-edit-toolbar">
         <PageHeader
-          title={isNew ? 'New Protocol' : 'Edit Protocol'}
-          subtitle="Define packet structure in the UI; parse_rules JSON is generated automatically."
+          title={isNew ? 'New Template' : 'Edit Template'}
+          subtitle="Reusable parse_rules preset for Protocol Edit → Load template."
         />
         <div className="protocol-edit-toolbar-actions">
-          <button type="button" className="btn-ghost" onClick={() => setManualOpen(true)}>
-            Manual
-          </button>
-          <Link to="/protocols" className="btn-ghost">Cancel</Link>
+          <Link to="/protocols/templates" className="btn-ghost">Cancel</Link>
           <button
             type="button"
             className="btn-primary"
-            disabled={!name || !!rulesError || saving}
+            disabled={!name.trim() || !!rulesError || saving}
             onClick={save}
           >
             {saving ? 'Saving…' : isNew ? 'Create' : 'Save'}
@@ -160,44 +142,23 @@ export default function ProtocolEditPage() {
         </div>
       </div>
 
-      <ParseRulesManual open={manualOpen} onClose={() => setManualOpen(false)} />
-
       <div className="protocol-edit-stack">
         <div className="card protocol-info-card">
           <div className="card-header">
             <h2>General</h2>
           </div>
-          <div className="protocol-info-grid">
+          <div className="protocol-info-grid template-info-grid">
             <div className="form-field">
               <label>Name</label>
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="LCP Protocol" />
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="LCP/OSP Function Protocol" />
             </div>
             <div className="form-field">
               <label>Version</label>
               <input value={version} onChange={e => setVersion(e.target.value)} />
             </div>
-            <div className="form-field">
+            <div className="form-field template-desc-field">
               <label>Description</label>
               <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional" />
-            </div>
-            <div className="form-field">
-              <label>Load template</label>
-              <select
-                className="protocol-template-select"
-                defaultValue=""
-                onChange={e => {
-                  if (e.target.value) {
-                    applyPreset(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-              >
-                <option value="" disabled>Select template…</option>
-                <option value="lcp">LCP/OSP default</option>
-                {presets.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
             </div>
           </div>
         </div>
@@ -228,7 +189,7 @@ export default function ProtocolEditPage() {
 
           {legacyNoRules && (
             <div className="alert-banner alert-banner--warning">
-              This protocol has no parse_rules. Load a template and save.
+              This template has no parse_rules (legacy entry). Define rules below and save.
             </div>
           )}
 
