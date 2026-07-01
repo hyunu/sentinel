@@ -1195,6 +1195,7 @@ export default function VizDashboardPage() {
         <div
           ref={chartViewportRef}
           className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${liveMode ? ' live' : ''}`}
+          tabIndex={-1}
           onDoubleClick={liveMode ? undefined : resetChartZoom}
         >
           <ResponsiveContainer width="100%" height={400}>

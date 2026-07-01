@@ -833,6 +833,28 @@ tbody tr:last-child td {
 .viz-chart-viewport {
   position: relative;
   user-select: none;
+  outline: none;
+}
+
+.viz-chart-viewport:focus,
+.viz-chart-viewport:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.viz-chart-viewport .recharts-wrapper,
+.viz-chart-viewport .recharts-surface,
+.viz-chart-viewport svg {
+  outline: none !important;
+}
+
+.viz-chart-viewport .recharts-wrapper:focus,
+.viz-chart-viewport .recharts-wrapper:focus-visible,
+.viz-chart-viewport .recharts-surface:focus,
+.viz-chart-viewport svg:focus,
+.viz-chart-viewport svg *:focus {
+  outline: none !important;
+  box-shadow: none;
 }
 
 .viz-chart-viewport:not(.live) {
