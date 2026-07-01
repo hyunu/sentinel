@@ -104,6 +104,7 @@ export interface YAxisConfig {
 export interface VizItem {
   id: string;
   label: string;
+  short_label?: string;
   color: string;
   visible: boolean;
   field_ref: { protocol_id: string; field_name: string };
@@ -244,8 +245,17 @@ export const api = {
       request<{ profile: VizProfile; data: Array<{ timestamp: string; values: Record<string, number> }> }>(
         `/viz/profiles/${id}/apply`, { method: 'POST' }
       ),
-    queryItems: (data: { board_id: string; items: VizItem[]; time_range?: { start: string; end: string }; since?: string }) =>
-      request<{ data: Array<{ timestamp: string; values: Record<string, number> }> }>(
+    queryItems: (data: {
+      board_id: string;
+      items: VizItem[];
+      time_range?: { start: string; end: string };
+      since?: string;
+      limit?: number;
+    }) =>
+      request<{
+        data: Array<{ timestamp: string; values: Record<string, number> }>;
+        meta?: { total_matched: number; returned: number; downsampled: boolean };
+      }>(
         '/viz/query-items', { method: 'POST', body: JSON.stringify(data) }
       ),
   },

@@ -114,9 +114,10 @@ type TimeRange struct {
 }
 
 type VizItem struct {
-	ID        string          `json:"id" bson:"id"`
-	Label     string          `json:"label" bson:"label"`
-	Color     string          `json:"color" bson:"color"`
+	ID         string          `json:"id" bson:"id"`
+	Label      string          `json:"label" bson:"label"`
+	ShortLabel string          `json:"short_label,omitempty" bson:"short_label,omitempty"`
+	Color      string          `json:"color" bson:"color"`
 	Visible   bool            `json:"visible" bson:"visible"`
 	FieldRef  FieldRef        `json:"field_ref" bson:"field_ref"`
 	ChartType string          `json:"chart_type" bson:"chart_type"`

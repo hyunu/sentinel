@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxVizProfilesPerBoard = 5
+
 func (h *Handler) CreateVizProfile(c *gin.Context) {
 	var profile models.VizProfile
 	if err := c.ShouldBindJSON(&profile); err != nil {
@@ -20,13 +23,35 @@ func (h *Handler) CreateVizProfile(c *gin.Context) {
 		return
 	}
 
+	if profile.BoardID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "board_id required"})
+		return
+	}
+	if profile.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	count, err := h.db.VizProfiles().CountDocuments(ctx, bson.M{"board_id": profile.BoardID})
+	if err != nil {
+		h.logger.Error("failed to count viz profiles", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create profile"})
+		return
+	}
+	if count >= maxVizProfilesPerBoard {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("maximum %d profiles per board", maxVizProfilesPerBoard),
+		})
+		return
+	}
+
 	profile.ID = uuid.New().String()
 	now := time.Now()
 	profile.CreatedAt = now
 	profile.UpdatedAt = now
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
 
 	if _, err := h.db.VizProfiles().InsertOne(ctx, profile); err != nil {
 		h.logger.Error("failed to create viz profile", zap.Error(err))
@@ -47,7 +72,10 @@ func (h *Handler) ListVizProfiles(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := h.db.VizProfiles().Find(ctx, filter, options.Find().SetSort(bson.M{"name": 1}))
+	cursor, err := h.db.VizProfiles().Find(ctx, filter, options.Find().SetSort(bson.D{
+		{Key: "updated_at", Value: -1},
+		{Key: "name", Value: 1},
+	}))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
 		return
@@ -138,63 +166,16 @@ func (h *Handler) ApplyVizProfile(c *gin.Context) {
 		}
 	}
 
-	cursor, err := h.db.UartData().Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
+	results, meta, err := h.queryVizSeries(ctx, filter, profile.Items, vizDefaultPointLimit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
 		return
-	}
-	defer cursor.Close(ctx)
-
-	var rawData []models.UartData
-	if err := cursor.All(ctx, &rawData); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
-		return
-	}
-
-	type transformedPoint struct {
-		Timestamp time.Time              `json:"timestamp"`
-		Values    map[string]interface{} `json:"values"`
-	}
-
-	results := make([]transformedPoint, 0, len(rawData))
-	for _, d := range rawData {
-		vals := make(map[string]interface{})
-		for _, item := range profile.Items {
-			if !item.Visible {
-				continue
-			}
-			raw := d.RawHex
-			if d.ParsedFields != nil {
-				if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
-					var fv float64
-					switch vv := v.(type) {
-					case float64:
-						fv = vv
-					case int:
-						fv = float64(vv)
-					case int32:
-						fv = float64(vv)
-					case int64:
-						fv = float64(vv)
-					default:
-						continue
-					}
-					vals[item.Label] = fv*item.Weight + item.Offset
-				}
-			}
-			_ = raw
-		}
-		if len(vals) > 0 {
-			results = append(results, transformedPoint{
-				Timestamp: d.Timestamp,
-				Values:    vals,
-			})
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"profile": profile,
 		"data":    results,
+		"meta":    meta,
 	})
 }
 
@@ -260,6 +241,7 @@ type VizQueryItemsRequest struct {
 	Items     []models.VizItem  `json:"items" binding:"required"`
 	TimeRange *models.TimeRange `json:"time_range,omitempty"`
 	Since     string            `json:"since,omitempty"`
+	Limit     *int              `json:"limit,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -282,62 +264,22 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		filter["timestamp"] = tsFilter
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	limit := vizDefaultPointLimit
+	if req.Limit != nil {
+		limit = *req.Limit
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), queryTimeoutForVizLimit(limit))
 	defer cancel()
 
-	cursor, err := h.db.UartData().Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
+	results, meta, err := h.queryVizSeries(ctx, filter, req.Items, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
 		return
 	}
-	defer cursor.Close(ctx)
-
-	var rawData []models.UartData
-	if err := cursor.All(ctx, &rawData); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
-		return
-	}
-
-	type transformedPoint struct {
-		Timestamp time.Time              `json:"timestamp"`
-		Values    map[string]interface{} `json:"values"`
-	}
-
-	results := make([]transformedPoint, 0, len(rawData))
-	for _, d := range rawData {
-		vals := make(map[string]interface{})
-		for _, item := range req.Items {
-			if !item.Visible {
-				continue
-			}
-			if d.ParsedFields != nil {
-				if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
-					var fv float64
-					switch vv := v.(type) {
-					case float64:
-						fv = vv
-					case int:
-						fv = float64(vv)
-					case int32:
-						fv = float64(vv)
-					case int64:
-						fv = float64(vv)
-					default:
-						continue
-					}
-					vals[item.Label] = fv*item.Weight + item.Offset
-				}
-			}
-		}
-		if len(vals) > 0 {
-			results = append(results, transformedPoint{
-				Timestamp: d.Timestamp,
-				Values:    vals,
-			})
-		}
-	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": results,
+		"meta": meta,
 	})
 }

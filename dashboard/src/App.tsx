@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import BoardsPage from './pages/Boards';
 import ProtocolsListPage from './pages/ProtocolsList';
@@ -19,6 +20,24 @@ const NAV = [
 ] as const;
 
 function App() {
+  const navScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = navScrollRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta === 0) return;
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
   return (
     <BrowserRouter>
       <div className="app-layout">
@@ -30,16 +49,18 @@ function App() {
               <p>UART Monitor</p>
             </div>
           </div>
-          <ul className="nav-links">
-            {NAV.map(({ to, label, Icon }) => (
-              <li key={to}>
-                <NavLink to={to} className={({ isActive }) => (isActive ? 'active' : '')}>
-                  <Icon className="nav-icon" />
-                  <span>{label}</span>
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+          <div className="nav-links-scroll" ref={navScrollRef}>
+            <ul className="nav-links">
+              {NAV.map(({ to, label, Icon }) => (
+                <li key={to}>
+                  <NavLink to={to} className={({ isActive }) => (isActive ? 'active' : '')}>
+                    <Icon className="nav-icon" />
+                    <span>{label}</span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
           <div className="sidebar-footer">
             <span className="sidebar-version">Dashboard v1</span>
           </div>
