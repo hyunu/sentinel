@@ -68,13 +68,7 @@ func (h *Handler) queryVizSeries(
 ) ([]vizDataPoint, vizQueryMeta, error) {
 	effectiveLimit, unlimited := normalizeVizPointLimit(limit)
 
-	visible := make([]models.VizItem, 0, len(items))
-	for _, item := range items {
-		if item.Visible {
-			visible = append(visible, item)
-		}
-	}
-	if len(visible) == 0 {
+	if len(items) == 0 {
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
@@ -129,10 +123,10 @@ func (h *Handler) queryVizSeries(
 
 		vals := make(map[string]interface{})
 		if d.ParsedFields != nil {
-			for _, item := range visible {
+			for _, item := range items {
 				if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
 					if fv, ok := extractVizValue(v); ok {
-						vals[item.Label] = fv*item.Weight + item.Offset
+						vals[item.Label] = fv
 					}
 				}
 			}

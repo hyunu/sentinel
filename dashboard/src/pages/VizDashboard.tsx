@@ -1,10 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea,
+  ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import PageHeader from '../components/PageHeader';
+import {
+  IconFullscreen,
+  IconFullscreenExit,
+  IconTooltip,
+  IconZoomIn,
+  IconZoomOut,
+  IconZoomReset,
+} from '../components/ChartControlIcons';
+import { formatDateTimeFromDate, formatChartAxisTime, parseDateTime } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
@@ -17,15 +26,19 @@ const MIN_CHART_ZOOM_POINTS = 10;
 const CHART_RENDER_MAX = 3000;
 const CHART_ANIMATION = false;
 
-function formatChartAxisTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function formatDisplayValue(value: number, unit?: string): string {
+  const text = value.toLocaleString();
+  const u = unit?.trim();
+  return u ? `${text} ${u}` : text;
+}
+
+function axisUnitLabel(itemsOnAxis: VizItem[]): string {
+  const units = [...new Set(
+    itemsOnAxis.map(i => i.y_axis.unit?.trim() || '').filter(Boolean),
+  )];
+  if (units.length === 1) return units[0];
+  if (units.length > 1) return units.join(' / ');
+  return '';
 }
 
 function formatYAxisTick(value: number | string): string {
@@ -51,21 +64,6 @@ interface ChartZoomRange {
   end: number;
 }
 
-function chartPointIndex(activeTooltipIndex: unknown): number | null {
-  if (typeof activeTooltipIndex === 'number' && activeTooltipIndex >= 0) {
-    return activeTooltipIndex;
-  }
-  if (
-    activeTooltipIndex != null
-    && typeof activeTooltipIndex === 'object'
-    && 'index' in activeTooltipIndex
-    && typeof (activeTooltipIndex as { index?: unknown }).index === 'number'
-  ) {
-    const idx = (activeTooltipIndex as { index: number }).index;
-    return idx >= 0 ? idx : null;
-  }
-  return null;
-}
 const PRIMARY_Y_AXIS_ID = 'y-left';
 const SECONDARY_Y_AXIS_ID = 'y-right';
 const PRESET_Y_AXES: YAxisConfig[] = [
@@ -95,6 +93,33 @@ function chartLabel(item: VizItem): string {
   return item.short_label?.trim() || shortLabelFromField(item.field_ref.field_name || item.label);
 }
 
+function resolveRawValue(item: VizItem, rawValuesAtTime?: Record<string, number>): number | undefined {
+  if (!rawValuesAtTime) return undefined;
+  for (const key of [item.label, item.field_ref.field_name]) {
+    const v = rawValuesAtTime[key];
+    if (typeof v === 'number' && !Number.isNaN(v)) return v;
+  }
+  return undefined;
+}
+
+function formatTooltipItemValue(
+  item: VizItem | undefined,
+  rawValuesAtTime: Record<string, number> | undefined,
+  chartValue: unknown,
+): string {
+  if (!item) return chartValue != null ? String(chartValue) : '';
+  const unit = item.y_axis.unit?.trim();
+  const raw = resolveRawValue(item, rawValuesAtTime);
+  if (typeof raw === 'number') {
+    return formatDisplayValue(raw, unit);
+  }
+  if (typeof chartValue === 'number' && !Number.isNaN(chartValue)) {
+    return formatDisplayValue(chartValue, unit);
+  }
+  const base = chartValue != null ? String(chartValue) : '';
+  return unit && base ? `${base} ${unit}` : base;
+}
+
 interface VizChartTooltipProps {
   active?: boolean;
   label?: string | number;
@@ -104,9 +129,10 @@ interface VizChartTooltipProps {
     color?: string;
   }>;
   itemById: Map<string, VizItem>;
+  rawValuesAtTime?: Record<string, number>;
 }
 
-function VizChartTooltip({ active, label, payload, itemById }: VizChartTooltipProps) {
+function VizChartTooltip({ active, label, payload, itemById, rawValuesAtTime }: VizChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="viz-chart-tooltip">
@@ -119,12 +145,7 @@ function VizChartTooltip({ active, label, payload, itemById }: VizChartTooltipPr
         if (!key) return null;
         const item = itemById.get(key);
         const name = item ? chartLabel(item) : key;
-        const value = entry.value;
-        const displayValue = typeof value === 'number'
-          ? value.toLocaleString()
-          : value != null
-            ? String(value)
-            : '';
+        const displayValue = formatTooltipItemValue(item, rawValuesAtTime, entry.value);
         return (
           <div key={key} className="viz-chart-tooltip-row">
             <span className="viz-chart-tooltip-swatch" style={{ backgroundColor: entry.color }} />
@@ -193,38 +214,81 @@ interface Statistics {
   last: number | string;
 }
 
-const TIME_PRESETS = [
-  { label: '1h', seconds: 3600 },
-  { label: '6h', seconds: 21600 },
-  { label: '24h', seconds: 86400 },
-  { label: '7d', seconds: 604800 },
-  { label: 'All', seconds: 0 },
+const TIME_PRESET_ALL = 'all' as const;
+
+type TimePresetId = typeof TIME_PRESET_ALL | '1d' | '3d' | '7d' | '15d' | '30d' | '3m' | '6m' | '1y';
+
+const TIME_PRESETS: Array<{ id: TimePresetId; label: string }> = [
+  { id: '1d', label: '1d' },
+  { id: '3d', label: '3d' },
+  { id: '7d', label: '7d' },
+  { id: '15d', label: '15d' },
+  { id: '30d', label: '30d' },
+  { id: '3m', label: '3m' },
+  { id: '6m', label: '6m' },
+  { id: '1y', label: '1y' },
+  { id: 'all', label: 'All' },
 ];
 
-function toLocalISO(d: Date): string {
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function presetRangeStart(end: Date, presetId: TimePresetId): Date {
+  switch (presetId) {
+    case '1d':
+      return new Date(end.getTime() - 86400000);
+    case '3d':
+      return new Date(end.getTime() - 3 * 86400000);
+    case '7d':
+      return new Date(end.getTime() - 7 * 86400000);
+    case '15d':
+      return new Date(end.getTime() - 15 * 86400000);
+    case '30d':
+      return new Date(end.getTime() - 30 * 86400000);
+    case '3m': {
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 3);
+      return start;
+    }
+    case '6m': {
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 6);
+      return start;
+    }
+    case '1y': {
+      const start = new Date(end);
+      start.setFullYear(start.getFullYear() - 1);
+      return start;
+    }
+    default:
+      return end;
+  }
 }
 
-function slimItemsForQuery(items: VizItem[]): VizItem[] {
-  return items
-    .filter(i => i.visible)
-    .map(i => ({
-      id: i.id,
-      label: i.label,
-      short_label: i.short_label,
-      color: i.color,
-      visible: true,
-      field_ref: i.field_ref,
-      chart_type: i.chart_type,
-      y_axis: i.y_axis,
-      offset: i.offset,
-      weight: i.weight,
-    }));
+function isAllTimeRangeSelection(presetId: TimePresetId, customStart: string, customEnd: string): boolean {
+  return presetId === TIME_PRESET_ALL && !customStart && !customEnd;
+}
+
+function isCustomTimeRangeSelection(presetId: TimePresetId, customStart: string, customEnd: string): boolean {
+  return presetId === TIME_PRESET_ALL && !!(customStart || customEnd);
+}
+
+type VizDataRow = { timestamp: string; values: Record<string, number> };
+
+function itemsForDataQuery(items: VizItem[]): VizItem[] {
+  return items.map(i => ({
+    id: i.id,
+    label: i.label,
+    short_label: i.short_label,
+    color: i.color,
+    visible: i.visible,
+    field_ref: i.field_ref,
+    chart_type: i.chart_type,
+    y_axis: i.y_axis,
+    offset: i.offset,
+    weight: i.weight,
+  }));
 }
 
 function toChartPoints(
-  rows: Array<{ timestamp: string; values: Record<string, number> }>,
+  rows: VizDataRow[],
   sourceItems: VizItem[],
 ): ChartPoint[] {
   const visible = sourceItems.filter(i => i.visible);
@@ -233,9 +297,9 @@ function toChartPoints(
       timeKey: row.timestamp,
     };
     for (const item of visible) {
-      const v = row.values[item.label];
-      if (typeof v === 'number' && !Number.isNaN(v)) {
-        point[item.id] = v;
+      const raw = row.values[item.label];
+      if (typeof raw === 'number' && !Number.isNaN(raw)) {
+        point[item.id] = raw * item.weight + item.offset;
       }
     }
     return point;
@@ -248,14 +312,28 @@ export default function VizDashboardPage() {
   const [selectedBoard, setSelectedBoard] = useState('');
   const [selectedProto, setSelectedProto] = useState('');
   const [items, setItems] = useState<VizItem[]>([]);
-  const [chartData, setChartData] = useState<ChartPoint[]>([]);
+  const itemTransformKey = useMemo(
+    () => items.map(i => `${i.id}:${i.offset}:${i.weight}:${i.visible}:${i.color}:${i.chart_type}:${i.y_axis.id}:${i.y_axis.unit ?? ''}`).join('|'),
+    [items],
+  );
+  const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
+  const chartData = useMemo(
+    () => toChartPoints(rawVizData, items),
+    [rawVizData, items, itemTransformKey],
+  );
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+  const refAreaLeftRef = useRef<number | null>(null);
+  const refAreaRightRef = useRef<number | null>(null);
+  refAreaLeftRef.current = refAreaLeft;
+  refAreaRightRef.current = refAreaRight;
   const [isChartSelecting, setIsChartSelecting] = useState(false);
+  const [chartSelectionOverlay, setChartSelectionOverlay] = useState<{ startX: number; currentX: number } | null>(null);
+  const [isChartPanning, setIsChartPanning] = useState(false);
   const [profiles, setProfiles] = useState<VizProfile[]>([]);
   const [savedProfileId, setSavedProfileId] = useState<string | null>(null);
-  const [timeRangePreset, setTimeRangePreset] = useState(0);
+  const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [loading, setLoading] = useState(false);
@@ -267,26 +345,93 @@ export default function VizDashboardPage() {
   const [showProfileAdd, setShowProfileAdd] = useState(false);
   const [profileDraftName, setProfileDraftName] = useState('');
   const [fieldTooltip, setFieldTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [configOpen, setConfigOpen] = useState(true);
+  const [chartFullscreen, setChartFullscreen] = useState(false);
+  const [chartViewportHeight, setChartViewportHeight] = useState(600);
   const lastTimestampRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
+  const chartCardRef = useRef<HTMLDivElement | null>(null);
   const chartZoomRef = useRef<ChartZoomRange | null>(null);
   chartZoomRef.current = chartZoom;
   const chartDataLengthRef = useRef(0);
   chartDataLengthRef.current = chartData.length;
   const wheelRafRef = useRef<number | null>(null);
   const wheelEventRef = useRef<{ deltaY: number; focusRatio: number } | null>(null);
+  const panSessionRef = useRef<{
+    pointerId: number;
+    startX: number;
+    zoomStart: number;
+    zoomEnd: number;
+    span: number;
+  } | null>(null);
+  const isChartSelectingRef = useRef(false);
+  isChartSelectingRef.current = isChartSelecting;
+  const renderChartDataLengthRef = useRef(0);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const liveModeRef = useRef(liveMode);
   liveModeRef.current = liveMode;
 
+  const rawVizDataKey = useMemo(
+    () => (rawVizData.length > 0
+      ? `${rawVizData.length}:${rawVizData[0]?.timestamp}:${rawVizData[rawVizData.length - 1]?.timestamp}`
+      : 'empty'),
+    [rawVizData],
+  );
+
   useEffect(() => {
     setChartZoom(null);
     setRefAreaLeft(null);
     setRefAreaRight(null);
+    refAreaLeftRef.current = null;
+    refAreaRightRef.current = null;
     setIsChartSelecting(false);
-  }, [chartData]);
+    setChartSelectionOverlay(null);
+    setIsChartPanning(false);
+    isChartSelectingRef.current = false;
+    panSessionRef.current = null;
+  }, [rawVizDataKey]);
+
+  useEffect(() => {
+    const el = chartViewportRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const height = entries[0]?.contentRect.height;
+      if (height > 0) setChartViewportHeight(height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [chartFullscreen, chartData.length]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setChartFullscreen(document.fullscreenElement === chartCardRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const toggleChartFullscreen = useCallback(async () => {
+    const el = chartCardRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement === el) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const configSummary = useMemo(() => {
+    const boardName = boards.find(b => b.id === selectedBoard)?.name ?? 'Board not selected';
+    const protoName = protocols.find(p => p.id === selectedProto)?.name;
+    const visibleCount = items.filter(i => i.visible).length;
+    return [boardName, protoName, `${visibleCount}/${items.length} items visible`].filter(Boolean).join(' · ');
+  }, [boards, protocols, selectedBoard, selectedProto, items]);
 
   const applyChartZoomWindow = useCallback((start: number, end: number) => {
     if (chartData.length === 0) {
@@ -306,7 +451,13 @@ export default function VizDashboardPage() {
     setChartZoom(null);
     setRefAreaLeft(null);
     setRefAreaRight(null);
+    refAreaLeftRef.current = null;
+    refAreaRightRef.current = null;
     setIsChartSelecting(false);
+    setChartSelectionOverlay(null);
+    setIsChartPanning(false);
+    isChartSelectingRef.current = false;
+    panSessionRef.current = null;
   }, []);
 
   const zoomChartByFactor = useCallback((factor: number, focusRatio = 0.5) => {
@@ -333,20 +484,22 @@ export default function VizDashboardPage() {
   }, [applyChartZoomWindow, chartData.length, chartZoom, liveMode]);
 
   const finalizeChartSelection = useCallback(() => {
-    if (!isChartSelecting || refAreaLeft == null || refAreaRight == null) {
-      setIsChartSelecting(false);
-      setRefAreaLeft(null);
-      setRefAreaRight(null);
-      return;
-    }
-    const viewStart = chartZoom?.start ?? 0;
-    const renderLeft = Math.min(refAreaLeft, refAreaRight);
-    const renderRight = Math.max(refAreaLeft, refAreaRight);
+    const left = refAreaLeftRef.current;
+    const right = refAreaRightRef.current;
+    isChartSelectingRef.current = false;
     setIsChartSelecting(false);
+    setChartSelectionOverlay(null);
     setRefAreaLeft(null);
     setRefAreaRight(null);
+    refAreaLeftRef.current = null;
+    refAreaRightRef.current = null;
+    if (left == null || right == null) return;
+
+    const renderLeft = Math.min(left, right);
+    const renderRight = Math.max(left, right);
     if (renderRight - renderLeft + 1 < MIN_CHART_ZOOM_POINTS) return;
 
+    const viewStart = chartZoom?.start ?? 0;
     const { start, end } = chartZoom
       ? clampChartZoom(chartZoom.start, chartZoom.end, chartData.length)
       : { start: 0, end: chartData.length - 1 };
@@ -362,34 +515,201 @@ export default function VizDashboardPage() {
       viewStart + mapRenderIndex(renderLeft),
       viewStart + mapRenderIndex(renderRight),
     );
-  }, [applyChartZoomWindow, chartData, chartZoom, isChartSelecting, refAreaLeft, refAreaRight]);
+  }, [applyChartZoomWindow, chartData, chartZoom]);
 
-  const handleChartMouseDown = useCallback((state: { activeTooltipIndex?: unknown }) => {
-    if (liveMode) return;
-    const idx = chartPointIndex(state.activeTooltipIndex);
-    if (idx == null) return;
-    setRefAreaLeft(idx);
-    setRefAreaRight(idx);
-    setIsChartSelecting(true);
-  }, [liveMode]);
-
-  const handleChartMouseMove = useCallback((state: { activeTooltipIndex?: unknown }) => {
-    if (!isChartSelecting || refAreaLeft == null) return;
-    const idx = chartPointIndex(state.activeTooltipIndex);
-    if (idx == null) return;
-    setRefAreaRight(idx);
-  }, [isChartSelecting, refAreaLeft]);
-
-  useEffect(() => {
-    if (!isChartSelecting) return;
-    const onMouseUp = () => finalizeChartSelection();
-    window.addEventListener('mouseup', onMouseUp);
-    return () => window.removeEventListener('mouseup', onMouseUp);
-  }, [finalizeChartSelection, isChartSelecting]);
+  const finalizeChartSelectionRef = useRef(finalizeChartSelection);
+  finalizeChartSelectionRef.current = finalizeChartSelection;
 
   useEffect(() => {
     const el = chartViewportRef.current;
     if (!el) return;
+
+    const getRenderIndexFromClientX = (clientX: number): number => {
+      const rect = el.getBoundingClientRect();
+      const width = rect.width;
+      if (width <= 0) return 0;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / width));
+      const len = renderChartDataLengthRef.current;
+      if (len <= 1) return 0;
+      return Math.round(ratio * (len - 1));
+    };
+
+    const isZoomedIn = (): boolean => {
+      const len = chartDataLengthRef.current;
+      if (len === 0) return false;
+      const zoom = chartZoomRef.current;
+      if (!zoom) return false;
+      return zoom.end - zoom.start + 1 < len;
+    };
+
+    const applyPanDelta = (deltaX: number) => {
+      const session = panSessionRef.current;
+      if (!session) return;
+      const len = chartDataLengthRef.current;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || len === 0) return;
+
+      const shift = Math.round(-(deltaX / rect.width) * session.span);
+      let newStart = session.zoomStart + shift;
+      let newEnd = session.zoomEnd + shift;
+      if (newStart < 0) {
+        newEnd -= newStart;
+        newStart = 0;
+      }
+      if (newEnd >= len) {
+        newStart -= newEnd - len + 1;
+        newEnd = len - 1;
+      }
+      newStart = Math.max(0, newStart);
+      newEnd = Math.min(len - 1, newEnd);
+      if (newEnd - newStart + 1 >= len) {
+        setChartZoom(null);
+      } else {
+        setChartZoom({ start: newStart, end: newEnd });
+      }
+    };
+
+    const endPointerSession = (pointerId: number) => {
+      const wasPanning = panSessionRef.current?.pointerId === pointerId;
+      const wasSelecting = isChartSelectingRef.current;
+
+      if (wasPanning) {
+        panSessionRef.current = null;
+        setIsChartPanning(false);
+      }
+      if (wasSelecting) {
+        finalizeChartSelectionRef.current();
+      }
+      if (el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture(pointerId);
+      }
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (liveModeRef.current || e.button !== 0) return;
+
+      if (e.shiftKey) {
+        if (chartDataLengthRef.current === 0 || renderChartDataLengthRef.current === 0) return;
+        const rect = el.getBoundingClientRect();
+        const overlayX = e.clientX - rect.left;
+        const idx = getRenderIndexFromClientX(e.clientX);
+        refAreaLeftRef.current = idx;
+        refAreaRightRef.current = idx;
+        isChartSelectingRef.current = true;
+        setRefAreaLeft(idx);
+        setRefAreaRight(idx);
+        setChartSelectionOverlay({ startX: overlayX, currentX: overlayX });
+        setIsChartSelecting(true);
+        el.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (isZoomedIn()) {
+        const zoom = chartZoomRef.current!;
+        panSessionRef.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          zoomStart: zoom.start,
+          zoomEnd: zoom.end,
+          span: zoom.end - zoom.start + 1,
+        };
+        isChartSelectingRef.current = false;
+        refAreaLeftRef.current = null;
+        refAreaRightRef.current = null;
+        setIsChartPanning(true);
+        setIsChartSelecting(false);
+        setChartSelectionOverlay(null);
+        setRefAreaLeft(null);
+        setRefAreaRight(null);
+        el.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (panSessionRef.current?.pointerId === e.pointerId) {
+        applyPanDelta(e.clientX - panSessionRef.current.startX);
+        e.preventDefault();
+        return;
+      }
+      if (!isChartSelectingRef.current) return;
+      if (!el.hasPointerCapture(e.pointerId)) return;
+      const rect = el.getBoundingClientRect();
+      const overlayX = e.clientX - rect.left;
+      const idx = getRenderIndexFromClientX(e.clientX);
+      refAreaRightRef.current = idx;
+      setRefAreaRight(idx);
+      setChartSelectionOverlay(prev => (prev ? { ...prev, currentX: overlayX } : null));
+      e.preventDefault();
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!el.hasPointerCapture(e.pointerId)) return;
+      endPointerSession(e.pointerId);
+      e.preventDefault();
+    };
+
+    const pointerOpts: AddEventListenerOptions = { capture: true };
+    el.addEventListener('pointerdown', onPointerDown, pointerOpts);
+    el.addEventListener('pointermove', onPointerMove, pointerOpts);
+    el.addEventListener('pointerup', onPointerUp, pointerOpts);
+    el.addEventListener('pointercancel', onPointerUp, pointerOpts);
+
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown, pointerOpts);
+      el.removeEventListener('pointermove', onPointerMove, pointerOpts);
+      el.removeEventListener('pointerup', onPointerUp, pointerOpts);
+      el.removeEventListener('pointercancel', onPointerUp, pointerOpts);
+    };
+  }, [rawVizDataKey, liveMode]);
+
+  useEffect(() => {
+    const el = chartViewportRef.current;
+    if (!el) return;
+
+    const isZoomedIn = (): boolean => {
+      const len = chartDataLengthRef.current;
+      if (len === 0) return false;
+      const zoom = chartZoomRef.current;
+      if (!zoom) return false;
+      return zoom.end - zoom.start + 1 < len;
+    };
+
+    const applyWheelPan = (deltaX: number) => {
+      const len = chartDataLengthRef.current;
+      if (len === 0) return;
+      const zoom = chartZoomRef.current;
+      if (!zoom) return;
+      const span = zoom.end - zoom.start + 1;
+      if (span >= len) return;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+
+      const shift = Math.round(-(deltaX / rect.width) * span);
+      if (shift === 0) return;
+
+      let newStart = zoom.start + shift;
+      let newEnd = zoom.end + shift;
+      if (newStart < 0) {
+        newEnd -= newStart;
+        newStart = 0;
+      }
+      if (newEnd >= len) {
+        newStart -= newEnd - len + 1;
+        newEnd = len - 1;
+      }
+      newStart = Math.max(0, newStart);
+      newEnd = Math.min(len - 1, newEnd);
+      if (newEnd - newStart + 1 >= len) {
+        setChartZoom(null);
+      } else {
+        setChartZoom({ start: newStart, end: newEnd });
+      }
+    };
 
     const applyWheelZoom = (deltaY: number, focusRatio: number) => {
       if (liveModeRef.current) return;
@@ -428,6 +748,17 @@ export default function VizDashboardPage() {
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0) return;
+
+      const absX = Math.abs(e.deltaX);
+      const absY = Math.abs(e.deltaY);
+      const horizontalScroll = absX > absY || (e.shiftKey && absY > 0);
+
+      if (horizontalScroll && isZoomedIn()) {
+        const panDelta = absX > absY ? e.deltaX : e.deltaY;
+        applyWheelPan(panDelta);
+        return;
+      }
+
       const focusRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       wheelEventRef.current = { deltaY: e.deltaY, focusRatio };
       if (wheelRafRef.current != null) return;
@@ -448,7 +779,7 @@ export default function VizDashboardPage() {
         wheelRafRef.current = null;
       }
     };
-  }, []);
+  }, [rawVizDataKey, liveMode]);
 
   useEffect(() => {
     api.boards.list().then(setBoards);
@@ -480,24 +811,23 @@ export default function VizDashboardPage() {
     const protoId = p.items.find(i => i.field_ref.protocol_id)?.field_ref.protocol_id;
     if (protoId) setSelectedProto(protoId);
     if (p.time_range?.start && p.time_range?.end) {
-      setCustomStart(toLocalISO(new Date(p.time_range.start)));
-      setCustomEnd(toLocalISO(new Date(p.time_range.end)));
-      setTimeRangePreset(0);
+      setCustomStart(formatDateTimeFromDate(new Date(p.time_range.start)));
+      setCustomEnd(formatDateTimeFromDate(new Date(p.time_range.end)));
+      setTimeRangePresetId(TIME_PRESET_ALL);
     }
     setLoading(true);
     try {
       const result = await api.viz.queryItems({
         board_id: p.board_id,
-        items: slimItemsForQuery(p.items),
+        items: itemsForDataQuery(p.items),
         time_range: p.time_range?.start && p.time_range?.end
           ? { start: p.time_range.start, end: p.time_range.end }
           : undefined,
         limit: p.time_range?.start && p.time_range?.end ? MAX_POINTS : 0,
       });
-      const points = toChartPoints(result.data, p.items);
-      setChartData(points);
+      setRawVizData(result.data);
       setQueryMeta(result.meta ?? null);
-      if (points.length > 0) {
+      if (result.data.length > 0) {
         lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
       }
     } finally {
@@ -511,21 +841,39 @@ export default function VizDashboardPage() {
   }, [selectedBoard]);
 
   const buildTimeRange = useCallback((): { start: string; end: string } | undefined => {
-    if (timeRangePreset > 0) {
+    if (timeRangePresetId !== TIME_PRESET_ALL) {
       const end = new Date();
-      const start = new Date(end.getTime() - timeRangePreset * 1000);
+      const start = presetRangeStart(end, timeRangePresetId);
       return { start: start.toISOString(), end: end.toISOString() };
     }
     if (customStart && customEnd) {
-      return { start: new Date(customStart).toISOString(), end: new Date(customEnd).toISOString() };
+      const startDate = parseDateTime(customStart);
+      const endDate = parseDateTime(customEnd);
+      if (startDate && endDate) {
+        return { start: startDate.toISOString(), end: endDate.toISOString() };
+      }
     }
     return undefined;
-  }, [timeRangePreset, customStart, customEnd]);
+  }, [timeRangePresetId, customStart, customEnd]);
 
   const isAllTimeRange = useCallback(
-    () => timeRangePreset === 0 && !customStart && !customEnd,
-    [timeRangePreset, customStart, customEnd],
+    () => isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd),
+    [timeRangePresetId, customStart, customEnd],
   );
+
+  const isCustomTimeRange = isCustomTimeRangeSelection(timeRangePresetId, customStart, customEnd);
+
+  const selectTimePreset = useCallback((id: TimePresetId) => {
+    setTimeRangePresetId(id);
+    setCustomStart('');
+    setCustomEnd('');
+  }, []);
+
+  const clearCustomTimeRange = useCallback(() => {
+    setCustomStart('');
+    setCustomEnd('');
+    setTimeRangePresetId(TIME_PRESET_ALL);
+  }, []);
 
   const resolveQueryLimit = useCallback(
     () => (isAllTimeRange() ? 0 : MAX_POINTS),
@@ -538,14 +886,13 @@ export default function VizDashboardPage() {
     try {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
-        items: slimItemsForQuery(itemsRef.current),
+        items: itemsForDataQuery(itemsRef.current),
         time_range: buildTimeRange(),
         limit: resolveQueryLimit(),
       });
-      const points = toChartPoints(result.data, itemsRef.current);
-      setChartData(points);
+      setRawVizData(result.data);
       setQueryMeta(result.meta ?? null);
-      if (points.length > 0) {
+      if (result.data.length > 0) {
         lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
       }
     } finally {
@@ -559,16 +906,15 @@ export default function VizDashboardPage() {
     try {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
-        items: slimItemsForQuery(itemsRef.current),
+        items: itemsForDataQuery(itemsRef.current),
         since: since || undefined,
         limit: MAX_POINTS,
       });
       if (!result.data.length) return;
-      const newPoints = toChartPoints(result.data, itemsRef.current);
       lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
-      setChartData(prev => {
+      setRawVizData(prev => {
         const existing = since ? prev : [];
-        const merged = [...existing, ...newPoints];
+        const merged = [...existing, ...result.data];
         if (isAllTimeRange()) return merged;
         return merged.length > MAX_POINTS ? merged.slice(-MAX_POINTS) : merged;
       });
@@ -654,22 +1000,22 @@ export default function VizDashboardPage() {
 
   const saveProfile = async (name: string) => {
     if (!selectedBoard) {
-      setProfileError('보드를 먼저 선택하세요.');
+      setProfileError('Select a board first.');
       return false;
     }
     const trimmed = name.trim();
     if (!trimmed) {
-      setProfileError('프로파일 이름을 입력하세요.');
+      setProfileError('Enter a profile name.');
       return false;
     }
     if (items.length === 0) {
-      setProfileError('저장할 Items가 없습니다.');
+      setProfileError('No items to save.');
       return false;
     }
 
     const existing = profiles.find(p => p.name === trimmed);
     if (!existing && profiles.length >= MAX_PROFILES) {
-      setProfileError(`보드당 최대 ${MAX_PROFILES}개까지 저장할 수 있습니다.`);
+      setProfileError(`You can save up to ${MAX_PROFILES} profiles per board.`);
       return false;
     }
 
@@ -692,7 +1038,7 @@ export default function VizDashboardPage() {
       setProfiles(await api.viz.listProfiles(selectedBoard));
       return true;
     } catch (e) {
-      setProfileError(e instanceof Error ? e.message : '프로파일 저장에 실패했습니다.');
+      setProfileError(e instanceof Error ? e.message : 'Failed to save profile.');
       return false;
     } finally {
       setProfileSaving(false);
@@ -730,7 +1076,7 @@ export default function VizDashboardPage() {
         setProfiles(await api.viz.listProfiles(selectedBoard));
       }
     } catch (e) {
-      setProfileError(e instanceof Error ? e.message : '프로파일 삭제에 실패했습니다.');
+      setProfileError(e instanceof Error ? e.message : 'Failed to delete profile.');
     }
   };
 
@@ -745,17 +1091,64 @@ export default function VizDashboardPage() {
     return chartData.slice(start, end + 1);
   }, [chartData, chartZoom]);
 
+  const displayRawVizData = useMemo(() => {
+    if (!rawVizData.length) return [];
+    if (!chartZoom) return rawVizData;
+    const { start, end } = clampChartZoom(chartZoom.start, chartZoom.end, rawVizData.length);
+    return rawVizData.slice(start, end + 1);
+  }, [rawVizData, chartZoom]);
+
+  const rawValuesByTimeKey = useMemo(() => {
+    const map = new Map<string, Record<string, number>>();
+    for (const row of rawVizData) {
+      map.set(row.timestamp, row.values);
+    }
+    return map;
+  }, [rawVizData]);
+
   const chartRender = useMemo(
     () => decimateChartPoints(displayChartData, CHART_RENDER_MAX),
     [displayChartData],
   );
   const renderChartData = chartRender.points;
+  renderChartDataLengthRef.current = renderChartData.length;
 
   const chartZoomActive = chartZoom != null && displayChartData.length < chartData.length;
 
-  const chartItemById = useMemo(
-    () => new Map(chartItems.map(item => [item.id, item])),
-    [chartItems],
+  const chartSummary = useMemo(() => {
+    const parts: string[] = [];
+    const pointLabel = `${renderChartData.length.toLocaleString()}${chartRender.decimated ? ` / ${chartRender.sourceCount.toLocaleString()}` : ''} points`;
+    parts.push(pointLabel);
+    if (queryMeta?.downsampled) {
+      parts.push(`sampled ${queryMeta.returned.toLocaleString()} / ${queryMeta.total_matched.toLocaleString()}`);
+    }
+    if (chartSeriesTruncated) {
+      parts.push(`showing ${MAX_CHART_SERIES} / ${visibleItems.length} series`);
+    }
+    if (chartRender.decimated) {
+      parts.push('render sampled');
+    }
+    if (chartZoomActive) {
+      parts.push('zoomed');
+    }
+    if (liveMode) {
+      parts.push(`polling every ${POLL_INTERVAL / 1000}s`);
+    }
+    return parts.join(' · ');
+  }, [
+    renderChartData.length,
+    chartRender.decimated,
+    chartRender.sourceCount,
+    queryMeta,
+    chartSeriesTruncated,
+    visibleItems.length,
+    chartZoomActive,
+    liveMode,
+  ]);
+
+  const tooltipItemById = useMemo(
+    () => new Map(visibleItems.map(item => [item.id, item])),
+    [visibleItems],
   );
 
   const yAxisOptions = useMemo(() => {
@@ -767,11 +1160,17 @@ export default function VizDashboardPage() {
   const chartYAxes = useMemo(() => {
     if (chartItems.length === 0) return [];
     const usesRight = chartItems.some(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
-    const axes: Array<{ id: string; orientation: 'left' | 'right' }> = [
-      { id: PRIMARY_Y_AXIS_ID, orientation: 'left' },
+    const leftItems = chartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+    const rightItems = chartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    const axes: Array<{ id: string; orientation: 'left' | 'right'; unitLabel: string }> = [
+      { id: PRIMARY_Y_AXIS_ID, orientation: 'left', unitLabel: axisUnitLabel(leftItems) },
     ];
     if (usesRight) {
-      axes.push({ id: SECONDARY_Y_AXIS_ID, orientation: 'right' });
+      axes.push({
+        id: SECONDARY_Y_AXIS_ID,
+        orientation: 'right',
+        unitLabel: axisUnitLabel(rightItems),
+      });
     }
     return axes;
   }, [chartItems]);
@@ -783,8 +1182,8 @@ export default function VizDashboardPage() {
   const statistics = useMemo(() => {
     const stats: Record<string, Statistics> = {};
     for (const item of visibleItems) {
-      const values = displayChartData
-        .map(d => d[item.id])
+      const values = displayRawVizData
+        .map(row => row.values[item.label])
         .filter((v): v is number => typeof v === 'number' && !isNaN(v));
       if (!values.length) continue;
       stats[item.label] = {
@@ -796,14 +1195,14 @@ export default function VizDashboardPage() {
       };
     }
     return stats;
-  }, [visibleItems, displayChartData]);
+  }, [visibleItems, displayRawVizData]);
 
   const exportCSV = () => {
-    if (!displayChartData.length) return;
+    if (!displayRawVizData.length) return;
     const headers = ['timestamp', ...visibleItems.map(i => chartLabel(i))];
-    const rows = displayChartData.map(d => [
-      formatChartAxisTime(String(d.timeKey)),
-      ...visibleItems.map(i => d[i.id] ?? ''),
+    const rows = displayRawVizData.map(row => [
+      formatChartAxisTime(row.timestamp),
+      ...visibleItems.map(i => row.values[i.label] ?? ''),
     ].join(','));
     const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -859,150 +1258,258 @@ export default function VizDashboardPage() {
     );
   };
 
-  const selectionLeft = refAreaLeft == null || refAreaRight == null
-    ? null
-    : Math.min(refAreaLeft, refAreaRight);
-  const selectionRight = refAreaLeft == null || refAreaRight == null
-    ? null
-    : Math.max(refAreaLeft, refAreaRight);
-  const selectionX1 = selectionLeft != null ? renderChartData[selectionLeft]?.timeKey : undefined;
-  const selectionX2 = selectionRight != null ? renderChartData[selectionRight]?.timeKey : undefined;
-
   return (
     <div className="page">
       <PageHeader
         title="Visualization"
-        subtitle="프로토콜 필드를 차트로 시각화합니다. Live 모드로 실시간 데이터를 확인할 수 있습니다."
+        subtitle="Visualize protocol fields as charts. Use Live mode for real-time data."
       />
 
-      <div className="card">
-        <div className="card-header">
-          <h2>Configuration</h2>
-        </div>
-        <div className="form-row">
-          <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
-            <option value="">Select Board</option>
-            {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-          <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
-            <option value="">Select Protocol</option>
-            {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
-          </select>
-          <button type="button" onClick={addAllFields} disabled={!selectedProto}>+ Add All Fields</button>
-          <button type="button" onClick={fetchAll} className="btn-primary" disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
-          </button>
-          <button
-            type="button"
-            className={`btn-live${liveMode ? ' active' : ''}`}
-            onClick={() => setLiveMode(v => !v)}
-          >
-            {liveMode ? '● LIVE' : 'Live'}
-          </button>
-          {chartData.length > 0 && <button type="button" onClick={exportCSV}>Export CSV</button>}
-        </div>
-
-        <h3>Time Range {liveMode && <span className="muted">(disabled in Live mode)</span>}</h3>
-        <div className="form-row">
-          {TIME_PRESETS.map(p => (
-            <button
-              key={p.label}
-              className={timeRangePreset === p.seconds ? 'btn-primary' : ''}
-              onClick={() => { setTimeRangePreset(p.seconds); setCustomStart(''); setCustomEnd(''); }}
-              disabled={liveMode}
-            >
-              {p.label}
-            </button>
-          ))}
-          <input
-            type="datetime-local" value={customStart}
-            onChange={e => { setCustomStart(e.target.value); setTimeRangePreset(0); }}
-            disabled={liveMode}
-          />
-          <span style={{ color: 'var(--text-muted)' }}>~</span>
-          <input
-            type="datetime-local" value={customEnd}
-            onChange={e => { setCustomEnd(e.target.value); setTimeRangePreset(0); }}
-            disabled={liveMode}
-          />
-        </div>
-      </div>
-
-      <div className="card viz-items-card">
-        <div className="viz-items-header">
-          <h2>Items ({items.length})</h2>
-          <div className="viz-items-header-right">
-            {showProfileAdd ? (
-              <div className="viz-profile-add-form">
-                <input
-                  autoFocus
-                  placeholder="프로파일 이름"
-                  value={profileDraftName}
-                  onChange={e => setProfileDraftName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') void confirmSaveProfile();
-                    if (e.key === 'Escape') cancelProfileAdd();
-                  }}
-                  disabled={profileSaving}
-                />
-                <button
-                  type="button"
-                  className="btn-primary btn-sm"
-                  onClick={() => void confirmSaveProfile()}
-                  disabled={profileSaving || items.length === 0 || !selectedBoard}
-                >
-                  {profileSaving ? '…' : 'Save'}
-                </button>
-                <button type="button" className="btn-ghost btn-sm" onClick={cancelProfileAdd} disabled={profileSaving}>
-                  Cancel
-                </button>
-              </div>
-            ) : selectedBoard ? (
-              <div className="viz-profile-tags">
-                {profiles.map(p => (
-                  <span
-                    key={p.id}
-                    className={`viz-profile-tag-wrap${savedProfileId === p.id ? ' active' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="viz-profile-tag"
-                      onClick={() => loadProfile(p.id)}
-                      title={`${p.items.length} items · visible ${p.items.filter(i => i.visible).length}`}
-                    >
-                      {p.name}
-                    </button>
-                    <button
-                      type="button"
-                      className="viz-profile-tag-remove"
-                      aria-label={`Delete ${p.name}`}
-                      onClick={() => void deleteProfile(p.id)}
-                    >
-                      ×
-                    </button>
+      <div className={`card table-card viz-config-card${configOpen ? '' : ' is-collapsed'}`}>
+        <div className="card-header viz-config-header">
+          <div className="viz-config-header-main">
+            <h2>Configuration</h2>
+            {!configOpen && (
+              <>
+                {liveMode && (
+                  <span className="viz-time-live-badge" aria-label="Live mode active">
+                    Live
                   </span>
-                ))}
-                {profiles.length < MAX_PROFILES && (
-                  <button
-                    type="button"
-                    className="viz-profile-tag-add"
-                    onClick={openProfileAdd}
-                    title="프로파일 추가"
-                  >
-                    +
-                  </button>
                 )}
-              </div>
-            ) : (
-              <span className="muted viz-items-header-hint">보드 선택 후 프로파일 저장</span>
-            )}
-            {profileError && (
-              <span className="viz-profile-error-inline" title={profileError}>!</span>
+                <span className="muted viz-config-summary">{configSummary}</span>
+              </>
             )}
           </div>
+          {configOpen && (
+            <div className="btn-group viz-config-actions">
+              <button type="button" onClick={fetchAll} className="btn-primary btn-sm" disabled={loading}>
+                {loading ? 'Loading…' : 'Refresh'}
+              </button>
+              {chartData.length > 0 && (
+                <button type="button" className="btn-sm" onClick={exportCSV}>Export CSV</button>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn-ghost btn-sm viz-config-collapse-btn"
+            onClick={() => setConfigOpen(v => !v)}
+            aria-expanded={configOpen}
+            aria-label={configOpen ? 'Collapse configuration' : 'Expand configuration'}
+            title={configOpen ? 'Collapse' : 'Expand'}
+          >
+            <span className={`viz-collapse-chevron${configOpen ? ' open' : ''}`} aria-hidden>›</span>
+          </button>
         </div>
-        <div className="viz-items-scroll">
-          <table>
+        {configOpen && (
+        <div className="viz-config-panel">
+        <div className="viz-config-row" aria-labelledby="viz-board-title">
+          <div className="viz-config-row-head">
+            <div id="viz-board-title" className="viz-config-row-title">Board</div>
+          </div>
+          <div className="viz-config-row-content viz-source-row">
+            <label className="viz-source-field">
+              <span className="viz-source-field-label">Board</span>
+              <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
+                <option value="">Select Board</option>
+                {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </label>
+            <label className="viz-source-field">
+              <span className="viz-source-field-label">Protocol</span>
+              <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
+                <option value="">Select Protocol</option>
+                {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className={`viz-config-row viz-config-row-time${liveMode ? ' is-live' : ''}`} aria-labelledby="viz-time-range-title">
+          <div className="viz-config-row-head">
+            <div id="viz-time-range-title" className="viz-config-row-title">
+              Time Range
+            </div>
+          </div>
+          <div className="viz-config-row-content viz-time-toolbar">
+            <div className="viz-time-toolbar-main">
+              <div className="viz-time-preset-group">
+                <span className="viz-time-group-label">Quick range</span>
+                <div
+                  className="viz-time-presets"
+                  role="group"
+                  aria-label="Quick range"
+                >
+                  {TIME_PRESETS.map(p => {
+                    const isActive = p.id === TIME_PRESET_ALL
+                      ? isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd)
+                      : timeRangePresetId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={`viz-time-preset${isActive ? ' is-active' : ''}`}
+                        onClick={() => selectTimePreset(p.id)}
+                        disabled={liveMode}
+                        aria-pressed={isActive}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div
+                className={`viz-time-custom-group${isCustomTimeRange ? ' is-active' : ''}`}
+                aria-label="Search by period"
+              >
+                <span className="viz-time-group-label">Search by period</span>
+                <div className="viz-time-custom-bar">
+                  <input
+                    type="text"
+                    className="viz-time-input mono"
+                    value={customStart}
+                    onChange={e => {
+                      setCustomStart(e.target.value);
+                      setTimeRangePresetId(TIME_PRESET_ALL);
+                    }}
+                    disabled={liveMode}
+                    aria-label="Start time"
+                    placeholder="yyyy-MM-dd HH:mm:ss"
+                    spellCheck={false}
+                    autoComplete="off"
+                    lang="en"
+                  />
+                  <span className="viz-time-custom-sep" aria-hidden>→</span>
+                  <input
+                    type="text"
+                    className="viz-time-input mono"
+                    value={customEnd}
+                    onChange={e => {
+                      setCustomEnd(e.target.value);
+                      setTimeRangePresetId(TIME_PRESET_ALL);
+                    }}
+                    disabled={liveMode}
+                    aria-label="End time"
+                    placeholder="yyyy-MM-dd HH:mm:ss"
+                    spellCheck={false}
+                    autoComplete="off"
+                    lang="en"
+                  />
+                  {isCustomTimeRange && (
+                    <button
+                      type="button"
+                      className="viz-time-custom-clear"
+                      onClick={clearCustomTimeRange}
+                      disabled={liveMode}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="viz-time-live-group">
+                <span className="viz-time-group-label">Live mode</span>
+                <div className="viz-time-live-bar">
+                  <button
+                    type="button"
+                    className={`viz-time-live-toggle btn-live${liveMode ? ' active' : ''}`}
+                    onClick={() => setLiveMode(v => !v)}
+                    aria-pressed={liveMode}
+                  >
+                    {liveMode ? '● LIVE' : 'Live'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="viz-config-row viz-config-row-items">
+          <div className="viz-items-header">
+            <div className="viz-items-header-left">
+              <div className="viz-config-row-title">
+                Items
+                <span className="tag tag-subtle">{items.length}</span>
+              </div>
+              <button type="button" className="btn-sm" onClick={addAllFields} disabled={!selectedProto}>
+                + Add All Fields
+              </button>
+            </div>
+            <div className="viz-items-header-right">
+              {showProfileAdd ? (
+                <div className="viz-profile-add-form">
+                  <input
+                    autoFocus
+                    placeholder="Profile name"
+                    value={profileDraftName}
+                    onChange={e => setProfileDraftName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') void confirmSaveProfile();
+                      if (e.key === 'Escape') cancelProfileAdd();
+                    }}
+                    disabled={profileSaving}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    onClick={() => void confirmSaveProfile()}
+                    disabled={profileSaving || items.length === 0 || !selectedBoard}
+                  >
+                    {profileSaving ? '…' : 'Save'}
+                  </button>
+                  <button type="button" className="btn-ghost btn-sm" onClick={cancelProfileAdd} disabled={profileSaving}>
+                    Cancel
+                  </button>
+                </div>
+              ) : selectedBoard ? (
+                <div className="viz-profile-tags">
+                  {profiles.map(p => (
+                    <span
+                      key={p.id}
+                      className={`viz-profile-tag-wrap${savedProfileId === p.id ? ' active' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="viz-profile-tag"
+                        onClick={() => loadProfile(p.id)}
+                        title={`${p.items.length} items · visible ${p.items.filter(i => i.visible).length}`}
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="viz-profile-tag-remove"
+                        aria-label={`Delete ${p.name}`}
+                        onClick={() => void deleteProfile(p.id)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  {profiles.length < MAX_PROFILES && (
+                    <button
+                      type="button"
+                      className="viz-profile-tag-add"
+                      onClick={openProfileAdd}
+                      title="Add profile"
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <span className="muted viz-items-header-hint">Select a board to save profiles</span>
+              )}
+              {profileError && (
+                <span className="viz-profile-error-inline" title={profileError}>!</span>
+              )}
+            </div>
+          </div>
+          <div className="viz-config-row-content">
+            <div className="viz-items-table-wrap">
+              <div className="viz-items-scroll">
+                <table className="viz-items-table">
             <thead>
               <tr>
                 <th className="viz-vis-col">
@@ -1013,27 +1520,9 @@ export default function VizDashboardPage() {
                       checked={allVisible}
                       onChange={toggleAllVisibility}
                       disabled={items.length === 0}
-                      title="모두 선택/해제"
-                      aria-label="모두 선택/해제"
+                      title="Select or deselect all"
+                      aria-label="Select or deselect all"
                     />
-                    <span className="viz-vis-actions">
-                      <button
-                        type="button"
-                        className="viz-vis-action"
-                        onClick={() => setAllVisible(true)}
-                        disabled={items.length === 0 || allVisible}
-                      >
-                        전체
-                      </button>
-                      <button
-                        type="button"
-                        className="viz-vis-action"
-                        onClick={() => setAllVisible(false)}
-                        disabled={items.length === 0 || !items.some(i => i.visible)}
-                      >
-                        해제
-                      </button>
-                    </span>
                   </div>
                 </th>
                 <th>Short</th>
@@ -1051,7 +1540,7 @@ export default function VizDashboardPage() {
               {items.length === 0 && (
                 <tr>
                   <td colSpan={10} className="viz-items-empty">
-                    Items가 없습니다. Configuration에서 필드를 추가하세요.
+                    No items. Use + Add All Fields above to add fields.
                   </td>
                 </tr>
               )}
@@ -1064,7 +1553,7 @@ export default function VizDashboardPage() {
                       value={item.short_label ?? ''}
                       onChange={e => updateItem(item.id, 'short_label', e.target.value)}
                       style={{ width: 110 }}
-                      title="차트에 표시되는 짧은 이름"
+                      title="Short name shown on chart"
                     />
                   </td>
                   <td
@@ -1088,8 +1577,7 @@ export default function VizDashboardPage() {
                   </td>
                   <td>
                     <select value={item.y_axis.id} onChange={e => {
-                      const preset = PRESET_Y_AXES.find(a => a.id === e.target.value);
-                      updateItem(item.id, 'y_axis', preset ?? { ...item.y_axis, id: e.target.value } as YAxisConfig);
+                      updateItem(item.id, 'y_axis', { ...item.y_axis, id: e.target.value } as YAxisConfig);
                     }}>
                       {yAxisOptions.map(yId => <option key={yId} value={yId}>{yId}</option>)}
                     </select>
@@ -1117,94 +1605,106 @@ export default function VizDashboardPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="card viz-chart-card">
-        <div className="viz-chart-header">
-          <h2>
-            Chart ({renderChartData.length.toLocaleString()}{chartRender.decimated ? ` / ${chartRender.sourceCount.toLocaleString()}` : ''} points
-            {queryMeta?.downsampled && (
-              <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>
-                · sampled {queryMeta.returned.toLocaleString()} / {queryMeta.total_matched.toLocaleString()}
-              </span>
-            )}
-            {chartSeriesTruncated && (
-              <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>
-                · showing {MAX_CHART_SERIES} / {visibleItems.length} series
-              </span>
-            )}
-            {chartRender.decimated && (
-              <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>
-                · render sampled
-              </span>
-            )}
-            {chartZoomActive && (
-              <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>
-                · zoomed
-              </span>
-            )}
-            )
-            {liveMode && <span className="muted" style={{ marginLeft: 8 }}>· polling every {POLL_INTERVAL / 1000}s</span>}
-          </h2>
-          <div className="viz-chart-zoom-controls">
-            <button
-              type="button"
-              className={`btn-ghost btn-sm viz-chart-tooltip-toggle${chartTooltipEnabled ? ' active' : ''}`}
-              onClick={() => setChartTooltipEnabled(v => !v)}
-              title="호버 시 값 팝업 표시"
-              aria-pressed={chartTooltipEnabled}
-            >
-              팝업
-            </button>
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              onClick={() => zoomChartByFactor(0.8)}
-              disabled={liveMode || displayChartData.length === 0}
-              title="수평 확대"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              onClick={() => zoomChartByFactor(1.25)}
-              disabled={liveMode || !chartZoomActive}
-              title="수평 축소"
-            >
-              −
-            </button>
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              onClick={resetChartZoom}
-              disabled={liveMode || !chartZoomActive}
-              title="줌 초기화"
-            >
-              Reset
-            </button>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
+        </div>
+        )}
+      </div>
+
+      <div ref={chartCardRef} className={`card table-card viz-chart-card${chartFullscreen ? ' is-fullscreen' : ''}`}>
+        <div className="card-header viz-chart-header">
+          <div className="viz-chart-header-main">
+            <h2>Chart</h2>
+            <p className="viz-chart-summary">{chartSummary}</p>
+          </div>
+          <div className="viz-chart-toolbar">
+            <div className="viz-chart-toolbar-group" role="group" aria-label="Chart view">
+              <button
+                type="button"
+                className={`viz-chart-icon-btn viz-chart-fullscreen-toggle${chartFullscreen ? ' active' : ''}`}
+                onClick={() => void toggleChartFullscreen()}
+                title={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                aria-label={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                aria-pressed={chartFullscreen}
+              >
+                {chartFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
+              </button>
+              <button
+                type="button"
+                className="viz-chart-icon-btn"
+                onClick={() => zoomChartByFactor(0.8)}
+                disabled={liveMode || displayChartData.length === 0}
+                title="Zoom in horizontally"
+                aria-label="Zoom in horizontally"
+              >
+                <IconZoomIn />
+              </button>
+              <button
+                type="button"
+                className="viz-chart-icon-btn"
+                onClick={() => zoomChartByFactor(1.25)}
+                disabled={liveMode || !chartZoomActive}
+                title="Zoom out horizontally"
+                aria-label="Zoom out horizontally"
+              >
+                <IconZoomOut />
+              </button>
+              <button
+                type="button"
+                className="viz-chart-icon-btn"
+                onClick={resetChartZoom}
+                disabled={liveMode || !chartZoomActive}
+                title="Reset zoom"
+                aria-label="Reset zoom"
+              >
+                <IconZoomReset />
+              </button>
+            </div>
+            <div className="viz-chart-toolbar-sep" aria-hidden />
+            <div className="viz-chart-toolbar-group" role="group" aria-label="Tooltip">
+              <button
+                type="button"
+                className={`viz-chart-icon-btn viz-chart-tooltip-toggle${chartTooltipEnabled ? ' active' : ''}`}
+                onClick={() => setChartTooltipEnabled(v => !v)}
+                title="Show value popup on hover"
+                aria-label="Show value popup on hover"
+                aria-pressed={chartTooltipEnabled}
+              >
+                <IconTooltip />
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="viz-chart-panel">
         {!liveMode && displayChartData.length > 0 && (
           <p className="viz-chart-zoom-hint muted">
-            드래그: 영역 확대 · 휠: 수평 줌 · 더블클릭: 초기화
+            Shift+drag: zoom region · Drag: pan (zoomed) · Horizontal scroll / Shift+wheel: pan (zoomed) · Wheel: zoom · Double-click: reset
           </p>
         )}
         <div
           ref={chartViewportRef}
-          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${liveMode ? ' live' : ''}`}
+          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
           tabIndex={-1}
           onDoubleClick={liveMode ? undefined : resetChartZoom}
         >
-          <ResponsiveContainer width="100%" height={400}>
+          {chartSelectionOverlay && (
+            <div
+              className="viz-chart-selection-box"
+              style={{
+                left: `${Math.min(chartSelectionOverlay.startX, chartSelectionOverlay.currentX)}px`,
+                width: `${Math.max(Math.abs(chartSelectionOverlay.currentX - chartSelectionOverlay.startX), 2)}px`,
+              }}
+              aria-hidden
+            />
+          )}
+          <ResponsiveContainer width="100%" height={chartViewportHeight}>
             <ComposedChart
+              key={`${rawVizDataKey}:${itemTransformKey}`}
               data={renderChartData}
               margin={{ top: 8, right: 0, left: 0, bottom: 4 }}
-              onMouseDown={handleChartMouseDown}
-              onMouseMove={handleChartMouseMove}
-              onMouseUp={finalizeChartSelection}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#2e3040" />
               <XAxis
@@ -1217,38 +1717,41 @@ export default function VizDashboardPage() {
               />
               {chartYAxes.map(y => (
                 <YAxis
-                  key={y.id}
+                  key={`${y.id}-${y.unitLabel}`}
                   yAxisId={y.id}
                   orientation={y.orientation}
-                  width={30}
+                  width={y.unitLabel ? 44 : 30}
                   tickFormatter={formatYAxisTick}
                   tick={{ fontSize: 9, fill: '#888aa0' }}
                   stroke="#888aa0"
                   tickLine={false}
                   axisLine={false}
+                  label={y.unitLabel ? {
+                    value: y.unitLabel,
+                    angle: y.orientation === 'left' ? -90 : 90,
+                    position: y.orientation === 'left' ? 'insideLeft' : 'insideRight',
+                    offset: 0,
+                    style: { fill: '#888aa0', fontSize: 10, textAnchor: 'middle' },
+                  } : undefined}
                 />
               ))}
               {chartTooltipEnabled && (
                 <Tooltip
+                  key={itemTransformKey}
                   isAnimationActive={CHART_ANIMATION}
                   content={(props) => (
                     <VizChartTooltip
                       active={props.active}
                       label={props.label}
                       payload={props.payload as VizChartTooltipProps['payload']}
-                      itemById={chartItemById}
+                      itemById={tooltipItemById}
+                      rawValuesAtTime={
+                        props.label != null
+                          ? rawValuesByTimeKey.get(String(props.label))
+                          : undefined
+                      }
                     />
                   )}
-                />
-              )}
-              {isChartSelecting && selectionX1 != null && selectionX2 != null && selectionX1 !== selectionX2 && (
-                <ReferenceArea
-                  x1={selectionX1}
-                  x2={selectionX2}
-                  stroke="var(--accent, #7c83ff)"
-                  strokeOpacity={0.8}
-                  fill="var(--accent, #7c83ff)"
-                  fillOpacity={0.15}
                 />
               )}
               {chartItems.map(item => renderChartShape(item))}
@@ -1260,11 +1763,15 @@ export default function VizDashboardPage() {
             {chartItems.map(item => (
               <span key={item.id} className="viz-chart-legend-item" title={item.label}>
                 <span className="viz-chart-legend-swatch" style={{ backgroundColor: item.color }} />
-                <span className="viz-chart-legend-label">{chartLabel(item)}</span>
+                <span className="viz-chart-legend-label">
+                  {chartLabel(item)}
+                  {item.y_axis.unit?.trim() ? ` (${item.y_axis.unit.trim()})` : ''}
+                </span>
               </span>
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {Object.keys(statistics).length > 0 && (
@@ -1286,13 +1793,15 @@ export default function VizDashboardPage() {
                 {visibleItems.map(item => {
                   const s = statistics[item.label];
                   if (!s) return null;
+                  const unit = item.y_axis.unit?.trim();
+                  const fmt = (v: number) => formatDisplayValue(v, unit);
                   return (
                     <tr key={item.label}>
                       <td title={item.label}>{chartLabel(item)}</td>
-                      <td>{s.min.toFixed(2)}</td>
-                      <td>{s.max.toFixed(2)}</td>
-                      <td>{s.avg.toFixed(2)}</td>
-                      <td>{typeof s.last === 'number' ? s.last.toFixed(2) : s.last}</td>
+                      <td>{fmt(s.min)}</td>
+                      <td>{fmt(s.max)}</td>
+                      <td>{fmt(s.avg)}</td>
+                      <td>{typeof s.last === 'number' ? fmt(s.last) : s.last}</td>
                       <td>{s.count}</td>
                     </tr>
                   );
