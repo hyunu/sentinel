@@ -6,12 +6,14 @@ import (
 
 	"github.com/hyunu/sentinel/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
-	vizDefaultPointLimit = 8000
-	vizMaxPointLimit     = 10000
+	vizDefaultPointLimit  = 8000
+	vizMaxPointLimit      = 10000
+	vizFullLoadPointLimit = 500000
 )
 
 type vizDataPoint struct {
@@ -23,6 +25,12 @@ type vizQueryMeta struct {
 	TotalMatched int64 `json:"total_matched"`
 	Returned     int   `json:"returned"`
 	Downsampled  bool  `json:"downsampled"`
+}
+
+type vizSampleDoc struct {
+	Timestamp    time.Time              `bson:"timestamp"`
+	ParsedFields map[string]interface{} `bson:"parsed_fields"`
+	Total        int64                  `bson:"total"`
 }
 
 func extractVizValue(v interface{}) (float64, bool) {
@@ -44,14 +52,29 @@ func normalizeVizPointLimit(limit int) int {
 	if limit <= 0 {
 		return vizDefaultPointLimit
 	}
-	if limit > vizMaxPointLimit {
-		return vizMaxPointLimit
+	if limit > vizFullLoadPointLimit {
+		return vizFullLoadPointLimit
 	}
 	return limit
 }
 
 func queryTimeoutForVizLimit(limit int) time.Duration {
 	return 30 * time.Second
+}
+
+func vizValuesFromDoc(d *vizSampleDoc, items []models.VizItem) map[string]interface{} {
+	vals := make(map[string]interface{})
+	if d.ParsedFields == nil {
+		return vals
+	}
+	for _, item := range items {
+		if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
+			if fv, ok := extractVizValue(v); ok {
+				vals[item.Label] = fv
+			}
+		}
+	}
+	return vals
 }
 
 func (h *Handler) queryVizSeries(
@@ -66,67 +89,70 @@ func (h *Handler) queryVizSeries(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
-	projection := bson.M{"timestamp": 1, "parsed_fields": 1}
-
-	total, err := h.db.UartData().CountDocuments(ctx, filter)
-	if err != nil {
-		return nil, vizQueryMeta{}, err
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}}}},
+		{{Key: "$setWindowFields", Value: bson.M{
+			"sortBy": bson.M{"timestamp": 1},
+			"output": bson.M{
+				"rowNum": bson.M{"$documentNumber": bson.M{}},
+				"total":  bson.M{"$count": bson.M{}},
+			},
+		}}},
+		{{Key: "$addFields", Value: bson.M{
+			"stride": bson.M{
+				"$max": bson.A{
+					1,
+					bson.M{"$floor": bson.M{"$divide": bson.A{"$total", effectiveLimit}}},
+				},
+			},
+		}}},
+		{{Key: "$match", Value: bson.M{
+			"$expr": bson.M{
+				"$or": bson.A{
+					bson.M{"$eq": bson.A{"$rowNum", "$total"}},
+					bson.M{"$eq": bson.A{
+						bson.M{"$mod": bson.A{
+							bson.M{"$subtract": bson.A{"$rowNum", 1}},
+							"$stride",
+						}},
+						0,
+					}},
+				},
+			},
+		}}},
+		{{Key: "$limit", Value: effectiveLimit}},
+		{{Key: "$project", Value: bson.M{
+			"timestamp":     1,
+			"parsed_fields": 1,
+			"total":         1,
+		}}},
 	}
 
-	stride := 1
-	downsampled := false
-	if total > int64(effectiveLimit) {
-		stride = int(total / int64(effectiveLimit))
-		if stride < 1 {
-			stride = 1
-		}
-		downsampled = true
-	}
-
-	opts := options.Find().
-		SetSort(bson.M{"timestamp": 1}).
-		SetProjection(projection).
-		SetBatchSize(500)
-
-	cursor, err := h.db.UartData().Find(ctx, filter, opts)
+	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetBatchSize(500))
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}
 	defer cursor.Close(ctx)
 
 	results := make([]vizDataPoint, 0, effectiveLimit)
-	idx := 0
-	totalInt := int(total)
+	var total int64
 	for cursor.Next(ctx) {
-		idx++
-		if stride > 1 && idx%stride != 0 && idx != totalInt {
-			continue
-		}
-
-		var d models.UartData
+		var d vizSampleDoc
 		if err := cursor.Decode(&d); err != nil {
 			continue
 		}
-
-		vals := make(map[string]interface{})
-		if d.ParsedFields != nil {
-			for _, item := range items {
-				if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
-					if fv, ok := extractVizValue(v); ok {
-						vals[item.Label] = fv
-					}
-				}
-			}
+		if total == 0 && d.Total > 0 {
+			total = d.Total
 		}
-		if len(vals) > 0 {
-			results = append(results, vizDataPoint{
-				Timestamp: d.Timestamp,
-				Values:    vals,
-			})
+		vals := vizValuesFromDoc(&d, items)
+		if len(vals) == 0 {
+			continue
 		}
-		if len(results) >= effectiveLimit {
-			break
-		}
+		results = append(results, vizDataPoint{
+			Timestamp: d.Timestamp,
+			Values:    vals,
+		})
 	}
 	if err := cursor.Err(); err != nil {
 		return nil, vizQueryMeta{}, err
@@ -135,7 +161,7 @@ func (h *Handler) queryVizSeries(
 	meta := vizQueryMeta{
 		TotalMatched: total,
 		Returned:     len(results),
-		Downsampled:  downsampled,
+		Downsampled:  total > int64(effectiveLimit),
 	}
 	return results, meta, nil
 }

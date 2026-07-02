@@ -72,6 +72,92 @@ export function getChartTimeMsFromClientX(
   return t0 + ratio * (t1 - t0);
 }
 
+export function findChartIndexForTime(
+  points: ChartTimePoint[],
+  timeKey: string,
+): number {
+  if (points.length === 0) return 0;
+  const exact = points.findIndex(p => p.timeKey === timeKey);
+  if (exact >= 0) return exact;
+
+  const target = Date.parse(timeKey);
+  if (!Number.isFinite(target)) return 0;
+
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midT = Date.parse(points[mid].timeKey);
+    if (midT < target) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0) {
+    const loT = Date.parse(points[lo].timeKey);
+    const prevT = Date.parse(points[lo - 1].timeKey);
+    if (Math.abs(prevT - target) < Math.abs(loT - target)) return lo - 1;
+  }
+  return lo;
+}
+
+export function findChartIndexLowerBoundForTimeMs(
+  points: ChartTimePoint[],
+  timeMs: number,
+): number {
+  if (points.length === 0) return 0;
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midT = Date.parse(points[mid].timeKey);
+    if (midT < timeMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.min(lo, points.length - 1);
+}
+
+export function findChartIndexUpperBoundForTimeMs(
+  points: ChartTimePoint[],
+  timeMs: number,
+): number {
+  if (points.length === 0) return 0;
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midT = Date.parse(points[mid].timeKey);
+    if (midT <= timeMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.max(0, lo - 1);
+}
+
+export function getChartPlotBoundsFromViewport(
+  viewportEl: HTMLElement,
+): { left: number; width: number } {
+  const gridRect = viewportEl.querySelector('.recharts-cartesian-grid rect');
+  if (gridRect instanceof SVGGraphicsElement) {
+    const viewportRect = viewportEl.getBoundingClientRect();
+    const plotRect = gridRect.getBoundingClientRect();
+    if (plotRect.width > 0) {
+      return {
+        left: plotRect.left - viewportRect.left,
+        width: plotRect.width,
+      };
+    }
+  }
+  return { left: 0, width: 0 };
+}
+
+export function getChartPlotMetricsFromViewport(
+  viewportEl: HTMLElement,
+  plotBounds: { left: number; width: number },
+): { plotLeft: number; plotWidth: number; viewportWidth: number } {
+  const rect = viewportEl.getBoundingClientRect();
+  const plotWidth = plotBounds.width > 0 ? plotBounds.width : rect.width;
+  const plotLeft = rect.left + (plotBounds.width > 0 ? plotBounds.left : 0);
+  return { plotLeft, plotWidth, viewportWidth: rect.width };
+}
+
 export function mergeWheelZoomEvent(
   prev: { deltaY: number; focusRatio: number } | null,
   deltaY: number,
