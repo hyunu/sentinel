@@ -19,6 +19,23 @@ export function formatChartAxisTime(iso: string): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/** Format elapsed milliseconds for chart time-range measurement. */
+export function formatTimeInterval(ms: number): string {
+  const abs = Math.abs(ms);
+  if (abs < 1000) return `${Math.round(abs)}ms`;
+  const sec = abs / 1000;
+  if (sec < 60) return `${sec.toFixed(sec < 10 ? 1 : 0)}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = Math.round(sec % 60);
+  if (min < 60) return remSec > 0 ? `${min}m ${remSec}s` : `${min}m`;
+  const hour = Math.floor(min / 60);
+  const remMin = min % 60;
+  if (hour < 24) return remMin > 0 ? `${hour}h ${remMin}m` : `${hour}h`;
+  const day = Math.floor(hour / 24);
+  const remHour = hour % 24;
+  return remHour > 0 ? `${day}d ${remHour}h` : `${day}d`;
+}
+
 /** Parse yyyy-MM-dd HH:mm:ss (or yyyy-MM-ddTHH:mm[:ss]) into local Date. */
 export function parseDateTime(value: string): Date | null {
   const trimmed = value.trim();

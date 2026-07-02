@@ -16,15 +16,17 @@ import {
   IconZoomReset,
   IconSearch,
 } from '../components/ChartControlIcons';
-import { formatDateTimeFromDate, formatChartAxisTime, parseDateTime } from '../utils/date';
+import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseDateTime } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 import {
   cancelChartZoomRaf,
   createChartZoomCommitter,
+  getChartTimeMsFromClientX,
   mergeWheelZoomEvent,
   shouldHideTooltipDuringInteraction,
   syncChartZoomRef,
   useChartSelectionOverlay,
+  useChartTimeMeasureOverlay,
   type ChartZoomRange,
 } from '../lib/vizChartInteraction';
 
@@ -525,6 +527,7 @@ export default function VizDashboardPage() {
   const refAreaRightRef = useRef<number | null>(null);
   const [isChartSelecting, setIsChartSelecting] = useState(false);
   const [isChartPanning, setIsChartPanning] = useState(false);
+  const [isChartMeasuring, setIsChartMeasuring] = useState(false);
   const [profiles, setProfiles] = useState<VizProfile[]>([]);
   const [savedProfileId, setSavedProfileId] = useState<string | null>(null);
   const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
@@ -564,6 +567,7 @@ export default function VizDashboardPage() {
     [],
   );
   const selectionOverlay = useChartSelectionOverlay();
+  const timeMeasureOverlay = useChartTimeMeasureOverlay();
   const panSessionRef = useRef<{
     pointerId: number;
     startX: number;
@@ -574,7 +578,14 @@ export default function VizDashboardPage() {
   const activeChartPointerRef = useRef<number | null>(null);
   const isChartSelectingRef = useRef(false);
   isChartSelectingRef.current = isChartSelecting;
+  const isChartMeasuringRef = useRef(false);
+  isChartMeasuringRef.current = isChartMeasuring;
   const renderChartDataLengthRef = useRef(0);
+  const renderChartPointsRef = useRef<ChartPoint[]>([]);
+  const measureSessionRef = useRef<{
+    pointerId: number;
+    startTimeMs: number;
+  } | null>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const liveModeRef = useRef(liveMode);
@@ -603,11 +614,15 @@ export default function VizDashboardPage() {
     setIsChartSelecting(false);
     selectionOverlay.hide();
     setIsChartPanning(false);
+    setIsChartMeasuring(false);
     isChartSelectingRef.current = false;
+    isChartMeasuringRef.current = false;
+    measureSessionRef.current = null;
+    timeMeasureOverlay.hide();
     panSessionRef.current = null;
     activeChartPointerRef.current = null;
     cancelChartZoomRaf(chartZoomRafRefs);
-  }, [rawVizDataKey, selectionOverlay.hide, chartZoomRafRefs]);
+  }, [rawVizDataKey, selectionOverlay.hide, timeMeasureOverlay.hide, chartZoomRafRefs]);
 
   useEffect(() => {
     setHoverTimeKey(null);
@@ -763,6 +778,16 @@ export default function VizDashboardPage() {
       return Math.round(ratio * (len - 1));
     };
 
+    const getTimeMsFromClientX = (clientX: number): number | null => {
+      const rect = el.getBoundingClientRect();
+      return getChartTimeMsFromClientX(
+        clientX,
+        rect.left,
+        rect.width,
+        renderChartPointsRef.current,
+      );
+    };
+
     const isZoomedIn = (): boolean => {
       const len = chartDataLengthRef.current;
       if (len === 0) return false;
@@ -813,6 +838,7 @@ export default function VizDashboardPage() {
 
       const wasPanning = panSessionRef.current?.pointerId === pointerId;
       const wasSelecting = isChartSelectingRef.current;
+      const wasMeasuring = measureSessionRef.current?.pointerId === pointerId;
 
       activeChartPointerRef.current = null;
       releasePointerCaptureSafe(pointerId);
@@ -820,6 +846,12 @@ export default function VizDashboardPage() {
       if (wasPanning) {
         panSessionRef.current = null;
         setIsChartPanning(false);
+      }
+      if (wasMeasuring) {
+        measureSessionRef.current = null;
+        isChartMeasuringRef.current = false;
+        setIsChartMeasuring(false);
+        timeMeasureOverlay.hide();
       }
       if (wasSelecting) {
         finalizeChartSelectionRef.current();
@@ -850,6 +882,37 @@ export default function VizDashboardPage() {
           isChartSelectingRef.current = false;
           setIsChartSelecting(false);
           selectionOverlay.hide();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (e.altKey) {
+        if (renderChartDataLengthRef.current === 0) return;
+        const startTimeMs = getTimeMsFromClientX(e.clientX);
+        if (startTimeMs == null) return;
+        const rect = el.getBoundingClientRect();
+        const overlayX = e.clientX - rect.left;
+        measureSessionRef.current = { pointerId: e.pointerId, startTimeMs };
+        isChartMeasuringRef.current = true;
+        isChartSelectingRef.current = false;
+        panSessionRef.current = null;
+        setIsChartMeasuring(true);
+        setIsChartSelecting(false);
+        setIsChartPanning(false);
+        selectionOverlay.hide();
+        timeMeasureOverlay.start(overlayX);
+        activeChartPointerRef.current = e.pointerId;
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          activeChartPointerRef.current = null;
+          measureSessionRef.current = null;
+          isChartMeasuringRef.current = false;
+          setIsChartMeasuring(false);
+          timeMeasureOverlay.hide();
           return;
         }
         e.preventDefault();
@@ -900,6 +963,19 @@ export default function VizDashboardPage() {
         e.preventDefault();
         return;
       }
+      if (measureSessionRef.current?.pointerId === e.pointerId) {
+        const endTimeMs = getTimeMsFromClientX(e.clientX);
+        if (endTimeMs != null) {
+          const durationMs = Math.abs(endTimeMs - measureSessionRef.current.startTimeMs);
+          const rect = el.getBoundingClientRect();
+          timeMeasureOverlay.move(
+            e.clientX - rect.left,
+            formatTimeInterval(durationMs),
+          );
+        }
+        e.preventDefault();
+        return;
+      }
       if (!isChartSelectingRef.current) return;
 
       const rect = el.getBoundingClientRect();
@@ -930,6 +1006,12 @@ export default function VizDashboardPage() {
       if (panSessionRef.current?.pointerId === e.pointerId) {
         panSessionRef.current = null;
         setIsChartPanning(false);
+      }
+      if (measureSessionRef.current?.pointerId === e.pointerId) {
+        measureSessionRef.current = null;
+        isChartMeasuringRef.current = false;
+        setIsChartMeasuring(false);
+        timeMeasureOverlay.hide();
       }
       if (isChartSelectingRef.current) {
         isChartSelectingRef.current = false;
@@ -1419,6 +1501,7 @@ export default function VizDashboardPage() {
   );
   const renderChartData = chartRender.points;
   renderChartDataLengthRef.current = renderChartData.length;
+  renderChartPointsRef.current = renderChartData;
 
   const chartZoomActive = chartZoom != null && displayChartData.length < chartData.length;
 
@@ -1491,11 +1574,11 @@ export default function VizDashboardPage() {
   }, []);
 
   const handleChartMouseMove = useCallback((state: { activeLabel?: string | number }) => {
-    if (isChartPanning || isChartSelecting) return;
+    if (isChartPanning || isChartSelecting || isChartMeasuring) return;
     if (state?.activeLabel != null) {
       setHoverTimeKey(String(state.activeLabel));
     }
-  }, [isChartPanning, isChartSelecting]);
+  }, [isChartPanning, isChartSelecting, isChartMeasuring]);
 
   const yAxisOptions = useMemo(() => {
     const ids = new Set(PRESET_Y_AXES.map(a => a.id));
@@ -2105,16 +2188,17 @@ export default function VizDashboardPage() {
         <div className="viz-chart-panel">
         {!liveMode && displayChartData.length > 0 && (
           <p className="viz-chart-zoom-hint muted">
-            Shift+drag: zoom region · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset
+            Shift+drag: zoom region · Alt+drag: measure time · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset
           </p>
         )}
         <div
           ref={chartViewportRef}
-          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
+          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
           tabIndex={-1}
           onDoubleClick={liveMode ? undefined : resetChartZoom}
         >
           {selectionOverlay.overlayNode}
+          {timeMeasureOverlay.overlayNode}
           <ResponsiveContainer width="100%" height={chartViewportHeight}>
             <ComposedChart
               key={`${rawVizDataKey}:${itemTransformKey}`}
@@ -2153,7 +2237,7 @@ export default function VizDashboardPage() {
                   } : undefined}
                 />
               ))}
-              {chartTooltipEnabled && !shouldHideTooltipDuringInteraction(isChartPanning, isChartSelecting) && (
+              {chartTooltipEnabled && !shouldHideTooltipDuringInteraction(isChartPanning, isChartSelecting, isChartMeasuring) && (
                 <Tooltip
                   key={itemTransformKey}
                   isAnimationActive={CHART_ANIMATION}

@@ -1485,8 +1485,41 @@ tbody tr:last-child td {
   right: -1px;
 }
 
-.viz-chart-viewport.zoomed:not(.panning):not(.selecting) {
+.viz-chart-measure-box {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px dashed rgba(45, 212, 191, 0.85);
+  border-radius: 3px;
+  background: rgba(45, 212, 191, 0.1);
+}
+
+.viz-chart-measure-label {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 17, 26, 0.88);
+  border: 1px solid rgba(45, 212, 191, 0.55);
+  color: #5eead4;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.viz-chart-viewport.zoomed:not(.panning):not(.selecting):not(.measuring) {
   cursor: grab;
+}
+
+.viz-chart-viewport.measuring {
+  cursor: crosshair;
 }
 
 .viz-chart-viewport.panning {
@@ -1494,7 +1527,8 @@ tbody tr:last-child td {
 }
 
 .viz-chart-viewport.panning .recharts-wrapper,
-.viz-chart-viewport.selecting .recharts-wrapper {
+.viz-chart-viewport.selecting .recharts-wrapper,
+.viz-chart-viewport.measuring .recharts-wrapper {
   pointer-events: none;
 }
 
