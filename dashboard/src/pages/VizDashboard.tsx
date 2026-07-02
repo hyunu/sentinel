@@ -19,14 +19,13 @@ import { formatDateTimeFromDate, formatChartAxisTime, parseDateTime } from '../u
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 import {
   cancelChartZoomRaf,
-  chartViewportPerfClass,
   createChartZoomCommitter,
   mergeWheelZoomEvent,
   shouldHideTooltipDuringInteraction,
   syncChartZoomRef,
   useChartSelectionOverlay,
   type ChartZoomRange,
-} from '../lib/vizChartInteractionV2';
+} from '../lib/vizChartInteraction';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
@@ -2028,7 +2027,7 @@ export default function VizDashboardPage() {
         )}
         <div
           ref={chartViewportRef}
-          className={`viz-chart-viewport${chartViewportPerfClass()}${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
+          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
           tabIndex={-1}
           onDoubleClick={liveMode ? undefined : resetChartZoom}
         >

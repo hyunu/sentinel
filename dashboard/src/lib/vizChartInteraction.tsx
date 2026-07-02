@@ -1,23 +1,16 @@
 /**
- * Visualization 차트 인터랙션 2차 성능 개선.
- *
- * 1차(커밋 기준): Shift+드래그 줌, 드래그 pan, 픽셀 선택 오버레이(React state), pointer capture.
- * 2차(본 모듈): RAF 줌 배치, startTransition, DOM 선택 오버레이, 휠 delta 누적,
- *               pan/선택 중 tooltip·pointer-events 차단.
- *
- * 2차를 끄려면 VIZ_CHART_INTERACTION_V2 = false 로 변경하세요.
+ * Visualization 차트 줌/팬/선택 인터랙션.
+ * RAF 줌 배치, startTransition, DOM 선택 오버레이, 휠 delta 누적,
+ * pan/선택 중 tooltip·pointer-events 차단.
  */
 import {
   useCallback,
   useMemo,
   useRef,
-  useState,
   startTransition,
   type MutableRefObject,
   type ReactNode,
 } from 'react';
-
-export const VIZ_CHART_INTERACTION_V2 = true;
 
 export interface ChartZoomRange {
   start: number;
@@ -31,18 +24,14 @@ export interface ChartZoomRafRefs {
   rafRef: MutableRefObject<number | null>;
 }
 
-export function chartViewportPerfClass(): string {
-  return VIZ_CHART_INTERACTION_V2 ? ' perf-v2' : '';
-}
-
 export function shouldHideTooltipDuringInteraction(
   isPanning: boolean,
   isSelecting: boolean,
 ): boolean {
-  return VIZ_CHART_INTERACTION_V2 && (isPanning || isSelecting);
+  return isPanning || isSelecting;
 }
 
-export function updateSelectionOverlayEl(
+function updateSelectionOverlayEl(
   el: HTMLDivElement | null,
   startX: number,
   currentX: number,
@@ -57,9 +46,7 @@ export function mergeWheelZoomEvent(
   deltaY: number,
   focusRatio: number,
 ): { deltaY: number; focusRatio: number } {
-  if (!VIZ_CHART_INTERACTION_V2 || !prev) {
-    return { deltaY, focusRatio };
-  }
+  if (!prev) return { deltaY, focusRatio };
   return { deltaY: prev.deltaY + deltaY, focusRatio };
 }
 
@@ -76,13 +63,6 @@ export function createChartZoomCommitter(
   setChartZoom: ChartZoomSetter,
   rafRefs: ChartZoomRafRefs,
 ): ChartZoomSetter {
-  if (!VIZ_CHART_INTERACTION_V2) {
-    return (zoom) => {
-      chartZoomRef.current = zoom;
-      setChartZoom(zoom);
-    };
-  }
-
   return (zoom) => {
     chartZoomRef.current = zoom;
     rafRefs.pendingRef.current = zoom;
@@ -101,14 +81,7 @@ export function syncChartZoomRef(
   chartZoomRef: MutableRefObject<ChartZoomRange | null>,
   zoom: ChartZoomRange | null,
 ): void {
-  if (VIZ_CHART_INTERACTION_V2) {
-    chartZoomRef.current = zoom;
-  }
-}
-
-interface SelectionOverlayState {
-  startX: number;
-  currentX: number;
+  chartZoomRef.current = zoom;
 }
 
 export interface ChartSelectionOverlayApi {
@@ -121,60 +94,32 @@ export interface ChartSelectionOverlayApi {
 export function useChartSelectionOverlay(): ChartSelectionOverlayApi {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const startXRef = useRef(0);
-  const [v1Overlay, setV1Overlay] = useState<SelectionOverlayState | null>(null);
 
   const start = useCallback((startX: number) => {
-    if (VIZ_CHART_INTERACTION_V2) {
-      startXRef.current = startX;
-      const box = overlayRef.current;
-      if (box) {
-        box.hidden = false;
-        updateSelectionOverlayEl(box, startX, startX);
-      }
-      return;
+    startXRef.current = startX;
+    const box = overlayRef.current;
+    if (box) {
+      box.hidden = false;
+      updateSelectionOverlayEl(box, startX, startX);
     }
-    setV1Overlay({ startX, currentX: startX });
   }, []);
 
   const move = useCallback((currentX: number) => {
-    if (VIZ_CHART_INTERACTION_V2) {
-      updateSelectionOverlayEl(overlayRef.current, startXRef.current, currentX);
-      return;
-    }
-    setV1Overlay(prev => (prev ? { ...prev, currentX } : null));
+    updateSelectionOverlayEl(overlayRef.current, startXRef.current, currentX);
   }, []);
 
   const hide = useCallback(() => {
-    if (VIZ_CHART_INTERACTION_V2) {
-      if (overlayRef.current) overlayRef.current.hidden = true;
-      return;
-    }
-    setV1Overlay(null);
+    if (overlayRef.current) overlayRef.current.hidden = true;
   }, []);
 
-  const overlayNode = useMemo((): ReactNode => {
-    if (VIZ_CHART_INTERACTION_V2) {
-      return (
-        <div
-          ref={overlayRef}
-          className="viz-chart-selection-box"
-          hidden
-          aria-hidden
-        />
-      );
-    }
-    if (!v1Overlay) return null;
-    return (
-      <div
-        className="viz-chart-selection-box"
-        style={{
-          left: `${Math.min(v1Overlay.startX, v1Overlay.currentX)}px`,
-          width: `${Math.max(Math.abs(v1Overlay.currentX - v1Overlay.startX), 2)}px`,
-        }}
-        aria-hidden
-      />
-    );
-  }, [v1Overlay]);
+  const overlayNode = useMemo((): ReactNode => (
+    <div
+      ref={overlayRef}
+      className="viz-chart-selection-box"
+      hidden
+      aria-hidden
+    />
+  ), []);
 
   return { start, move, hide, overlayNode };
 }

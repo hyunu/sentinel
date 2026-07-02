@@ -1481,8 +1481,8 @@ tbody tr:last-child td {
   cursor: grabbing;
 }
 
-.viz-chart-viewport.perf-v2.panning .recharts-wrapper,
-.viz-chart-viewport.perf-v2.selecting .recharts-wrapper {
+.viz-chart-viewport.panning .recharts-wrapper,
+.viz-chart-viewport.selecting .recharts-wrapper {
   pointer-events: none;
 }
 
