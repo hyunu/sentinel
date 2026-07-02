@@ -206,6 +206,28 @@ function decimateChartPoints(data: ChartPoint[], maxPoints: number): {
   return { points, decimated: true, sourceCount: data.length };
 }
 
+function computeYAxisDomain(data: ChartPoint[], itemIds: string[]): [number, number] | undefined {
+  if (itemIds.length === 0 || data.length === 0) return undefined;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const point of data) {
+    for (const id of itemIds) {
+      const v = point[id];
+      if (typeof v === 'number' && !Number.isNaN(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  if (min === max) {
+    const pad = Math.abs(min) * 0.05 || 1;
+    return [min - pad, max + pad];
+  }
+  const pad = (max - min) * 0.05;
+  return [min - pad, max + pad];
+}
+
 interface Statistics {
   min: number;
   max: number;
@@ -365,6 +387,7 @@ export default function VizDashboardPage() {
     zoomEnd: number;
     span: number;
   } | null>(null);
+  const activeChartPointerRef = useRef<number | null>(null);
   const isChartSelectingRef = useRef(false);
   isChartSelectingRef.current = isChartSelecting;
   const renderChartDataLengthRef = useRef(0);
@@ -391,6 +414,7 @@ export default function VizDashboardPage() {
     setIsChartPanning(false);
     isChartSelectingRef.current = false;
     panSessionRef.current = null;
+    activeChartPointerRef.current = null;
   }, [rawVizDataKey]);
 
   useEffect(() => {
@@ -458,6 +482,7 @@ export default function VizDashboardPage() {
     setIsChartPanning(false);
     isChartSelectingRef.current = false;
     panSessionRef.current = null;
+    activeChartPointerRef.current = null;
   }, []);
 
   const zoomChartByFactor = useCallback((factor: number, focusRatio = 0.5) => {
@@ -569,9 +594,24 @@ export default function VizDashboardPage() {
       }
     };
 
+    const releasePointerCaptureSafe = (pointerId: number) => {
+      if (el.hasPointerCapture(pointerId)) {
+        try {
+          el.releasePointerCapture(pointerId);
+        } catch {
+          // ignore — capture may already be released
+        }
+      }
+    };
+
     const endPointerSession = (pointerId: number) => {
+      if (activeChartPointerRef.current !== pointerId) return;
+
       const wasPanning = panSessionRef.current?.pointerId === pointerId;
       const wasSelecting = isChartSelectingRef.current;
+
+      activeChartPointerRef.current = null;
+      releasePointerCaptureSafe(pointerId);
 
       if (wasPanning) {
         panSessionRef.current = null;
@@ -580,13 +620,13 @@ export default function VizDashboardPage() {
       if (wasSelecting) {
         finalizeChartSelectionRef.current();
       }
-      if (el.hasPointerCapture(pointerId)) {
-        el.releasePointerCapture(pointerId);
-      }
     };
 
     const onPointerDown = (e: PointerEvent) => {
       if (liveModeRef.current || e.button !== 0) return;
+      if (activeChartPointerRef.current != null) {
+        endPointerSession(activeChartPointerRef.current);
+      }
 
       if (e.shiftKey) {
         if (chartDataLengthRef.current === 0 || renderChartDataLengthRef.current === 0) return;
@@ -600,7 +640,16 @@ export default function VizDashboardPage() {
         setRefAreaRight(idx);
         setChartSelectionOverlay({ startX: overlayX, currentX: overlayX });
         setIsChartSelecting(true);
-        el.setPointerCapture(e.pointerId);
+        activeChartPointerRef.current = e.pointerId;
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          activeChartPointerRef.current = null;
+          isChartSelectingRef.current = false;
+          setIsChartSelecting(false);
+          setChartSelectionOverlay(null);
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -623,20 +672,36 @@ export default function VizDashboardPage() {
         setChartSelectionOverlay(null);
         setRefAreaLeft(null);
         setRefAreaRight(null);
-        el.setPointerCapture(e.pointerId);
+        activeChartPointerRef.current = e.pointerId;
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          activeChartPointerRef.current = null;
+          panSessionRef.current = null;
+          setIsChartPanning(false);
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
       }
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (activeChartPointerRef.current !== e.pointerId) return;
+
+      // pointerup missed — primary button no longer held
+      if (e.buttons === 0) {
+        endPointerSession(e.pointerId);
+        return;
+      }
+
       if (panSessionRef.current?.pointerId === e.pointerId) {
         applyPanDelta(e.clientX - panSessionRef.current.startX);
         e.preventDefault();
         return;
       }
       if (!isChartSelectingRef.current) return;
-      if (!el.hasPointerCapture(e.pointerId)) return;
+
       const rect = el.getBoundingClientRect();
       const overlayX = e.clientX - rect.left;
       const idx = getRenderIndexFromClientX(e.clientX);
@@ -647,9 +712,35 @@ export default function VizDashboardPage() {
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (!el.hasPointerCapture(e.pointerId)) return;
       endPointerSession(e.pointerId);
-      e.preventDefault();
+    };
+
+    const onWindowPointerEnd = (e: PointerEvent) => {
+      endPointerSession(e.pointerId);
+    };
+
+    const onWindowBlur = () => {
+      const pointerId = activeChartPointerRef.current;
+      if (pointerId == null) return;
+      endPointerSession(pointerId);
+    };
+
+    const onLostPointerCapture = (e: PointerEvent) => {
+      if (activeChartPointerRef.current !== e.pointerId) return;
+      activeChartPointerRef.current = null;
+      if (panSessionRef.current?.pointerId === e.pointerId) {
+        panSessionRef.current = null;
+        setIsChartPanning(false);
+      }
+      if (isChartSelectingRef.current) {
+        isChartSelectingRef.current = false;
+        setIsChartSelecting(false);
+        setChartSelectionOverlay(null);
+        setRefAreaLeft(null);
+        setRefAreaRight(null);
+        refAreaLeftRef.current = null;
+        refAreaRightRef.current = null;
+      }
     };
 
     const pointerOpts: AddEventListenerOptions = { capture: true };
@@ -657,12 +748,20 @@ export default function VizDashboardPage() {
     el.addEventListener('pointermove', onPointerMove, pointerOpts);
     el.addEventListener('pointerup', onPointerUp, pointerOpts);
     el.addEventListener('pointercancel', onPointerUp, pointerOpts);
+    el.addEventListener('lostpointercapture', onLostPointerCapture);
+    window.addEventListener('pointerup', onWindowPointerEnd);
+    window.addEventListener('pointercancel', onWindowPointerEnd);
+    window.addEventListener('blur', onWindowBlur);
 
     return () => {
       el.removeEventListener('pointerdown', onPointerDown, pointerOpts);
       el.removeEventListener('pointermove', onPointerMove, pointerOpts);
       el.removeEventListener('pointerup', onPointerUp, pointerOpts);
       el.removeEventListener('pointercancel', onPointerUp, pointerOpts);
+      el.removeEventListener('lostpointercapture', onLostPointerCapture);
+      window.removeEventListener('pointerup', onWindowPointerEnd);
+      window.removeEventListener('pointercancel', onWindowPointerEnd);
+      window.removeEventListener('blur', onWindowBlur);
     };
   }, [rawVizDataKey, liveMode]);
 
@@ -1174,6 +1273,19 @@ export default function VizDashboardPage() {
     }
     return axes;
   }, [chartItems]);
+
+  const chartYAxisDomains = useMemo(() => {
+    const leftIds = chartItems
+      .filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID)
+      .map(i => i.id);
+    const rightIds = chartItems
+      .filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID)
+      .map(i => i.id);
+    return {
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftIds),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightIds),
+    } as Record<string, [number, number] | undefined>;
+  }, [chartData, chartItems]);
 
   const resolveItemYAxisId = useCallback((item: VizItem) => (
     item.y_axis.id === SECONDARY_Y_AXIS_ID ? SECONDARY_Y_AXIS_ID : PRIMARY_Y_AXIS_ID
@@ -1721,6 +1833,8 @@ export default function VizDashboardPage() {
                   yAxisId={y.id}
                   orientation={y.orientation}
                   width={y.unitLabel ? 44 : 30}
+                  domain={chartYAxisDomains[y.id]}
+                  allowDataOverflow
                   tickFormatter={formatYAxisTick}
                   tick={{ fontSize: 9, fill: '#888aa0' }}
                   stroke="#888aa0"
