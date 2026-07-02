@@ -97,6 +97,7 @@ html {
 .viz-items-scroll::-webkit-scrollbar,
 .viz-chart-legend::-webkit-scrollbar,
 .viz-stats-scroll::-webkit-scrollbar,
+.viz-cursor-values-grid::-webkit-scrollbar,
 .chat-container::-webkit-scrollbar,
 .parse-test-output::-webkit-scrollbar,
 .field-table-wrap::-webkit-scrollbar,
@@ -111,6 +112,7 @@ pre::-webkit-scrollbar {
 .viz-items-scroll,
 .viz-chart-legend,
 .viz-stats-scroll,
+.viz-cursor-values-grid,
 .chat-container,
 .parse-test-output,
 .field-table-wrap,
@@ -583,7 +585,7 @@ tbody tr:last-child td {
   overflow: hidden;
 }
 
-.card.table-card:not(.viz-config-card) .card-header {
+.card.table-card:not(.viz-config-card):not(.viz-stats-card) .card-header {
   padding: 18px 20px 0;
   margin-bottom: 12px;
 }
@@ -711,12 +713,14 @@ tbody tr:last-child td {
 
 /* ── Visualization ── */
 
-.card.viz-config-card {
+.card.viz-config-card,
+.card.viz-stats-card {
   padding: 0;
   overflow: hidden;
 }
 
-.card.viz-config-card .card-header {
+.card.viz-config-card .card-header,
+.card.viz-stats-card .card-header {
   padding: 0 20px;
   height: 48px;
   min-height: 48px;
@@ -725,30 +729,38 @@ tbody tr:last-child td {
   box-sizing: border-box;
 }
 
-.card.viz-config-card .card-header h2 {
+.card.viz-config-card .card-header h2,
+.card.viz-stats-card .card-header h2 {
   margin: 0;
   line-height: 1;
 }
 
-.viz-config-card.is-collapsed .card-header {
+.viz-config-card.is-collapsed .card-header,
+.viz-stats-card.is-collapsed .card-header {
   margin-bottom: 0;
 }
 
-.viz-config-header {
+.viz-config-header,
+.viz-stats-header {
   margin-bottom: 0;
 }
 
-.viz-config-header-main {
+.viz-config-header-main,
+.viz-stats-header-main {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
   flex: 1;
+  height: 100%;
 }
 
-.viz-config-header-main h2 {
+.viz-config-header-main h2,
+.viz-stats-header-main h2 {
   flex-shrink: 0;
   line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .viz-config-collapse-btn {
@@ -1490,46 +1502,6 @@ tbody tr:last-child td {
   cursor: default;
 }
 
-.card.viz-stats-card {
-  padding: 0;
-  overflow: hidden;
-}
-
-.card.viz-stats-card .card-header {
-  padding: 0 20px;
-  height: 48px;
-  min-height: 48px;
-  margin-bottom: 0;
-  align-items: center;
-  box-sizing: border-box;
-}
-
-.card.viz-stats-card .card-header h2 {
-  margin: 0;
-  line-height: 1;
-}
-
-.viz-stats-card.is-collapsed .card-header {
-  margin-bottom: 0;
-}
-
-.viz-stats-header {
-  margin-bottom: 0;
-}
-
-.viz-stats-header-main {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  flex: 1;
-}
-
-.viz-stats-header-main h2 {
-  flex-shrink: 0;
-  line-height: 1;
-}
-
 .viz-stats-panel {
   background: var(--surface-inset);
   border-top: 1px solid var(--border);
@@ -1630,6 +1602,186 @@ tbody tr:last-child td {
   font-size: 10px;
   color: var(--text-muted, #888);
   font-weight: 400;
+}
+
+.viz-cursor-values {
+  margin-top: 10px;
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.viz-cursor-values-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  height: 36px;
+  min-height: 36px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.viz-cursor-values-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.viz-cursor-values-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #7c83ff);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-cursor-values-meta {
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.viz-cursor-values-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.viz-cursor-values-placeholder {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin: 0;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.viz-cursor-values-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface-inset);
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.viz-cursor-value-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  min-height: 58px;
+  box-sizing: border-box;
+}
+
+.viz-cursor-value-cell.on-chart:not(.is-favorite) {
+  border-left: 2px solid var(--accent, #7c83ff);
+  padding-left: 11px;
+}
+
+.viz-cursor-value-cell.is-favorite {
+  border-left: 2px solid #d97706;
+  padding-left: 11px;
+}
+
+.viz-cursor-value-cell.is-favorite .viz-cursor-value-name {
+  color: #d97706;
+}
+
+.viz-cursor-value-cell.is-toggleable {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.viz-cursor-value-cell.is-toggleable:hover {
+  border-color: color-mix(in srgb, var(--border) 60%, var(--text-muted) 40%);
+}
+
+.viz-cursor-value-cell.no-value {
+  opacity: 0.5;
+}
+
+.viz-cursor-value-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.viz-cursor-value-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.viz-cursor-value-name {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.viz-cursor-value-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.viz-cursor-value-main {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.viz-cursor-value-delta {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.viz-cursor-value-delta.trend-up {
+  color: #6ee7a0;
+}
+
+.viz-cursor-value-delta.trend-down {
+  color: #f87171;
 }
 
 .viz-chart-legend {

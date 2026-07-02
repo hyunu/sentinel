@@ -5,6 +5,7 @@ import {
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
+import ChartCursorValues, { buildCursorValueRows } from '../components/ChartCursorValues';
 import PageHeader from '../components/PageHeader';
 import {
   IconFullscreen,
@@ -464,6 +465,46 @@ function VizItemNumericInput({
   );
 }
 
+interface VizItemNameInputProps {
+  value: string;
+  onCommit: (value: string) => void;
+  ariaLabel: string;
+  title?: string;
+}
+
+function VizItemNameInput({ value, onCommit, ariaLabel, title }: VizItemNameInputProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  return (
+    <input
+      type="text"
+      className="viz-item-name-input"
+      value={editing ? draft : value}
+      aria-label={ariaLabel}
+      title={title}
+      onFocus={() => {
+        setDraft(value);
+        setEditing(true);
+      }}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={e => {
+        setEditing(false);
+        onCommit(e.target.value);
+      }}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        }
+        if (e.key === 'Escape') {
+          setEditing(false);
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 export default function VizDashboardPage() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
@@ -477,7 +518,7 @@ export default function VizDashboardPage() {
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
   const chartData = useMemo(
     () => toChartPoints(rawVizData, items),
-    [rawVizData, items, itemTransformKey],
+    [rawVizData, itemTransformKey],
   );
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
   const refAreaLeftRef = useRef<number | null>(null);
@@ -492,6 +533,7 @@ export default function VizDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
+  const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
   const [queryMeta, setQueryMeta] = useState<VizQueryMeta | null>(null);
   const [profileError, setProfileError] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
@@ -499,7 +541,7 @@ export default function VizDashboardPage() {
   const [profileDraftName, setProfileDraftName] = useState('');
   const [fieldTooltip, setFieldTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
-  const [statsOpen, setStatsOpen] = useState(true);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [itemFieldSearch, setItemFieldSearch] = useState('');
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
   const itemFieldSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -566,6 +608,10 @@ export default function VizDashboardPage() {
     activeChartPointerRef.current = null;
     cancelChartZoomRaf(chartZoomRafRefs);
   }, [rawVizDataKey, selectionOverlay.hide, chartZoomRafRefs]);
+
+  useEffect(() => {
+    setHoverTimeKey(null);
+  }, [rawVizDataKey]);
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -1412,6 +1458,45 @@ export default function VizDashboardPage() {
     [visibleItems],
   );
 
+  const chartItemIds = useMemo(
+    () => new Set(chartItems.map(i => i.id)),
+    [chartItems],
+  );
+
+  const hoverPrevTimeKey = useMemo(() => {
+    if (!hoverTimeKey) return undefined;
+    const idx = displayRawVizData.findIndex(r => r.timestamp === hoverTimeKey);
+    if (idx <= 0) return undefined;
+    return displayRawVizData[idx - 1].timestamp;
+  }, [hoverTimeKey, displayRawVizData]);
+
+  const cursorValueRows = useMemo(() => {
+    const rows = buildCursorValueRows(
+      items,
+      hoverTimeKey ? rawValuesByTimeKey.get(hoverTimeKey) : undefined,
+      hoverPrevTimeKey ? rawValuesByTimeKey.get(hoverPrevTimeKey) : undefined,
+      chartItemIds,
+    );
+    return rows.sort((a, b) => {
+      const aFav = !!a.item.favorite;
+      const bFav = !!b.item.favorite;
+      if (aFav !== bFav) return aFav ? -1 : 1;
+      if (a.onChart !== b.onChart) return a.onChart ? -1 : 1;
+      return chartLabel(a.item).localeCompare(chartLabel(b.item));
+    });
+  }, [items, hoverTimeKey, hoverPrevTimeKey, rawValuesByTimeKey, chartItemIds]);
+
+  const toggleItemFavorite = useCallback((id: string) => {
+    setItems(prev => prev.map(i => (i.id === id ? { ...i, favorite: !i.favorite } : i)));
+  }, []);
+
+  const handleChartMouseMove = useCallback((state: { activeLabel?: string | number }) => {
+    if (isChartPanning || isChartSelecting) return;
+    if (state?.activeLabel != null) {
+      setHoverTimeKey(String(state.activeLabel));
+    }
+  }, [isChartPanning, isChartSelecting]);
+
   const yAxisOptions = useMemo(() => {
     const ids = new Set(PRESET_Y_AXES.map(a => a.id));
     for (const item of items) ids.add(item.y_axis.id);
@@ -1874,13 +1959,11 @@ export default function VizDashboardPage() {
                 <tr key={item.id}>
                   <td><input type="checkbox" checked={item.visible} onChange={() => toggleVisibility(item.id)} /></td>
                   <td className="viz-name-col">
-                    <input
-                      type="text"
-                      className="viz-item-name-input"
+                    <VizItemNameInput
                       value={item.short_label ?? ''}
-                      onChange={e => updateItem(item.id, 'short_label', e.target.value)}
+                      onCommit={v => updateItem(item.id, 'short_label', v)}
                       title="Name shown on chart"
-                      aria-label={`Chart name for ${item.label}`}
+                      ariaLabel={`Chart name for ${item.label}`}
                     />
                   </td>
                   <td
@@ -2037,6 +2120,7 @@ export default function VizDashboardPage() {
               key={`${rawVizDataKey}:${itemTransformKey}`}
               data={renderChartData}
               margin={{ top: 8, right: 0, left: 0, bottom: 4 }}
+              onMouseMove={handleChartMouseMove}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#2e3040" />
               <XAxis
@@ -2102,6 +2186,14 @@ export default function VizDashboardPage() {
             totalMatched={queryMeta?.total_matched}
             returned={queryMeta?.returned ?? chartData.length}
             downsampled={queryMeta?.downsampled}
+          />
+        )}
+        {items.length > 0 && renderChartData.length > 0 && (
+          <ChartCursorValues
+            timeKey={hoverTimeKey}
+            formatTime={formatChartAxisTime}
+            rows={cursorValueRows}
+            onToggleFavorite={toggleItemFavorite}
           />
         )}
         {chartItems.length > 0 && (

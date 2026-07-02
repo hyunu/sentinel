@@ -112,6 +112,7 @@ export interface VizItem {
   y_axis: YAxisConfig;
   offset: number;
   weight: number;
+  favorite?: boolean;
 }
 
 export interface VizProfile {

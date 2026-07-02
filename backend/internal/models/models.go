@@ -124,6 +124,7 @@ type VizItem struct {
 	YAxis     YAxisConfig     `json:"y_axis" bson:"y_axis"`
 	Offset    float64         `json:"offset" bson:"offset"`
 	Weight    float64         `json:"weight" bson:"weight"`
+	Favorite  bool            `json:"favorite,omitempty" bson:"favorite,omitempty"`
 }
 
 type FieldRef struct {
