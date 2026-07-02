@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	vizDefaultPointLimit = 2000
-	vizMaxPointLimit     = 5000
+	vizDefaultPointLimit = 8000
+	vizMaxPointLimit     = 10000
 )
 
 type vizDataPoint struct {
@@ -40,23 +40,17 @@ func extractVizValue(v interface{}) (float64, bool) {
 	}
 }
 
-func normalizeVizPointLimit(limit int) (effectiveLimit int, unlimited bool) {
-	if limit == 0 {
-		return 0, true
-	}
-	if limit < 0 {
-		return vizDefaultPointLimit, false
+func normalizeVizPointLimit(limit int) int {
+	if limit <= 0 {
+		return vizDefaultPointLimit
 	}
 	if limit > vizMaxPointLimit {
-		return vizMaxPointLimit, false
+		return vizMaxPointLimit
 	}
-	return limit, false
+	return limit
 }
 
 func queryTimeoutForVizLimit(limit int) time.Duration {
-	if limit == 0 {
-		return 120 * time.Second
-	}
 	return 30 * time.Second
 }
 
@@ -66,7 +60,7 @@ func (h *Handler) queryVizSeries(
 	items []models.VizItem,
 	limit int,
 ) ([]vizDataPoint, vizQueryMeta, error) {
-	effectiveLimit, unlimited := normalizeVizPointLimit(limit)
+	effectiveLimit := normalizeVizPointLimit(limit)
 
 	if len(items) == 0 {
 		return []vizDataPoint{}, vizQueryMeta{}, nil
@@ -81,7 +75,7 @@ func (h *Handler) queryVizSeries(
 
 	stride := 1
 	downsampled := false
-	if !unlimited && total > int64(effectiveLimit) {
+	if total > int64(effectiveLimit) {
 		stride = int(total / int64(effectiveLimit))
 		if stride < 1 {
 			stride = 1
@@ -100,14 +94,7 @@ func (h *Handler) queryVizSeries(
 	}
 	defer cursor.Close(ctx)
 
-	capacity := effectiveLimit
-	if unlimited {
-		capacity = int(total)
-		if capacity < 64 {
-			capacity = 64
-		}
-	}
-	results := make([]vizDataPoint, 0, capacity)
+	results := make([]vizDataPoint, 0, effectiveLimit)
 	idx := 0
 	totalInt := int(total)
 	for cursor.Next(ctx) {
@@ -137,7 +124,7 @@ func (h *Handler) queryVizSeries(
 				Values:    vals,
 			})
 		}
-		if !unlimited && len(results) >= effectiveLimit {
+		if len(results) >= effectiveLimit {
 			break
 		}
 	}
