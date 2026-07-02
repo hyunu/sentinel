@@ -121,14 +121,12 @@ export default function ChartCursorValues({
                   onMouseDown={onToggleFavorite ? suppressDoubleClickSelect : undefined}
                   onDoubleClick={onToggleFavorite ? e => handleToggleFavorite(e, item.id) : undefined}
                 >
-                  <div className="viz-cursor-value-top">
-                    <span
-                      className="viz-cursor-value-swatch"
-                      style={{ backgroundColor: item.color }}
-                      aria-hidden
-                    />
-                    <span className="viz-cursor-value-name">{name}</span>
-                  </div>
+                  <span
+                    className="viz-cursor-value-swatch"
+                    style={{ backgroundColor: item.color }}
+                    aria-hidden
+                  />
+                  <span className="viz-cursor-value-name">{name}</span>
                   <div className="viz-cursor-value-line">
                     <span className="viz-cursor-value-main">
                       {hasValue ? formatValue(raw, item) : '—'}
