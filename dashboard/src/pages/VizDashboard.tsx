@@ -37,8 +37,6 @@ const POLL_INTERVAL = 3000;
 const MIN_CHART_ZOOM_POINTS = 10;
 const CHART_RENDER_MAX = 8000;
 const CHART_ANIMATION = false;
-const ZOOM_DETAIL_FETCH_RATIO = 0.65;
-const ZOOM_DETAIL_DEBOUNCE_MS = 300;
 
 function formatDisplayValue(value: number, unit?: string): string {
   const text = value.toLocaleString();
@@ -510,13 +508,6 @@ export default function VizDashboardPage() {
   const [chartViewportHeight, setChartViewportHeight] = useState(600);
   const lastTimestampRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const overviewVizDataRef = useRef<VizDataRow[]>([]);
-  const overviewQueryMetaRef = useRef<VizQueryMeta | null>(null);
-  const zoomDetailTimerRef = useRef<number | null>(null);
-  const zoomDetailRequestRef = useRef(0);
-  const [vizDetailView, setVizDetailView] = useState(false);
-  const [vizDetailLoading, setVizDetailLoading] = useState(false);
-  const [overviewChartData, setOverviewChartData] = useState<ChartPoint[]>([]);
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
   const chartCardRef = useRef<HTMLDivElement | null>(null);
   const chartZoomRef = useRef<ChartZoomRange | null>(null);
@@ -635,12 +626,6 @@ export default function VizDashboardPage() {
   }, [chartData.length]);
 
   const resetChartZoom = useCallback(() => {
-    if (vizDetailView && overviewVizDataRef.current.length > 0) {
-      setVizDetailView(false);
-      setVizDetailLoading(false);
-      setRawVizData(overviewVizDataRef.current);
-      setQueryMeta(overviewQueryMetaRef.current);
-    }
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
     refAreaLeftRef.current = null;
@@ -651,7 +636,7 @@ export default function VizDashboardPage() {
     isChartSelectingRef.current = false;
     panSessionRef.current = null;
     activeChartPointerRef.current = null;
-  }, [selectionOverlay.hide, vizDetailView]);
+  }, [selectionOverlay.hide]);
 
   const zoomChartByFactor = useCallback((factor: number, focusRatio = 0.5) => {
     if (chartData.length === 0 || liveMode) return;
@@ -1068,19 +1053,9 @@ export default function VizDashboardPage() {
   }, [selectedBoard, boards]);
 
   const applyOverviewResult = useCallback((data: VizDataRow[], meta: VizQueryMeta | null) => {
-    overviewVizDataRef.current = data;
-    overviewQueryMetaRef.current = meta;
-    setVizDetailView(false);
-    setVizDetailLoading(false);
-    setOverviewChartData(toChartPoints(data, itemsRef.current));
     setRawVizData(data);
     setQueryMeta(meta);
   }, []);
-
-  useEffect(() => {
-    if (overviewVizDataRef.current.length === 0) return;
-    setOverviewChartData(toChartPoints(overviewVizDataRef.current, items));
-  }, [items, itemTransformKey]);
 
   const loadProfile = useCallback(async (id: string) => {
     setProfileError('');
@@ -1153,11 +1128,6 @@ export default function VizDashboardPage() {
 
   const fetchAll = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
-    zoomDetailRequestRef.current += 1;
-    if (zoomDetailTimerRef.current != null) {
-      clearTimeout(zoomDetailTimerRef.current);
-      zoomDetailTimerRef.current = null;
-    }
     setLoading(true);
     try {
       const result = await api.viz.queryItems({
@@ -1174,67 +1144,6 @@ export default function VizDashboardPage() {
       setLoading(false);
     }
   }, [selectedBoard, buildTimeRange, applyOverviewResult]);
-
-  useEffect(() => {
-    if (zoomDetailTimerRef.current != null) {
-      clearTimeout(zoomDetailTimerRef.current);
-      zoomDetailTimerRef.current = null;
-    }
-    if (liveMode || !chartZoom || !selectedBoard || chartData.length === 0) return;
-
-    const activeMeta = vizDetailView ? queryMeta : (overviewQueryMetaRef.current ?? queryMeta);
-    if (!activeMeta?.downsampled) return;
-    if (activeMeta.total_matched > 0 && activeMeta.returned >= activeMeta.total_matched) return;
-
-    const { start, end } = clampChartZoom(chartZoom.start, chartZoom.end, chartData.length);
-    const span = end - start + 1;
-    if (span >= chartData.length * ZOOM_DETAIL_FETCH_RATIO) return;
-
-    zoomDetailTimerRef.current = window.setTimeout(async () => {
-      zoomDetailTimerRef.current = null;
-      const startTs = rawVizData[start]?.timestamp;
-      const endTs = rawVizData[end]?.timestamp;
-      if (!startTs || !endTs) return;
-
-      const reqId = ++zoomDetailRequestRef.current;
-      setVizDetailLoading(true);
-      try {
-        const result = await api.viz.queryItems({
-          board_id: selectedBoard,
-          items: itemsForDataQuery(itemsRef.current),
-          time_range: { start: startTs, end: endTs },
-          limit: MAX_POINTS,
-        });
-        if (reqId !== zoomDetailRequestRef.current) return;
-        setVizDetailView(true);
-        setRawVizData(result.data);
-        setQueryMeta(result.meta ?? null);
-        syncChartZoomRef(chartZoomRef, null);
-        setChartZoom(null);
-      } catch {
-        // ignore detail fetch errors
-      } finally {
-        if (reqId === zoomDetailRequestRef.current) {
-          setVizDetailLoading(false);
-        }
-      }
-    }, ZOOM_DETAIL_DEBOUNCE_MS);
-
-    return () => {
-      if (zoomDetailTimerRef.current != null) {
-        clearTimeout(zoomDetailTimerRef.current);
-        zoomDetailTimerRef.current = null;
-      }
-    };
-  }, [
-    chartZoom,
-    chartData.length,
-    rawVizData,
-    liveMode,
-    selectedBoard,
-    queryMeta,
-    vizDetailView,
-  ]);
 
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
@@ -1484,12 +1393,6 @@ export default function VizDashboardPage() {
     if (chartZoomActive) {
       parts.push('zoomed');
     }
-    if (vizDetailView) {
-      parts.push('detail view');
-    }
-    if (vizDetailLoading) {
-      parts.push('loading detail…');
-    }
     if (liveMode) {
       parts.push(`polling every ${POLL_INTERVAL / 1000}s`);
     }
@@ -1503,8 +1406,6 @@ export default function VizDashboardPage() {
     visibleItems.length,
     chartZoomActive,
     liveMode,
-    vizDetailView,
-    vizDetailLoading,
   ]);
 
   const tooltipItemById = useMemo(
@@ -1537,7 +1438,6 @@ export default function VizDashboardPage() {
   }, [chartItems]);
 
   const chartYAxisDomains = useMemo(() => {
-    const yAxisSource = vizDetailView && overviewChartData.length > 0 ? overviewChartData : chartData;
     const leftIds = chartItems
       .filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID)
       .map(i => i.id);
@@ -1545,10 +1445,10 @@ export default function VizDashboardPage() {
       .filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID)
       .map(i => i.id);
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(yAxisSource, leftIds),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(yAxisSource, rightIds),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftIds),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightIds),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, chartItems, vizDetailView, overviewChartData]);
+  }, [chartData, chartItems]);
 
   const resolveItemYAxisId = useCallback((item: VizItem) => (
     item.y_axis.id === SECONDARY_Y_AXIS_ID ? SECONDARY_Y_AXIS_ID : PRIMARY_Y_AXIS_ID
@@ -2098,7 +1998,7 @@ export default function VizDashboardPage() {
                 type="button"
                 className="viz-chart-icon-btn"
                 onClick={resetChartZoom}
-                disabled={liveMode || (!chartZoomActive && !vizDetailView)}
+                disabled={liveMode || !chartZoomActive}
                 title="Reset zoom"
                 aria-label="Reset zoom"
               >
@@ -2123,7 +2023,7 @@ export default function VizDashboardPage() {
         <div className="viz-chart-panel">
         {!liveMode && displayChartData.length > 0 && (
           <p className="viz-chart-zoom-hint muted">
-            Shift+drag: zoom region · Drag: pan (zoomed) · Horizontal scroll / Shift+wheel: pan (zoomed) · Wheel: zoom · Double-click: reset
+            Shift+drag: zoom region · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset
           </p>
         )}
         <div
@@ -2193,7 +2093,7 @@ export default function VizDashboardPage() {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        {chartZoomActive && !liveMode && chartZoom && (
+        {chartZoom != null && !liveMode && (
           <ChartZoomNavigator
             chartData={chartData}
             chartZoom={chartZoom}
