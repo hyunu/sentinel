@@ -212,6 +212,20 @@
     "tooltipToggle": "Show value popup on hover",
     "zoomHint": "Shift+drag: zoom region · Alt+drag: measure time · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset",
     "statistics": "Statistics",
+    "valuePanel": {
+      "title": "Field Values",
+      "placeholder": "Hover the chart to see values at that time for all items.",
+      "noItems": "No items registered.",
+      "fieldsMeta": "{{withValue}}/{{total}} fields",
+      "showItem": "Show {{name}} on chart",
+      "hideItem": "Hide {{name}} from chart",
+      "toggleFavorite": "Double-click: pin to top",
+      "unpinFavorite": "Double-click: unpin"
+    },
+    "seriesGroup": {
+      "panelToggles": "Chart panel options",
+      "valuesToggle": "Show or hide field values"
+    },
     "min": "Min",
     "max": "Max",
     "avg": "Avg",

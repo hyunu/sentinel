@@ -27,7 +27,8 @@ export const CHART_MANUAL_OVERVIEW: ManualBlock[] = [
     kind: 'ul',
     items: [
       l('Hover the chart to see values at a time (toggle with the tooltip button).', '차트에 마우스를 올리면 해당 시각의 값을 볼 수 있습니다(툴팁 버튼으로 켜고 끔).'),
-      l('The panel below the chart lists cursor values and favorites.', '차트 아래 패널에서 커서 기준 값과 favorite를 확인합니다.'),
+      l('Use the chart header icons next to zoom: toggle hover popup and field values.', '차트 제목 우측 줌 옆 아이콘으로 호버 팝업·필드 값을 켜고 끌 수 있습니다.'),
+      l('Field values toggle chart series visibility (same as Configuration checkboxes).', '필드 값의 눈 아이콘은 Configuration 체크박스와 동일하게 차트 시리즈 표시를 바꿉니다.'),
       l('Statistics summarizes min / max / avg for visible series.', 'Statistics에서 표시 중인 시리즈의 min / max / avg를 봅니다.'),
     ],
   },

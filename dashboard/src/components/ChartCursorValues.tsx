@@ -1,6 +1,8 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
 import type { VizItem } from '../api';
+import { IconEye, IconEyeOff } from './ChartControlIcons';
+import { useTranslation } from '../i18n';
 
 export interface CursorValueRow {
   item: VizItem;
@@ -13,8 +15,9 @@ interface ChartCursorValuesProps {
   timeKey: string | null;
   formatTime: (iso: string) => string;
   rows: CursorValueRow[];
-  placeholder?: string;
+  onToggleVisibility?: (itemId: string) => void;
   onToggleFavorite?: (itemId: string) => void;
+  embedded?: boolean;
 }
 
 function applyTransform(raw: number, item: VizItem): number {
@@ -57,9 +60,11 @@ export default function ChartCursorValues({
   timeKey,
   formatTime,
   rows,
-  placeholder = '차트에 마우스를 올리면 해당 시점의 모든 항목 값이 표시됩니다.',
+  onToggleVisibility,
   onToggleFavorite,
+  embedded = false,
 }: ChartCursorValuesProps) {
+  const { t } = useTranslation();
   const withValue = rows.filter(r => typeof r.raw === 'number');
   const empty = rows.length === 0;
   const gridRef = useRef<HTMLDivElement>(null);
@@ -71,56 +76,86 @@ export default function ChartCursorValues({
     pendingScrollTopRef.current = null;
   }, [rows]);
 
+  const preserveScroll = useCallback(() => {
+    if (gridRef.current) {
+      pendingScrollTopRef.current = gridRef.current.scrollTop;
+    }
+  }, []);
+
   const handleToggleFavorite = useCallback((event: MouseEvent<HTMLDivElement>, itemId: string) => {
     event.preventDefault();
     event.stopPropagation();
     if (!onToggleFavorite) return;
-    if (gridRef.current) {
-      pendingScrollTopRef.current = gridRef.current.scrollTop;
-    }
+    preserveScroll();
     onToggleFavorite(itemId);
-  }, [onToggleFavorite]);
+  }, [onToggleFavorite, preserveScroll]);
+
+  const handleToggleVisibility = useCallback((event: MouseEvent<HTMLButtonElement>, itemId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!onToggleVisibility) return;
+    preserveScroll();
+    onToggleVisibility(itemId);
+  }, [onToggleVisibility, preserveScroll]);
 
   const suppressDoubleClickSelect = useCallback((event: MouseEvent<HTMLDivElement>) => {
     if (event.detail > 1) event.preventDefault();
   }, []);
 
   return (
-    <section className="viz-cursor-values" aria-label="Cursor field values">
+    <section
+      className={`viz-cursor-values${embedded ? ' is-embedded' : ''}`}
+      aria-label={t('viz.valuePanel.title')}
+    >
       <div className="viz-cursor-values-head">
-        <span className="viz-cursor-values-title">Cursor</span>
+        <span className="viz-cursor-values-title">{t('viz.valuePanel.title')}</span>
         <time className="viz-cursor-values-time" dateTime={timeKey ?? undefined}>
           {timeKey ? formatTime(timeKey) : '—'}
         </time>
         {timeKey && (
           <span className="viz-cursor-values-meta muted">
-            {withValue.length}/{rows.length} fields
+            {t('viz.valuePanel.fieldsMeta', { withValue: withValue.length, total: rows.length })}
           </span>
         )}
       </div>
       <div className="viz-cursor-values-body">
         {!timeKey ? (
-          <p className="viz-cursor-values-placeholder muted">{placeholder}</p>
+          <p className="viz-cursor-values-placeholder muted">{t('viz.valuePanel.placeholder')}</p>
         ) : empty ? (
-          <p className="viz-cursor-values-placeholder muted">등록된 항목이 없습니다.</p>
+          <p className="viz-cursor-values-placeholder muted">{t('viz.valuePanel.noItems')}</p>
         ) : (
           <div className="viz-cursor-values-grid" role="list" ref={gridRef}>
             {rows.map(({ item, raw, prevRaw, onChart }) => {
               const name = chartLabel(item);
               const hasValue = typeof raw === 'number';
               const isFavorite = !!item.favorite;
+              const isVisible = item.visible;
               const delta = hasValue ? formatDelta(raw, prevRaw, item) : { text: '', trend: 'none' as const };
               const titleParts = [item.field_ref.field_name || item.label];
-              if (onToggleFavorite) titleParts.push(isFavorite ? '더블클릭: 우선배치 해제' : '더블클릭: 우선배치');
+              if (onToggleFavorite) {
+                titleParts.push(isFavorite ? t('viz.valuePanel.unpinFavorite') : t('viz.valuePanel.toggleFavorite'));
+              }
               return (
                 <div
                   key={item.id}
                   role="listitem"
-                  className={`viz-cursor-value-cell${onChart ? ' on-chart' : ''}${isFavorite ? ' is-favorite' : ''}${!hasValue ? ' no-value' : ''}${onToggleFavorite ? ' is-toggleable' : ''}`}
+                  className={`viz-cursor-value-cell${onChart ? ' on-chart' : ''}${isFavorite ? ' is-favorite' : ''}${!isVisible ? ' is-item-hidden' : ''}${!hasValue ? ' no-value' : ''}${onToggleFavorite ? ' is-toggleable' : ''}`}
                   title={titleParts.join(' · ')}
                   onMouseDown={onToggleFavorite ? suppressDoubleClickSelect : undefined}
                   onDoubleClick={onToggleFavorite ? e => handleToggleFavorite(e, item.id) : undefined}
                 >
+                  {onToggleVisibility && (
+                    <button
+                      type="button"
+                      className={`viz-cursor-value-vis-btn${isVisible ? ' is-visible' : ''}`}
+                      onClick={e => handleToggleVisibility(e, item.id)}
+                      title={isVisible ? t('viz.valuePanel.hideItem', { name }) : t('viz.valuePanel.showItem', { name })}
+                      aria-label={isVisible ? t('viz.valuePanel.hideItem', { name }) : t('viz.valuePanel.showItem', { name })}
+                      aria-pressed={isVisible}
+                    >
+                      {isVisible ? <IconEye /> : <IconEyeOff />}
+                    </button>
+                  )}
                   <span
                     className="viz-cursor-value-swatch"
                     style={{ backgroundColor: item.color }}

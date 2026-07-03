@@ -212,6 +212,20 @@
     "tooltipToggle": "호버 시 값 팝업 표시",
     "zoomHint": "Shift+드래그: 구간 줌 · Alt+드래그: 시간 측정 · 드래그: 이동(줌 시) · 하단 바: 이동 · 휠: 줌 · 더블클릭: 초기화",
     "statistics": "통계",
+    "valuePanel": {
+      "title": "필드 값",
+      "placeholder": "차트에 마우스를 올리면 해당 시점의 모든 항목 값이 표시됩니다.",
+      "noItems": "등록된 항목이 없습니다.",
+      "fieldsMeta": "{{withValue}}/{{total}} fields",
+      "showItem": "{{name}} 차트에 표시",
+      "hideItem": "{{name}} 차트에서 숨기기",
+      "toggleFavorite": "더블클릭: 우선 배치",
+      "unpinFavorite": "더블클릭: 우선 배치 해제"
+    },
+    "seriesGroup": {
+      "panelToggles": "차트 패널 옵션",
+      "valuesToggle": "필드 값 표시/숨기기"
+    },
     "min": "Min",
     "max": "Max",
     "avg": "Avg",

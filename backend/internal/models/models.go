@@ -118,8 +118,8 @@ type VizItem struct {
 	Label      string          `json:"label" bson:"label"`
 	ShortLabel string          `json:"short_label,omitempty" bson:"short_label,omitempty"`
 	Color      string          `json:"color" bson:"color"`
-	Visible   bool            `json:"visible" bson:"visible"`
-	FieldRef  FieldRef        `json:"field_ref" bson:"field_ref"`
+	Visible       bool            `json:"visible" bson:"visible"`
+	FieldRef      FieldRef        `json:"field_ref" bson:"field_ref"`
 	ChartType string          `json:"chart_type" bson:"chart_type"`
 	YAxis     YAxisConfig     `json:"y_axis" bson:"y_axis"`
 	Offset    float64         `json:"offset" bson:"offset"`

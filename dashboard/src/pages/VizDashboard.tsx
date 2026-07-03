@@ -3,18 +3,20 @@ import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import ChartHelpManual from '../components/ChartHelpManual';
-import ChartCursorValues, { buildCursorValueRows } from '../components/ChartCursorValues';
+import ChartSeriesGroup from '../components/ChartSeriesGroup';
+import { buildCursorValueRows } from '../components/ChartCursorValues';
 import VizCanvasChart, { type VizCanvasChartHandle } from '../components/VizCanvasChart';
 import PageHeader from '../components/PageHeader';
 import {
   IconFullscreen,
   IconFullscreenExit,
-  IconTooltip,
   IconZoomIn,
   IconZoomOut,
   IconZoomReset,
   IconSearch,
   IconManual,
+  IconTooltip,
+  IconFieldValues,
 } from '../components/ChartControlIcons';
 import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseDateTime } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
@@ -518,6 +520,7 @@ export default function VizDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
+  const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
   const [queryMeta, setQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailRawVizData, setDetailRawVizData] = useState<VizDataRow[] | null>(null);
@@ -2505,19 +2508,33 @@ export default function VizDashboardPage() {
                 <IconZoomReset />
               </button>
             </div>
-            <div className="viz-chart-toolbar-sep" aria-hidden />
-            <div className="viz-chart-toolbar-group" role="group" aria-label={t('viz.tooltip')}>
-              <button
-                type="button"
-                className={`viz-chart-icon-btn viz-chart-tooltip-toggle${chartTooltipEnabled ? ' active' : ''}`}
-                onClick={() => setChartTooltipEnabled(v => !v)}
-                title={t('viz.tooltipToggle')}
-                aria-label={t('viz.tooltipToggle')}
-                aria-pressed={chartTooltipEnabled}
-              >
-                <IconTooltip />
-              </button>
-            </div>
+            {items.length > 0 && (
+              <>
+                <div className="viz-chart-toolbar-sep" aria-hidden />
+                <div className="viz-chart-toolbar-group" role="group" aria-label={t('viz.seriesGroup.panelToggles')}>
+                  <button
+                    type="button"
+                    className={`viz-chart-icon-btn viz-chart-tooltip-toggle${chartTooltipEnabled ? ' active' : ''}`}
+                    onClick={() => setChartTooltipEnabled(v => !v)}
+                    title={t('viz.tooltipToggle')}
+                    aria-label={t('viz.tooltipToggle')}
+                    aria-pressed={chartTooltipEnabled}
+                  >
+                    <IconTooltip />
+                  </button>
+                  <button
+                    type="button"
+                    className={`viz-chart-icon-btn${seriesValuesOpen ? ' active' : ''}`}
+                    onClick={() => setSeriesValuesOpen(v => !v)}
+                    title={t('viz.seriesGroup.valuesToggle')}
+                    aria-label={t('viz.seriesGroup.valuesToggle')}
+                    aria-pressed={seriesValuesOpen}
+                  >
+                    <IconFieldValues />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
         <div className="viz-chart-panel">
@@ -2563,25 +2580,14 @@ export default function VizDashboardPage() {
           />
         )}
         {items.length > 0 && canvasChartData.length > 0 && (
-          <ChartCursorValues
+          <ChartSeriesGroup
+            open={seriesValuesOpen}
             timeKey={hoverTimeKey}
             formatTime={formatChartAxisTime}
             rows={cursorValueRows}
+            onToggleVisibility={toggleVisibility}
             onToggleFavorite={toggleItemFavorite}
           />
-        )}
-        {chartItems.length > 0 && (
-          <div className="viz-chart-legend" aria-label="Chart series">
-            {chartItems.map(item => (
-              <span key={item.id} className="viz-chart-legend-item" title={item.label}>
-                <span className="viz-chart-legend-swatch" style={{ backgroundColor: item.color }} />
-                <span className="viz-chart-legend-label">
-                  {chartLabel(item)}
-                  {item.y_axis.unit?.trim() ? ` (${item.y_axis.unit.trim()})` : ''}
-                </span>
-              </span>
-            ))}
-          </div>
         )}
         </div>
       </div>
