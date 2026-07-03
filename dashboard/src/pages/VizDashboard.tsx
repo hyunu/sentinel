@@ -39,9 +39,13 @@ import {
 } from '../lib/vizChartInteraction';
 import { buildDetailCacheKey, VizDetailCache } from '../lib/vizDetailCache';
 import {
+  assessAllTimeRangeLoad,
   estimateVizPayloadBytes,
   formatFullLoadBytes,
+  FULL_LOAD_BYTE_BUDGET,
+  FULL_LOAD_MAX_POINTS,
   shouldFullLoadInMemory,
+  type AllRangeLoadAssessment,
 } from '../lib/vizFullLoad';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
@@ -272,6 +276,35 @@ function isAllTimeRangeSelection(presetId: TimePresetId, customStart: string, cu
   return presetId === TIME_PRESET_ALL && !customStart && !customEnd;
 }
 
+function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment): {
+  title: string;
+  summary: string;
+  why: string;
+  recommend: string;
+} {
+  const total = guide.totalMatched.toLocaleString();
+  const sample = guide.returned.toLocaleString();
+  const limitPoints = FULL_LOAD_MAX_POINTS.toLocaleString();
+  const limitBytes = formatFullLoadBytes(FULL_LOAD_BYTE_BUDGET);
+
+  if (guide.heavyReason === 'points') {
+    return {
+      title: 'All(전체) 조회 — 데이터가 많습니다',
+      summary: `이 보드에 약 ${total}건이 있습니다. 브라우저 전량 적재 한도(${limitPoints}건)를 넘어, 지금 차트에는 전체의 ${sample}포인트 샘플 개요만 표시되고 있습니다.`,
+      why: 'All은 시간 제한 없이 보드에 쌓인 모든 기록을 조회합니다. 데이터가 한도를 넘으면 브라우저 메모리·응답 속도를 보호하기 위해 전체를 한 번에 올리지 않고, 균등 간격으로 줄인 개요를 먼저 보여 줍니다. 확대하면 그때 보이는 시간 구간만 서버에서 다시 가져와 더 촘촘하게 그립니다. 건수가 많을수록 첫 조회와 줌마다 서버·네트워크 부담이 커져 느려질 수 있고, 샘플 간격이 넓어 짧은 이상 징후는 개요에서 누락될 수 있습니다.',
+      recommend: '분석에 필요한 기간만 Time Range에서 선택하면 한도 안에서 전량을 메모리에 올려, 서버 재요청 없이 빠르게 확대·이동할 수 있습니다. 전체 추세만 보려면 아래 「샘플 모드로 계속」을 선택하세요.',
+    };
+  }
+
+  const est = formatFullLoadBytes(guide.estimatedBytes ?? 0);
+  return {
+    title: 'All(전체) 조회 — 예상 용량이 큽니다',
+    summary: `약 ${total}건(예상 ${est})으로 브라우저 적재 한도(${limitBytes})를 넘습니다. 지금은 ${sample}포인트 샘플 개요만 표시되고 있습니다.`,
+    why: '항목 수와 필드 값이 많으면 같은 건수라도 전송·저장 용량이 커집니다. All은 전체 기록을 대상으로 하므로, 예상 용량이 한도를 넘으면 브라우저가 멈추거나 탭이 느려지는 것을 막기 위해 전량 적재 대신 샘플 개요를 사용합니다. 확대 시에는 해당 구간만 다시 조회해 해상도를 높이지만, 구간마다 서버 요청이 필요합니다.',
+    recommend: '필요한 기간을 7일·30일 등으로 줄이면 용량이 한도 안에 들어 전량 적재가 가능해지고, 확대·이동이 더 빠르고 촘촘해집니다. 전체 추세만 보려면 「샘플 모드로 계속」을 선택하세요.',
+  };
+}
+
 function isCustomTimeRangeSelection(presetId: TimePresetId, customStart: string, customEnd: string): boolean {
   return presetId === TIME_PRESET_ALL && !!(customStart || customEnd);
 }
@@ -301,18 +334,27 @@ type VizQueryParams = {
   since?: string;
 };
 
-async function queryVizDataset(params: VizQueryParams): Promise<{
+async function queryVizDataset(
+  params: VizQueryParams,
+  options?: { assessAllRange?: boolean },
+): Promise<{
   data: VizDataRow[];
   meta: VizQueryMeta | null;
   inMemoryFull: boolean;
+  allRangeAssessment: AllRangeLoadAssessment | null;
 }> {
   const overview = await api.viz.queryItems({ ...params, limit: MAX_POINTS });
   const meta = overview.meta ?? null;
+  const allRangeAssessment = options?.assessAllRange
+    ? assessAllTimeRangeLoad(meta, overview.data)
+    : null;
+
   if (!shouldFullLoadInMemory(meta, overview.data)) {
     return {
       data: overview.data,
       meta,
       inMemoryFull: !!meta && !meta.downsampled,
+      allRangeAssessment,
     };
   }
   const full = await api.viz.queryItems({
@@ -323,6 +365,7 @@ async function queryVizDataset(params: VizQueryParams): Promise<{
     data: full.data,
     meta: full.meta ?? null,
     inMemoryFull: true,
+    allRangeAssessment,
   };
 }
 
@@ -480,6 +523,7 @@ export default function VizDashboardPage() {
   const [detailQueryMeta, setDetailQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [inMemoryFull, setInMemoryFull] = useState(false);
+  const [allRangeGuide, setAllRangeGuide] = useState<AllRangeLoadAssessment | null>(null);
   const detailFetchSeqRef = useRef(0);
   const detailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const detailCacheRef = useRef(new VizDetailCache());
@@ -1230,6 +1274,21 @@ export default function VizDashboardPage() {
     detailCacheRef.current.clear();
   }, []);
 
+  const applyQueryResult = useCallback((
+    result: Awaited<ReturnType<typeof queryVizDataset>>,
+    assessAllRange: boolean,
+  ) => {
+    applyOverviewResult(result.data, result.meta, result.inMemoryFull);
+    if (assessAllRange && result.allRangeAssessment?.level === 'heavy') {
+      setAllRangeGuide(result.allRangeAssessment);
+    } else {
+      setAllRangeGuide(null);
+    }
+    if (result.data.length > 0) {
+      lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
+    }
+  }, [applyOverviewResult]);
+
   const loadProfile = useCallback(async (id: string) => {
     setProfileError('');
     const p = await api.viz.getProfile(id);
@@ -1247,25 +1306,24 @@ export default function VizDashboardPage() {
     }
     setLoading(true);
     try {
+      const isAllRange = !p.time_range?.start || !p.time_range?.end;
       const result = await queryVizDataset({
         board_id: p.board_id,
         items: itemsForDataQuery(p.items),
         time_range: p.time_range?.start && p.time_range?.end
           ? { start: p.time_range.start, end: p.time_range.end }
           : undefined,
-      });
-      applyOverviewResult(result.data, result.meta, result.inMemoryFull);
-      if (result.data.length > 0) {
-        lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
-      }
+      }, { assessAllRange: isAllRange });
+      applyQueryResult(result, isAllRange);
     } finally {
       setLoading(false);
     }
-  }, [applyOverviewResult]);
+  }, [applyQueryResult]);
 
   useEffect(() => {
     if (!selectedBoard) { setProfiles([]); return; }
     api.viz.listProfiles(selectedBoard).then(setProfiles);
+    setAllRangeGuide(null);
   }, [selectedBoard]);
 
   const buildTimeRange = useCallback((): { start: string; end: string } | undefined => {
@@ -1290,6 +1348,47 @@ export default function VizDashboardPage() {
     setTimeRangePresetId(id);
     setCustomStart('');
     setCustomEnd('');
+    if (id !== TIME_PRESET_ALL) {
+      setAllRangeGuide(null);
+    }
+  }, []);
+
+  const runVizQuery = useCallback(async (
+    timeRange: { start: string; end: string } | undefined,
+    assessAllRange: boolean,
+  ) => {
+    if (!selectedBoard || !itemsRef.current.length) return;
+    setLoading(true);
+    try {
+      const result = await queryVizDataset({
+        board_id: selectedBoard,
+        items: itemsForDataQuery(itemsRef.current),
+        time_range: timeRange,
+      }, { assessAllRange });
+      applyQueryResult(result, assessAllRange);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedBoard, applyQueryResult]);
+
+  const fetchAll = useCallback(async () => {
+    const isAllRange = isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
+    await runVizQuery(buildTimeRange(), isAllRange);
+  }, [runVizQuery, buildTimeRange, timeRangePresetId, customStart, customEnd]);
+
+  const applyGuideTimePreset = useCallback(async (id: TimePresetId) => {
+    selectTimePreset(id);
+    if (id === TIME_PRESET_ALL) {
+      await runVizQuery(undefined, true);
+      return;
+    }
+    const end = new Date();
+    const start = presetRangeStart(end, id);
+    await runVizQuery({ start: start.toISOString(), end: end.toISOString() }, false);
+  }, [selectTimePreset, runVizQuery]);
+
+  const dismissAllRangeGuide = useCallback(() => {
+    setAllRangeGuide(null);
   }, []);
 
   const clearCustomTimeRange = useCallback(() => {
@@ -1297,24 +1396,6 @@ export default function VizDashboardPage() {
     setCustomEnd('');
     setTimeRangePresetId(TIME_PRESET_ALL);
   }, []);
-
-  const fetchAll = useCallback(async () => {
-    if (!selectedBoard || !itemsRef.current.length) return;
-    setLoading(true);
-    try {
-      const result = await queryVizDataset({
-        board_id: selectedBoard,
-        items: itemsForDataQuery(itemsRef.current),
-        time_range: buildTimeRange(),
-      });
-      applyOverviewResult(result.data, result.meta, result.inMemoryFull);
-      if (result.data.length > 0) {
-        lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedBoard, buildTimeRange, applyOverviewResult]);
 
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
@@ -1690,6 +1771,11 @@ export default function VizDashboardPage() {
 
   const chartZoomActive = zoomWindow != null;
 
+  const allRangeGuideCopy = useMemo(
+    () => (allRangeGuide ? buildAllRangeGuideCopy(allRangeGuide) : null),
+    [allRangeGuide],
+  );
+
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
     const pointLabel = `${canvasChartData.length.toLocaleString()} points`;
@@ -2005,6 +2091,7 @@ export default function VizDashboardPage() {
                     onChange={e => {
                       setCustomStart(e.target.value);
                       setTimeRangePresetId(TIME_PRESET_ALL);
+                      setAllRangeGuide(null);
                     }}
                     disabled={liveMode}
                     aria-label="Start time"
@@ -2021,6 +2108,7 @@ export default function VizDashboardPage() {
                     onChange={e => {
                       setCustomEnd(e.target.value);
                       setTimeRangePresetId(TIME_PRESET_ALL);
+                      setAllRangeGuide(null);
                     }}
                     disabled={liveMode}
                     aria-label="End time"
@@ -2302,6 +2390,44 @@ export default function VizDashboardPage() {
       </div>
 
       <div ref={chartCardRef} className={`card table-card viz-chart-card${chartFullscreen ? ' is-fullscreen' : ''}`}>
+        {allRangeGuideCopy && (
+          <div className="viz-all-range-guide" role="status">
+            <div className="viz-all-range-guide-content">
+              <strong className="viz-all-range-guide-title">{allRangeGuideCopy.title}</strong>
+              <p className="viz-all-range-guide-summary">{allRangeGuideCopy.summary}</p>
+              <div className="viz-all-range-guide-why">
+                <span className="viz-all-range-guide-why-label">왜 이렇게 동작하나요?</span>
+                <p>{allRangeGuideCopy.why}</p>
+              </div>
+              <p className="viz-all-range-guide-recommend">{allRangeGuideCopy.recommend}</p>
+            </div>
+            <div className="viz-all-range-guide-actions">
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => void applyGuideTimePreset('7d')}
+                disabled={loading}
+              >
+                7일로 조정
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => void applyGuideTimePreset('30d')}
+                disabled={loading}
+              >
+                30일로 조정
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={dismissAllRangeGuide}
+              >
+                샘플 모드로 계속
+              </button>
+            </div>
+          </div>
+        )}
         <div className="card-header viz-chart-header">
           <div className="viz-chart-header-main">
             <h2>Chart</h2>
