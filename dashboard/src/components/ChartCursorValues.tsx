@@ -18,6 +18,7 @@ interface ChartCursorValuesProps {
   onToggleVisibility?: (itemId: string) => void;
   onToggleFavorite?: (itemId: string) => void;
   embedded?: boolean;
+  layout?: 'bottom' | 'left';
 }
 
 function applyTransform(raw: number, item: VizItem): number {
@@ -63,6 +64,7 @@ export default function ChartCursorValues({
   onToggleVisibility,
   onToggleFavorite,
   embedded = false,
+  layout = 'bottom',
 }: ChartCursorValuesProps) {
   const { t } = useTranslation();
   const withValue = rows.filter(r => typeof r.raw === 'number');
@@ -104,7 +106,7 @@ export default function ChartCursorValues({
 
   return (
     <section
-      className={`viz-cursor-values${embedded ? ' is-embedded' : ''}`}
+      className={`viz-cursor-values${embedded ? ' is-embedded' : ''}${layout === 'left' ? ' is-layout-left' : ''}`}
       aria-label={t('viz.valuePanel.title')}
     >
       <div className="viz-cursor-values-head">

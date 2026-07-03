@@ -220,7 +220,10 @@
       "showItem": "Show {{name}} on chart",
       "hideItem": "Hide {{name}} from chart",
       "toggleFavorite": "Double-click: pin to top",
-      "unpinFavorite": "Double-click: unpin"
+      "unpinFavorite": "Double-click: unpin",
+      "layoutGroup": "Field values panel position",
+      "layoutBottom": "Show at bottom",
+      "layoutLeft": "Show on left"
     },
     "seriesGroup": {
       "panelToggles": "Chart panel options",

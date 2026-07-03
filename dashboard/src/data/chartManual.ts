@@ -29,6 +29,7 @@ export const CHART_MANUAL_OVERVIEW: ManualBlock[] = [
       l('Hover the chart to see values at a time (toggle with the tooltip button).', '차트에 마우스를 올리면 해당 시각의 값을 볼 수 있습니다(툴팁 버튼으로 켜고 끔).'),
       l('Use the chart header icons next to zoom: toggle hover popup and field values.', '차트 제목 우측 줌 옆 아이콘으로 호버 팝업·필드 값을 켜고 끌 수 있습니다.'),
       l('Field values toggle chart series visibility (same as Configuration checkboxes).', '필드 값의 눈 아이콘은 Configuration 체크박스와 동일하게 차트 시리즈 표시를 바꿉니다.'),
+      l('Place the field values panel at the bottom or on the left (icons next to the field values toggle). Your choice is remembered.', '필드 값 패널을 하단 또는 좌측에 둘 수 있습니다(필드 값 토글 옆 아이콘). 선택은 저장됩니다.'),
       l('Statistics summarizes min / max / avg for visible series.', 'Statistics에서 표시 중인 시리즈의 min / max / avg를 봅니다.'),
     ],
   },
@@ -97,6 +98,8 @@ export const CHART_MANUAL_TOOLBAR: ManualBlock[] = [
       l('Zoom in / out — step zoom on the time axis.', '확대 / 축소 — 시간축 단계 줌'),
       l('Reset zoom — same as double-click.', '줌 초기화 — 더블클릭과 동일'),
       l('Tooltip — show or hide the hover value popup.', '툴팁 — 호버 값 팝업 표시 여부'),
+      l('Field values — show or hide the panel listing values at the cursor time.', '필드 값 — 커서 시각의 항목 값 패널 표시 여부'),
+      l('Panel layout — bottom (under the chart) or left (beside the chart).', '패널 위치 — 하단(차트 아래) 또는 좌측(차트 옆)'),
     ],
   },
 ];

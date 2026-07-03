@@ -220,7 +220,10 @@
       "showItem": "{{name}} 차트에 표시",
       "hideItem": "{{name}} 차트에서 숨기기",
       "toggleFavorite": "더블클릭: 우선 배치",
-      "unpinFavorite": "더블클릭: 우선 배치 해제"
+      "unpinFavorite": "더블클릭: 우선 배치 해제",
+      "layoutGroup": "필드 값 패널 위치",
+      "layoutBottom": "하단에 표시",
+      "layoutLeft": "좌측에 표시"
     },
     "seriesGroup": {
       "panelToggles": "차트 패널 옵션",

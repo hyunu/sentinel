@@ -1522,6 +1522,23 @@ tbody tr:last-child td {
   overflow: hidden;
 }
 
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left {
+  flex-direction: row-reverse;
+}
+
+.card.viz-chart-card:fullscreen .viz-chart-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .card.viz-chart-card:fullscreen .viz-chart-viewport {
   flex: 1 1 0;
   min-height: 160px;
@@ -1534,10 +1551,40 @@ tbody tr:last-child td {
   flex-shrink: 0;
 }
 
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left .viz-series-group {
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 36vw;
+  margin-top: 0;
+  min-height: 0;
+  height: auto;
+  align-self: stretch;
+}
+
 .viz-chart-panel {
   background: var(--surface-inset);
   border-top: 1px solid var(--border);
   padding: 12px 20px 16px;
+}
+
+.viz-chart-panel-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.viz-chart-panel-layout.is-left {
+  flex-direction: row-reverse;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.viz-chart-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .viz-chart-fullscreen-toggle.active,
@@ -1996,6 +2043,31 @@ tbody tr:last-child td {
   background: transparent;
 }
 
+.viz-cursor-values.is-embedded.is-layout-left,
+.viz-series-group.is-layout-left .viz-cursor-values.is-embedded {
+  height: 100%;
+  min-height: 0;
+}
+
+.viz-cursor-values.is-layout-left .viz-cursor-values-head {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  row-gap: 4px;
+}
+
+.viz-cursor-values.is-layout-left .viz-cursor-values-meta {
+  margin-left: 0;
+  width: 100%;
+}
+
+.viz-cursor-values.is-layout-left .viz-cursor-values-grid {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 8px;
+}
+
 .viz-cursor-values-head {
   display: flex;
   align-items: center;
@@ -2228,6 +2300,23 @@ tbody tr:last-child td {
   background: var(--surface-inset);
   overflow: hidden;
   flex-shrink: 0;
+}
+
+.viz-series-group.is-layout-left {
+  margin-top: 0;
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 36vw;
+  min-height: 220px;
+  max-height: 100%;
+  align-self: stretch;
+}
+
+.viz-series-group.is-layout-left .viz-cursor-values.is-embedded {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .viz-chart-tooltip {

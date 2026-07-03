@@ -98,3 +98,23 @@ export function IconFieldValues({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconPanelBottom({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 15h18" />
+      <path d="M7 18h10" />
+    </svg>
+  );
+}
+
+export function IconPanelLeft({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" />
+      <path d="M5 7h2M5 11h2" />
+    </svg>
+  );
+}

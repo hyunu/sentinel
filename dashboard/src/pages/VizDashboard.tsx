@@ -17,6 +17,8 @@ import {
   IconManual,
   IconTooltip,
   IconFieldValues,
+  IconPanelBottom,
+  IconPanelLeft,
 } from '../components/ChartControlIcons';
 import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseDateTime } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
@@ -60,6 +62,19 @@ const MAX_CHART_SERIES = 24;
 const MAX_PROFILES = 5;
 const POLL_INTERVAL = 3000;
 const MIN_CHART_ZOOM_POINTS = 10;
+
+type FieldValuesLayout = 'bottom' | 'left';
+const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
+
+function readFieldValuesLayout(): FieldValuesLayout {
+  try {
+    const stored = localStorage.getItem(FIELD_VALUES_LAYOUT_KEY);
+    if (stored === 'bottom' || stored === 'left') return stored;
+  } catch {
+    /* ignore */
+  }
+  return 'bottom';
+}
 
 function formatDisplayValue(value: number, unit?: string): string {
   const text = value.toLocaleString();
@@ -521,6 +536,7 @@ export default function VizDashboardPage() {
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
+  const [fieldValuesLayout, setFieldValuesLayout] = useState<FieldValuesLayout>(readFieldValuesLayout);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
   const [queryMeta, setQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailRawVizData, setDetailRawVizData] = useState<VizDataRow[] | null>(null);
@@ -1878,6 +1894,15 @@ export default function VizDashboardPage() {
     setItems(prev => prev.map(i => (i.id === id ? { ...i, favorite: !i.favorite } : i)));
   }, []);
 
+  const setFieldValuesLayoutPersisted = useCallback((layout: FieldValuesLayout) => {
+    setFieldValuesLayout(layout);
+    try {
+      localStorage.setItem(FIELD_VALUES_LAYOUT_KEY, layout);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const handleChartHoverTimeKey = useCallback((timeKey: string | null) => {
     if (isChartPanning || isChartSelecting || isChartMeasuring) return;
     if (timeKey == null) return;
@@ -2534,11 +2559,40 @@ export default function VizDashboardPage() {
                     <IconFieldValues />
                   </button>
                 </div>
+                <div className="viz-chart-toolbar-sep" aria-hidden />
+                <div
+                  className="viz-chart-toolbar-group"
+                  role="group"
+                  aria-label={t('viz.valuePanel.layoutGroup')}
+                >
+                  <button
+                    type="button"
+                    className={`viz-chart-icon-btn${fieldValuesLayout === 'bottom' ? ' active' : ''}`}
+                    onClick={() => setFieldValuesLayoutPersisted('bottom')}
+                    title={t('viz.valuePanel.layoutBottom')}
+                    aria-label={t('viz.valuePanel.layoutBottom')}
+                    aria-pressed={fieldValuesLayout === 'bottom'}
+                  >
+                    <IconPanelBottom />
+                  </button>
+                  <button
+                    type="button"
+                    className={`viz-chart-icon-btn${fieldValuesLayout === 'left' ? ' active' : ''}`}
+                    onClick={() => setFieldValuesLayoutPersisted('left')}
+                    title={t('viz.valuePanel.layoutLeft')}
+                    aria-label={t('viz.valuePanel.layoutLeft')}
+                    aria-pressed={fieldValuesLayout === 'left'}
+                  >
+                    <IconPanelLeft />
+                  </button>
+                </div>
               </>
             )}
           </div>
         </div>
         <div className="viz-chart-panel">
+        <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
+        <div className="viz-chart-main">
         <div
           ref={chartViewportRef}
           className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
@@ -2585,9 +2639,11 @@ export default function VizDashboardPage() {
             downsampled={queryMeta?.downsampled}
           />
         )}
+        </div>
         {items.length > 0 && canvasChartData.length > 0 && (
           <ChartSeriesGroup
             open={seriesValuesOpen}
+            layout={fieldValuesLayout}
             timeKey={hoverTimeKey}
             formatTime={formatChartAxisTime}
             rows={cursorValueRows}
@@ -2595,6 +2651,7 @@ export default function VizDashboardPage() {
             onToggleFavorite={toggleItemFavorite}
           />
         )}
+        </div>
         </div>
       </div>
 
