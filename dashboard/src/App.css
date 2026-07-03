@@ -1430,6 +1430,36 @@ tbody tr:last-child td {
   box-shadow: none;
 }
 
+.viz-chart-viewport .viz-canvas-chart-wrap,
+.viz-chart-viewport .viz-canvas-chart-host,
+.viz-chart-viewport .viz-canvas-chart {
+  outline: none;
+}
+
+.viz-chart-viewport .viz-canvas-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.viz-chart-viewport .viz-canvas-chart-host {
+  width: 100%;
+}
+
+.viz-canvas-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.viz-canvas-chart.uplot {
+  color: #888aa0;
+}
+
+.viz-canvas-chart .u-legend {
+  display: none;
+}
+
 .viz-chart-viewport .recharts-wrapper,
 .viz-chart-viewport .recharts-surface,
 .viz-chart-viewport svg {
@@ -1524,6 +1554,12 @@ tbody tr:last-child td {
 
 .viz-chart-viewport.panning {
   cursor: grabbing;
+}
+
+.viz-chart-viewport.panning .viz-canvas-chart-wrap,
+.viz-chart-viewport.selecting .viz-canvas-chart-wrap,
+.viz-chart-viewport.measuring .viz-canvas-chart-wrap {
+  pointer-events: none;
 }
 
 .viz-chart-viewport.panning .recharts-wrapper,

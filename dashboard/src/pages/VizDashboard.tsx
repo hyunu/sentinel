@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from 'recharts';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import ChartCursorValues, { buildCursorValueRows } from '../components/ChartCursorValues';
+import VizCanvasChart, { type VizCanvasChartHandle } from '../components/VizCanvasChart';
 import PageHeader from '../components/PageHeader';
 import {
   IconFullscreen,
@@ -20,6 +18,9 @@ import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseD
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 import {
   cancelChartZoomRaf,
+  chartZoomEquals,
+  computePanWindow,
+  computeWheelZoomWindow,
   createChartZoomCommitter,
   getChartTimeMsFromClientX,
   findChartIndexLowerBoundForTimeMs,
@@ -27,11 +28,14 @@ import {
   getChartPlotBoundsFromViewport,
   getChartPlotMetricsFromViewport,
   mergeWheelZoomEvent,
-  shouldHideTooltipDuringInteraction,
+  normalizeWheelDeltaY,
   syncChartZoomRef,
+  wheelDeltaToZoomFactor,
+  wheelFocusRatioFromClientX,
   useChartSelectionOverlay,
   useChartTimeMeasureOverlay,
   type ChartZoomRange,
+  type WheelZoomEvent,
 } from '../lib/vizChartInteraction';
 import { buildDetailCacheKey, VizDetailCache } from '../lib/vizDetailCache';
 import {
@@ -47,8 +51,6 @@ const MAX_CHART_SERIES = 24;
 const MAX_PROFILES = 5;
 const POLL_INTERVAL = 3000;
 const MIN_CHART_ZOOM_POINTS = 10;
-const CHART_RENDER_MAX = 8000;
-const CHART_ANIMATION = false;
 
 function formatDisplayValue(value: number, unit?: string): string {
   const text = value.toLocaleString();
@@ -160,44 +162,6 @@ function formatTooltipItemValue(
   return unit && base ? `${base} ${unit}` : base;
 }
 
-interface VizChartTooltipProps {
-  active?: boolean;
-  label?: string | number;
-  payload?: ReadonlyArray<{
-    dataKey?: string | number | ((obj: unknown) => unknown);
-    value?: unknown;
-    color?: string;
-  }>;
-  itemById: Map<string, VizItem>;
-  rawValuesAtTime?: Record<string, number>;
-}
-
-function VizChartTooltip({ active, label, payload, itemById, rawValuesAtTime }: VizChartTooltipProps) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="viz-chart-tooltip">
-      <div className="viz-chart-tooltip-label">
-        {label != null ? formatChartAxisTime(String(label)) : ''}
-      </div>
-      {payload.map(entry => {
-        const rawKey = entry.dataKey;
-        const key = typeof rawKey === 'function' ? '' : String(rawKey ?? '');
-        if (!key) return null;
-        const item = itemById.get(key);
-        const name = item ? chartLabel(item) : key;
-        const displayValue = formatTooltipItemValue(item, rawValuesAtTime, entry.value);
-        return (
-          <div key={key} className="viz-chart-tooltip-row">
-            <span className="viz-chart-tooltip-swatch" style={{ backgroundColor: entry.color }} />
-            <span className="viz-chart-tooltip-name">{name}</span>
-            <span className="viz-chart-tooltip-value">{displayValue}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function normalizeVizItems(items: VizItem[]): VizItem[] {
   const used = new Set<string>();
   return items.map(item => ({
@@ -225,77 +189,6 @@ function makeItem(protoId: string, fieldName: string, idx: number, usedShortLabe
 }
 
 type ChartPoint = { timeKey: string } & Record<string, string | number>;
-
-function chartPointValue(point: ChartPoint, seriesIds: string[]): number | null {
-  for (const id of seriesIds) {
-    const v = point[id];
-    if (typeof v === 'number' && !Number.isNaN(v)) return v;
-  }
-  for (const key of Object.keys(point)) {
-    if (key === 'timeKey') continue;
-    const v = point[key];
-    if (typeof v === 'number' && !Number.isNaN(v)) return v;
-  }
-  return null;
-}
-
-function decimateChartPoints(
-  data: ChartPoint[],
-  maxPoints: number,
-  seriesIds: string[] = [],
-): {
-  points: ChartPoint[];
-  decimated: boolean;
-  sourceCount: number;
-} {
-  if (data.length <= maxPoints) {
-    return { points: data, decimated: false, sourceCount: data.length };
-  }
-
-  const targetBuckets = Math.max(2, maxPoints - 1);
-  const bucketSize = data.length / targetBuckets;
-  const chosenIndices = new Set<number>([0, data.length - 1]);
-
-  for (let b = 0; b < targetBuckets; b++) {
-    const start = Math.floor(b * bucketSize);
-    const end = Math.min(data.length, Math.floor((b + 1) * bucketSize));
-    if (start >= end) continue;
-
-    let minIdx = start;
-    let maxIdx = start;
-    const firstVal = chartPointValue(data[start], seriesIds);
-    if (firstVal == null) continue;
-    let minVal = firstVal;
-    let maxVal = firstVal;
-
-    for (let i = start + 1; i < end; i++) {
-      const v = chartPointValue(data[i], seriesIds);
-      if (v == null) continue;
-      if (v < minVal) {
-        minVal = v;
-        minIdx = i;
-      }
-      if (v > maxVal) {
-        maxVal = v;
-        maxIdx = i;
-      }
-    }
-    chosenIndices.add(minIdx);
-    if (maxIdx !== minIdx) chosenIndices.add(maxIdx);
-  }
-
-  let points = [...chosenIndices].sort((a, b) => a - b).map(i => data[i]);
-  if (points.length > maxPoints) {
-    const stride = Math.ceil(points.length / maxPoints);
-    const trimmed: ChartPoint[] = [];
-    for (let i = 0; i < points.length; i += stride) trimmed.push(points[i]);
-    const last = points[points.length - 1];
-    if (trimmed[trimmed.length - 1]?.timeKey !== last.timeKey) trimmed.push(last);
-    points = trimmed;
-  }
-
-  return { points, decimated: true, sourceCount: data.length };
-}
 
 function computeYAxisDomain(data: ChartPoint[], itemIds: string[]): [number, number] | undefined {
   if (itemIds.length === 0 || data.length === 0) return undefined;
@@ -605,6 +498,7 @@ export default function VizDashboardPage() {
   const lastTimestampRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
+  const chartCanvasRef = useRef<VizCanvasChartHandle | null>(null);
   const chartCardRef = useRef<HTMLDivElement | null>(null);
   const chartZoomRef = useRef<ChartZoomRange | null>(null);
   chartZoomRef.current = chartZoom;
@@ -613,7 +507,11 @@ export default function VizDashboardPage() {
   const chartDataRef = useRef(chartData);
   chartDataRef.current = chartData;
   const wheelRafRef = useRef<number | null>(null);
-  const wheelEventRef = useRef<{ deltaY: number; focusRatio: number } | null>(null);
+  const wheelEventRef = useRef<WheelZoomEvent | null>(null);
+  const panRafRef = useRef<number | null>(null);
+  const pendingPanDeltaRef = useRef(0);
+  const reactChartZoomRef = useRef(chartZoom);
+  reactChartZoomRef.current = chartZoom;
   const pendingChartZoomRef = useRef<ChartZoomRange | null | undefined>(undefined);
   const chartZoomRafRef = useRef<number | null>(null);
   const chartZoomRafRefs = useMemo(
@@ -644,6 +542,8 @@ export default function VizDashboardPage() {
   itemsRef.current = items;
   const liveModeRef = useRef(liveMode);
   liveModeRef.current = liveMode;
+  const inMemoryFullRef = useRef(inMemoryFull);
+  inMemoryFullRef.current = inMemoryFull;
 
   const rawVizDataKey = useMemo(
     () => (rawVizData.length > 0
@@ -659,6 +559,27 @@ export default function VizDashboardPage() {
 
   const commitChartZoomRef = useRef(commitChartZoom);
   commitChartZoomRef.current = commitChartZoom;
+
+  const syncReactChartZoomFromRef = useCallback(() => {
+    const next = chartZoomRef.current;
+    if (chartZoomEquals(next, reactChartZoomRef.current)) return;
+    setChartZoom(next);
+  }, []);
+
+  const applyCanvasZoomWindow = useCallback((start: number, end: number) => {
+    const len = chartDataLengthRef.current;
+    if (len === 0) return;
+    const next = clampChartZoom(start, end, len);
+    chartZoomRef.current = next;
+    chartCanvasRef.current?.setWindowByIndex(next.start, next.end);
+    syncReactChartZoomFromRef();
+  }, [syncReactChartZoomFromRef]);
+
+  const syncReactChartZoomFromRefFn = useRef(syncReactChartZoomFromRef);
+  syncReactChartZoomFromRefFn.current = syncReactChartZoomFromRef;
+
+  const applyCanvasZoomWindowRef = useRef(applyCanvasZoomWindow);
+  applyCanvasZoomWindowRef.current = applyCanvasZoomWindow;
 
   useEffect(() => {
     syncChartZoomRef(chartZoomRef, null);
@@ -690,10 +611,8 @@ export default function VizDashboardPage() {
     const ro = new ResizeObserver(entries => {
       const height = entries[0]?.contentRect.height;
       if (height > 0) setChartViewportHeight(height);
-      chartPlotBoundsRef.current = getChartPlotBoundsFromViewport(el);
     });
     ro.observe(el);
-    chartPlotBoundsRef.current = getChartPlotBoundsFromViewport(el);
     return () => ro.disconnect();
   }, [chartFullscreen, chartData.length]);
 
@@ -730,6 +649,7 @@ export default function VizDashboardPage() {
     if (chartData.length === 0) {
       syncChartZoomRef(chartZoomRef, null);
       setChartZoom(null);
+      chartCanvasRef.current?.resetWindow();
       return;
     }
     const clamped = clampChartZoom(start, end, chartData.length);
@@ -737,15 +657,18 @@ export default function VizDashboardPage() {
     if (span >= chartData.length) {
       syncChartZoomRef(chartZoomRef, null);
       setChartZoom(null);
+      chartCanvasRef.current?.resetWindow();
       return;
     }
     syncChartZoomRef(chartZoomRef, clamped);
     setChartZoom(clamped);
+    chartCanvasRef.current?.setWindowByIndex(clamped.start, clamped.end);
   }, [chartData.length]);
 
   const resetChartZoom = useCallback(() => {
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
+    chartCanvasRef.current?.resetWindow();
     setDetailRawVizData(null);
     setDetailQueryMeta(null);
     setDetailLoading(false);
@@ -827,7 +750,13 @@ export default function VizDashboardPage() {
     const el = chartViewportRef.current;
     if (!el) return;
 
-    const getPlotMetrics = () => getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+    const getPlotMetrics = () => {
+      const canvasMetrics = chartCanvasRef.current?.getPlotClientMetrics();
+      if (canvasMetrics) {
+        return { plotLeft: canvasMetrics.plotLeft, plotWidth: canvasMetrics.plotWidth };
+      }
+      return getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+    };
 
     const getRenderIndexFromClientX = (clientX: number): number => {
       const { plotLeft, plotWidth } = getPlotMetrics();
@@ -855,28 +784,37 @@ export default function VizDashboardPage() {
       return zoom.end - zoom.start + 1 < len;
     };
 
+    const schedulePanDelta = (deltaX: number) => {
+      pendingPanDeltaRef.current = deltaX;
+      if (panRafRef.current != null) return;
+      panRafRef.current = requestAnimationFrame(() => {
+        panRafRef.current = null;
+        applyPanDelta(pendingPanDeltaRef.current);
+      });
+    };
+
     const applyPanDelta = (deltaX: number) => {
       const session = panSessionRef.current;
       if (!session) return;
       const len = chartDataLengthRef.current;
+      const data = chartDataRef.current;
       const { plotWidth } = getPlotMetrics();
-      if (plotWidth <= 0 || len === 0) return;
+      if (plotWidth <= 0 || len === 0 || data.length === 0) return;
 
-      const shift = Math.round(-(deltaX / plotWidth) * session.span);
-      let newStart = session.zoomStart + shift;
-      let newEnd = session.zoomEnd + shift;
-      if (newStart < 0) {
-        newEnd -= newStart;
-        newStart = 0;
-      }
-      if (newEnd >= len) {
-        newStart -= newEnd - len + 1;
-        newEnd = len - 1;
-      }
-      newStart = Math.max(0, newStart);
-      newEnd = Math.min(len - 1, newEnd);
+      const { start: newStart, end: newEnd } = computePanWindow(
+        data,
+        session.zoomStart,
+        session.zoomEnd,
+        deltaX,
+        plotWidth,
+        len,
+      );
       if (newEnd - newStart + 1 >= len) {
-        commitChartZoomRef.current(null);
+        chartZoomRef.current = null;
+        chartCanvasRef.current?.resetWindow();
+        syncReactChartZoomFromRefFn.current();
+      } else if (inMemoryFullRef.current) {
+        applyCanvasZoomWindowRef.current(newStart, newEnd);
       } else {
         commitChartZoomRef.current({ start: newStart, end: newEnd });
       }
@@ -1020,7 +958,7 @@ export default function VizDashboardPage() {
       }
 
       if (panSessionRef.current?.pointerId === e.pointerId) {
-        applyPanDelta(e.clientX - panSessionRef.current.startX);
+        schedulePanDelta(e.clientX - panSessionRef.current.startX);
         e.preventDefault();
         return;
       }
@@ -1103,8 +1041,12 @@ export default function VizDashboardPage() {
       window.removeEventListener('pointerup', onWindowPointerEnd);
       window.removeEventListener('pointercancel', onWindowPointerEnd);
       window.removeEventListener('blur', onWindowBlur);
+      if (panRafRef.current != null) {
+        cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
     };
-  }, [rawVizDataKey, liveMode]);
+  }, [rawVizDataKey, liveMode, syncReactChartZoomFromRef]);
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -1118,44 +1060,49 @@ export default function VizDashboardPage() {
       return zoom.end - zoom.start + 1 < len;
     };
 
+    const getWheelPlotWidth = () => {
+      const canvasMetrics = chartCanvasRef.current?.getPlotClientMetrics();
+      if (canvasMetrics) return canvasMetrics.plotWidth;
+      return getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current).plotWidth;
+    };
+
     const applyWheelPan = (deltaX: number) => {
       const len = chartDataLengthRef.current;
-      if (len === 0) return;
+      const data = chartDataRef.current;
+      if (len === 0 || data.length === 0) return;
       const zoom = chartZoomRef.current;
       if (!zoom) return;
-      const span = zoom.end - zoom.start + 1;
-      if (span >= len) return;
+      if (zoom.end - zoom.start + 1 >= len) return;
 
-      const { plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+      const plotWidth = getWheelPlotWidth();
       if (plotWidth <= 0) return;
 
-      const shift = Math.round(-(deltaX / plotWidth) * span);
-      if (shift === 0) return;
-
-      let newStart = zoom.start + shift;
-      let newEnd = zoom.end + shift;
-      if (newStart < 0) {
-        newEnd -= newStart;
-        newStart = 0;
-      }
-      if (newEnd >= len) {
-        newStart -= newEnd - len + 1;
-        newEnd = len - 1;
-      }
-      newStart = Math.max(0, newStart);
-      newEnd = Math.min(len - 1, newEnd);
+      const { start: newStart, end: newEnd } = computePanWindow(
+        data,
+        zoom.start,
+        zoom.end,
+        deltaX,
+        plotWidth,
+        len,
+      );
       if (newEnd - newStart + 1 >= len) {
-        commitChartZoomRef.current(null);
+        chartZoomRef.current = null;
+        chartCanvasRef.current?.resetWindow();
+        syncReactChartZoomFromRefFn.current();
+      } else if (inMemoryFullRef.current) {
+        applyCanvasZoomWindowRef.current(newStart, newEnd);
       } else {
         commitChartZoomRef.current({ start: newStart, end: newEnd });
       }
     };
 
-    const applyWheelZoom = (deltaY: number, focusRatio: number) => {
+    const applyWheelZoom = (deltaY: number, focusRatio: number, focusMs: number | null) => {
       if (liveModeRef.current) return;
       const len = chartDataLengthRef.current;
       if (len === 0) return;
-      const factor = deltaY > 0 ? 1.12 : 0.89;
+      const factor = wheelDeltaToZoomFactor(deltaY);
+      if (factor == null) return;
+
       const zoom = chartZoomRef.current;
       const currentStart = zoom?.start ?? 0;
       const currentEnd = zoom?.end ?? len - 1;
@@ -1164,20 +1111,32 @@ export default function VizDashboardPage() {
         MIN_CHART_ZOOM_POINTS,
         Math.min(len, Math.round(span * factor)),
       );
-      const focusIndex = Math.round(currentStart + focusRatio * (span - 1));
-      let newStart = Math.round(focusIndex - focusRatio * (newSpan - 1));
-      let newEnd = newStart + newSpan - 1;
-      if (newStart < 0) {
-        newEnd -= newStart;
-        newStart = 0;
+      if (newSpan === span) return;
+
+      const data = chartDataRef.current;
+      let newStart = 0;
+      let newEnd = len - 1;
+      if (data.length > 0) {
+        ({ start: newStart, end: newEnd } = computeWheelZoomWindow(
+          data,
+          currentStart,
+          currentEnd,
+          focusRatio,
+          newSpan,
+          len,
+          focusMs,
+        ));
       }
-      if (newEnd >= len) {
-        newStart -= newEnd - len + 1;
-        newEnd = len - 1;
-      }
-      newStart = Math.max(0, newStart);
+
       if (newStart === 0 && newEnd >= len - 1) {
-        commitChartZoomRef.current(null);
+        chartZoomRef.current = null;
+        chartCanvasRef.current?.resetWindow();
+        syncReactChartZoomFromRefFn.current();
+        return;
+      }
+
+      if (inMemoryFullRef.current) {
+        applyCanvasZoomWindowRef.current(newStart, newEnd);
       } else {
         commitChartZoomRef.current(clampChartZoom(newStart, newEnd, len));
       }
@@ -1186,7 +1145,13 @@ export default function VizDashboardPage() {
     const onWheel = (e: WheelEvent) => {
       if (liveModeRef.current || chartDataLengthRef.current === 0) return;
       e.preventDefault();
-      const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+
+      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(e.clientX) ?? null;
+      const canvasMetrics = chartCanvasRef.current?.getPlotClientMetrics();
+      const plotLeft = canvasMetrics?.plotLeft
+        ?? getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current).plotLeft;
+      const plotWidth = canvasMetrics?.plotWidth
+        ?? getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current).plotWidth;
       if (plotWidth <= 0) return;
 
       const absX = Math.abs(e.deltaX);
@@ -1199,15 +1164,20 @@ export default function VizDashboardPage() {
         return;
       }
 
-      const focusRatio = Math.max(0, Math.min(1, (e.clientX - plotLeft) / plotWidth));
-      wheelEventRef.current = mergeWheelZoomEvent(wheelEventRef.current, e.deltaY, focusRatio);
+      const focusRatio = wheelFocusRatioFromClientX(e.clientX, plotLeft, plotWidth);
+      wheelEventRef.current = mergeWheelZoomEvent(
+        wheelEventRef.current,
+        normalizeWheelDeltaY(e),
+        { focusRatio, focusMs },
+      );
+      if (!wheelEventRef.current) return;
       if (wheelRafRef.current != null) return;
       wheelRafRef.current = requestAnimationFrame(() => {
         wheelRafRef.current = null;
         const ev = wheelEventRef.current;
         wheelEventRef.current = null;
         if (!ev) return;
-        applyWheelZoom(ev.deltaY, ev.focusRatio);
+        applyWheelZoom(ev.deltaY, ev.focusRatio, ev.focusMs);
       });
     };
 
@@ -1217,6 +1187,10 @@ export default function VizDashboardPage() {
       if (wheelRafRef.current != null) {
         cancelAnimationFrame(wheelRafRef.current);
         wheelRafRef.current = null;
+      }
+      if (panRafRef.current != null) {
+        cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
       }
       cancelChartZoomRaf(chartZoomRafRefs);
     };
@@ -1535,12 +1509,18 @@ export default function VizDashboardPage() {
     }
   };
 
-  const visibleItems = items.filter(i => i.visible);
+  const visibleItems = useMemo(
+    () => items.filter(i => i.visible),
+    [items],
+  );
   const filteredItems = useMemo(
     () => items.filter(item => itemMatchesFieldSearch(item, itemFieldSearch)),
     [items, itemFieldSearch],
   );
-  const chartItems = visibleItems.slice(0, MAX_CHART_SERIES);
+  const chartItems = useMemo(
+    () => visibleItems.slice(0, MAX_CHART_SERIES),
+    [visibleItems],
+  );
   const chartSeriesTruncated = visibleItems.length > MAX_CHART_SERIES;
 
   const zoomWindow = useMemo(() => {
@@ -1679,26 +1659,40 @@ export default function VizDashboardPage() {
     return map;
   }, [displayRawVizData]);
 
-  const chartRender = useMemo(
-    () => decimateChartPoints(displayChartData, CHART_RENDER_MAX, chartItems.map(i => i.id)),
-    [displayChartData, chartItems],
+  const canvasChartData = useMemo(() => {
+    if (!chartData.length) return [];
+    return inMemoryFull ? chartData : displayChartData;
+  }, [chartData, displayChartData, inMemoryFull]);
+
+  const interactionChartPoints = useMemo(() => {
+    if (!chartData.length) return [];
+    if (zoomWindow && inMemoryFull) {
+      return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
+    }
+    return canvasChartData;
+  }, [chartData, canvasChartData, zoomWindow, inMemoryFull]);
+
+  renderChartDataLengthRef.current = interactionChartPoints.length;
+  renderChartPointsRef.current = interactionChartPoints;
+
+  const canvasWindowIndices = useMemo(
+    () => (zoomWindow
+      ? { start: zoomWindow.start, end: zoomWindow.end }
+      : null),
+    [zoomWindow?.start, zoomWindow?.end],
   );
-  const renderChartData = chartRender.points;
-  renderChartDataLengthRef.current = renderChartData.length;
-  renderChartPointsRef.current = renderChartData;
+
+  const resolveCanvasYScale = useCallback((item: VizItem) => (
+    item.y_axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y'
+  ), []);
+
+  const chartInteractionHidden = isChartPanning || isChartSelecting || isChartMeasuring;
 
   const chartZoomActive = zoomWindow != null;
 
-  const detailDataKey = useMemo(
-    () => (detailRawVizData && detailRawVizData.length > 0
-      ? `${detailRawVizData.length}:${detailRawVizData[0]?.timestamp}:${detailRawVizData[detailRawVizData.length - 1]?.timestamp}`
-      : 'overview'),
-    [detailRawVizData],
-  );
-
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
-    const pointLabel = `${renderChartData.length.toLocaleString()}${chartRender.decimated ? ` / ${chartRender.sourceCount.toLocaleString()}` : ''} points`;
+    const pointLabel = `${canvasChartData.length.toLocaleString()} points`;
     parts.push(pointLabel);
     if (inMemoryFull && rawVizData.length > 0) {
       parts.push(`in-memory ${formatFullLoadBytes(estimateVizPayloadBytes(rawVizData))}`);
@@ -1712,8 +1706,8 @@ export default function VizDashboardPage() {
     if (chartSeriesTruncated) {
       parts.push(`showing ${MAX_CHART_SERIES} / ${visibleItems.length} series`);
     }
-    if (chartRender.decimated) {
-      parts.push('render sampled');
+    if (inMemoryFull) {
+      parts.push('canvas');
     }
     if (detailLoading && !detailRawVizData?.length) {
       parts.push('loading detail');
@@ -1728,9 +1722,7 @@ export default function VizDashboardPage() {
     }
     return parts.join(' · ');
   }, [
-    renderChartData.length,
-    chartRender.decimated,
-    chartRender.sourceCount,
+    canvasChartData.length,
     queryMeta,
     rawVizData,
     inMemoryFull,
@@ -1780,12 +1772,15 @@ export default function VizDashboardPage() {
     setItems(prev => prev.map(i => (i.id === id ? { ...i, favorite: !i.favorite } : i)));
   }, []);
 
-  const handleChartMouseMove = useCallback((state: { activeLabel?: string | number }) => {
+  const handleChartHoverTimeKey = useCallback((timeKey: string | null) => {
     if (isChartPanning || isChartSelecting || isChartMeasuring) return;
-    if (state?.activeLabel != null) {
-      setHoverTimeKey(String(state.activeLabel));
-    }
+    if (timeKey == null) return;
+    setHoverTimeKey(timeKey);
   }, [isChartPanning, isChartSelecting, isChartMeasuring]);
+
+  const handleChartPlotBoundsChange = useCallback((bounds: { left: number; width: number }) => {
+    chartPlotBoundsRef.current = bounds;
+  }, []);
 
   const yAxisOptions = useMemo(() => {
     const ids = new Set(PRESET_Y_AXES.map(a => a.id));
@@ -1819,10 +1814,23 @@ export default function VizDashboardPage() {
       .filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID)
       .map(i => i.id);
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(displayChartData, leftIds),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(displayChartData, rightIds),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftIds),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightIds),
     } as Record<string, [number, number] | undefined>;
-  }, [displayChartData, chartItems]);
+  }, [chartData, chartItems]);
+
+  const canvasYAxisDomains = useMemo(() => ({
+    y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
+    y2: chartYAxisDomains[SECONDARY_Y_AXIS_ID],
+  }), [chartYAxisDomains]);
+
+  const canvasYAxes = useMemo(
+    () => chartYAxes.map(axis => ({
+      ...axis,
+      id: axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y',
+    })),
+    [chartYAxes],
+  );
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -1830,15 +1838,12 @@ export default function VizDashboardPage() {
     let raf = 0;
     raf = requestAnimationFrame(() => {
       raf = requestAnimationFrame(() => {
-        chartPlotBoundsRef.current = getChartPlotBoundsFromViewport(el);
+        chartPlotBoundsRef.current = chartCanvasRef.current?.refreshPlotBounds()
+          ?? getChartPlotBoundsFromViewport(el);
       });
     });
     return () => cancelAnimationFrame(raf);
-  }, [renderChartData, chartYAxes, chartViewportHeight]);
-
-  const resolveItemYAxisId = useCallback((item: VizItem) => (
-    item.y_axis.id === SECONDARY_Y_AXIS_ID ? SECONDARY_Y_AXIS_ID : PRIMARY_Y_AXIS_ID
-  ), []);
+  }, [canvasChartData, canvasYAxes, chartViewportHeight]);
 
   const statistics = useMemo(() => {
     const stats: Record<string, Statistics> = {};
@@ -1884,50 +1889,6 @@ export default function VizDashboardPage() {
     a.download = `${profiles.find(p => p.id === savedProfileId)?.name || 'chart-data'}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  const renderChartShape = (item: VizItem) => {
-    const yAxisId = resolveItemYAxisId(item);
-    const name = chartLabel(item);
-    if (item.chart_type === 'bar') {
-      return (
-        <Bar
-          key={item.id}
-          yAxisId={yAxisId}
-          dataKey={item.id}
-          fill={item.color}
-          name={name}
-          isAnimationActive={CHART_ANIMATION}
-        />
-      );
-    }
-    if (item.chart_type === 'area') {
-      return (
-        <Area
-          key={item.id}
-          yAxisId={yAxisId}
-          dataKey={item.id}
-          type="linear"
-          fill={item.color}
-          stroke={item.color}
-          fillOpacity={0.3}
-          name={name}
-          isAnimationActive={CHART_ANIMATION}
-        />
-      );
-    }
-    return (
-      <Line
-        key={item.id}
-        yAxisId={yAxisId}
-        dataKey={item.id}
-        type="linear"
-        dot={false}
-        stroke={item.color}
-        name={name}
-        isAnimationActive={CHART_ANIMATION}
-      />
-    );
   };
 
   return (
@@ -2418,66 +2379,26 @@ export default function VizDashboardPage() {
         >
           {selectionOverlay.overlayNode}
           {timeMeasureOverlay.overlayNode}
-          <ResponsiveContainer width="100%" height={chartViewportHeight}>
-            <ComposedChart
-              key={`${rawVizDataKey}:${detailDataKey}:${itemTransformKey}`}
-              data={renderChartData}
-              margin={{ top: 8, right: 0, left: 0, bottom: 4 }}
-              onMouseMove={handleChartMouseMove}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#2e3040" />
-              <XAxis
-                dataKey="timeKey"
-                tickFormatter={formatChartAxisTime}
-                fontSize={11}
-                stroke="#888aa0"
-                tickMargin={6}
-                minTickGap={28}
-              />
-              {chartYAxes.map(y => (
-                <YAxis
-                  key={`${y.id}-${y.unitLabel}`}
-                  yAxisId={y.id}
-                  orientation={y.orientation}
-                  width={y.unitLabel ? 44 : 30}
-                  domain={chartYAxisDomains[y.id]}
-                  allowDataOverflow
-                  tickFormatter={formatYAxisTick}
-                  tick={{ fontSize: 9, fill: '#888aa0' }}
-                  stroke="#888aa0"
-                  tickLine={false}
-                  axisLine={false}
-                  label={y.unitLabel ? {
-                    value: y.unitLabel,
-                    angle: y.orientation === 'left' ? -90 : 90,
-                    position: y.orientation === 'left' ? 'insideLeft' : 'insideRight',
-                    offset: 0,
-                    style: { fill: '#888aa0', fontSize: 10, textAnchor: 'middle' },
-                  } : undefined}
-                />
-              ))}
-              {chartTooltipEnabled && !shouldHideTooltipDuringInteraction(isChartPanning, isChartSelecting, isChartMeasuring) && (
-                <Tooltip
-                  key={itemTransformKey}
-                  isAnimationActive={CHART_ANIMATION}
-                  content={(props) => (
-                    <VizChartTooltip
-                      active={props.active}
-                      label={props.label}
-                      payload={props.payload as VizChartTooltipProps['payload']}
-                      itemById={tooltipItemById}
-                      rawValuesAtTime={
-                        props.label != null
-                          ? rawValuesByTimeKey.get(String(props.label))
-                          : undefined
-                      }
-                    />
-                  )}
-                />
-              )}
-              {chartItems.map(item => renderChartShape(item))}
-            </ComposedChart>
-          </ResponsiveContainer>
+          <VizCanvasChart
+            ref={chartCanvasRef}
+            points={canvasChartData}
+            fullTimeline={inMemoryFull ? chartData : undefined}
+            windowIndices={canvasWindowIndices}
+            chartItems={chartItems}
+            yAxisDomains={canvasYAxisDomains}
+            yAxes={canvasYAxes}
+            chartLabel={chartLabel}
+            resolveYScale={resolveCanvasYScale}
+            height={chartViewportHeight}
+            tooltipEnabled={chartTooltipEnabled}
+            hideTooltip={chartInteractionHidden}
+            itemById={tooltipItemById}
+            rawValuesByTimeKey={rawValuesByTimeKey}
+            onHoverTimeKey={handleChartHoverTimeKey}
+            onPlotBoundsChange={handleChartPlotBoundsChange}
+            formatYTick={formatYAxisTick}
+            formatTooltipValue={formatTooltipItemValue}
+          />
         </div>
         {chartZoom != null && !liveMode && (
           <ChartZoomNavigator
@@ -2491,7 +2412,7 @@ export default function VizDashboardPage() {
             downsampled={queryMeta?.downsampled}
           />
         )}
-        {items.length > 0 && renderChartData.length > 0 && (
+        {items.length > 0 && canvasChartData.length > 0 && (
           <ChartCursorValues
             timeKey={hoverTimeKey}
             formatTime={formatChartAxisTime}
