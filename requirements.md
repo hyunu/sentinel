@@ -411,7 +411,8 @@ graph LR
 |---|---|---|
 | CRUD | `/api/v1/viz/profiles` | 시각화 프로필 관리 |
 | POST | `/api/v1/viz/profiles/:id/apply` | 프로필 적용 데이터 조회 |
-| POST | `/api/v1/viz/query` | 시각화용 집계/변환 쿼리 |
+| POST | `/api/v1/viz/query-items` | 시각화 항목별 시계열 쿼리 (권장) |
+| POST | `/api/v1/viz/query` | *(deprecated, 410 Gone)* — `query-items` 사용 |
 
 ### AI
 | Method | Path | Description |

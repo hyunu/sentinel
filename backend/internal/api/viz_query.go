@@ -14,7 +14,6 @@ import (
 
 const (
 	vizDefaultPointLimit  = 8000
-	vizMaxPointLimit      = 10000
 	vizFullLoadPointLimit = 500000
 )
 

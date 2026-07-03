@@ -267,6 +267,9 @@
       "range": "줌 구간"
     },
     "deltaPrevPoint": "직전 포인트 대비 변화량",
+    "chartKeyboard": {
+      "region": "차트 — 키보드로 줌·이동 가능 (+/−, 방향키, Home)"
+    },
     "guide": {
       "whyLabel": "왜 이렇게 동작하나요?",
       "adjust7d": "7일로 조정",

@@ -267,6 +267,9 @@
       "range": "Zoomed time range"
     },
     "deltaPrevPoint": "Change from previous point",
+    "chartKeyboard": {
+      "region": "Chart — keyboard zoom and pan (+/−, arrows, Home)"
+    },
     "guide": {
       "whyLabel": "Why does it work this way?",
       "adjust7d": "Switch to 7 days",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -60,7 +61,7 @@ func (h *Handler) AIQuery(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"query":  req.Query,
-		"answer": "AI query received. Data context: " + string(len(recentData)) + " recent records. Query: " + req.Query,
+		"answer": "AI query received. Data context: " + strconv.Itoa(len(recentData)) + " recent records. Query: " + req.Query,
 		"context": gin.H{
 			"board_id":         req.BoardID,
 			"recent_data_size": len(recentData),

@@ -44,7 +44,17 @@ export const CHART_MANUAL_INTERACTIONS: ManualBlock[] = [
       l('Drag (while zoomed) — pan left/right.', '드래그(줌 상태) — 좌우 이동'),
       l('Alt + drag — measure elapsed time between two points.', 'Alt + 드래그 — 두 시점 사이 시간 간격 측정'),
       l('Double-click — reset zoom to the full loaded range.', '더블클릭 — 줌 초기화(불러온 전체 구간)'),
+      l('+ / − — zoom in and out (chart focused).', '+ / − — 차트 포커스 시 확대·축소'),
+      l('Arrow keys — pan left/right when zoomed.', '방향키 — 줌 상태에서 좌우 이동'),
+      l('Home / 0 / Esc — reset zoom when zoomed.', 'Home / 0 / Esc — 줌 상태에서 초기화'),
     ],
+  },
+  {
+    kind: 'tip',
+    text: l(
+      'Click the chart area once so it has focus before using keyboard shortcuts.',
+      '키보드 단축키를 쓰려면 차트 영역을 한 번 클릭해 포커스를 맞추세요.',
+    ),
   },
   {
     kind: 'tip',

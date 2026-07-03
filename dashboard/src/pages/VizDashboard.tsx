@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
@@ -53,7 +53,32 @@ import {
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
 } from '../lib/vizFullLoad';
+import {
+  clampChartZoom,
+  computeYAxisDomain,
+  parseOptionalNumber,
+  vizErrorMessage,
+  yAxisOptionLabel,
+  PRIMARY_Y_AXIS_ID,
+  SECONDARY_Y_AXIS_ID,
+  type VizChartPoint,
+} from '../lib/vizDashboardUtils';
+import {
+  TIME_PRESET_ALL,
+  TIME_PRESET_IDS,
+  isAllTimeRangeSelection,
+  isCustomTimeRangeSelection,
+  presetRangeStart,
+  type TimePresetId,
+} from '../lib/vizTimePresets';
+import {
+  CHART_KEYBOARD_PAN_PX,
+  isEditableKeyboardTarget,
+  resolveChartKeyboardAction,
+} from '../lib/vizChartKeyboard';
 import { useTranslation, type TFunction } from '../i18n';
+
+type ChartPoint = VizChartPoint;
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
@@ -74,11 +99,6 @@ function readFieldValuesLayout(): FieldValuesLayout {
     /* ignore */
   }
   return 'bottom';
-}
-
-function vizErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return fallback;
 }
 
 function formatDisplayValue(value: number, unit?: string): string {
@@ -107,15 +127,7 @@ function formatYAxisTick(value: number | string): string {
   if (abs >= 10) return n.toFixed(1);
   return n.toFixed(2);
 }
-function clampChartZoom(start: number, end: number, length: number): { start: number; end: number } {
-  if (length <= 0) return { start: 0, end: 0 };
-  const s = Math.max(0, Math.min(start, length - 1));
-  const e = Math.max(s, Math.min(end, length - 1));
-  return { start: s, end: e };
-}
 
-const PRIMARY_Y_AXIS_ID = 'y-left';
-const SECONDARY_Y_AXIS_ID = 'y-right';
 const PRESET_Y_AXES: YAxisConfig[] = [
   { id: PRIMARY_Y_AXIS_ID, label: 'Left', unit: '' },
   { id: SECONDARY_Y_AXIS_ID, label: 'Right', unit: '' },
@@ -218,117 +230,12 @@ function makeItem(protoId: string, fieldName: string, idx: number, usedShortLabe
   };
 }
 
-type ChartPoint = { timeKey: string } & Record<string, string | number>;
-
-function yAxisOptionLabel(axisId: string, tr: (key: string) => string): string {
-  if (axisId === PRIMARY_Y_AXIS_ID) return tr('viz.yAxisSide.left');
-  if (axisId === SECONDARY_Y_AXIS_ID) return tr('viz.yAxisSide.right');
-  return axisId;
-}
-
-function computeYAxisDomain(data: ChartPoint[], axisItems: VizItem[]): [number, number] | undefined {
-  if (axisItems.length === 0 || data.length === 0) return undefined;
-  const itemIds = axisItems.map(i => i.id);
-  let dataMin = Infinity;
-  let dataMax = -Infinity;
-  for (const point of data) {
-    for (const id of itemIds) {
-      const v = point[id];
-      if (typeof v === 'number' && !Number.isNaN(v)) {
-        if (v < dataMin) dataMin = v;
-        if (v > dataMax) dataMax = v;
-      }
-    }
-  }
-
-  const fixedMins = axisItems
-    .map(i => i.y_axis.min)
-    .filter((v): v is number => v !== undefined && Number.isFinite(v));
-  const fixedMaxs = axisItems
-    .map(i => i.y_axis.max)
-    .filter((v): v is number => v !== undefined && Number.isFinite(v));
-
-  let min: number;
-  let max: number;
-  if (fixedMins.length) {
-    min = Math.min(...fixedMins);
-  } else if (Number.isFinite(dataMin)) {
-    min = dataMin;
-  } else {
-    return undefined;
-  }
-
-  if (fixedMaxs.length) {
-    max = Math.max(...fixedMaxs);
-  } else if (Number.isFinite(dataMax)) {
-    max = dataMax;
-  } else {
-    return undefined;
-  }
-
-  if (min === max) {
-    const pad = Math.abs(min) * 0.05 || 1;
-    return [min - pad, max + pad];
-  }
-  const pad = (max - min) * 0.05;
-  return [min - pad, max + pad];
-}
-
-function parseOptionalNumber(raw: string): number | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed || trimmed === '-' || trimmed === '.' || trimmed === '-.') return undefined;
-  const n = Number(trimmed);
-  return Number.isFinite(n) ? n : undefined;
-}
-
 interface Statistics {
   min: number;
   max: number;
   avg: number;
   count: number;
   last: number | string;
-}
-
-const TIME_PRESET_ALL = 'all' as const;
-
-type TimePresetId = typeof TIME_PRESET_ALL | '1d' | '3d' | '7d' | '15d' | '30d' | '3m' | '6m' | '1y';
-
-const TIME_PRESET_IDS: TimePresetId[] = ['1d', '3d', '7d', '15d', '30d', '3m', '6m', '1y', 'all'];
-
-function presetRangeStart(end: Date, presetId: TimePresetId): Date {
-  switch (presetId) {
-    case '1d':
-      return new Date(end.getTime() - 86400000);
-    case '3d':
-      return new Date(end.getTime() - 3 * 86400000);
-    case '7d':
-      return new Date(end.getTime() - 7 * 86400000);
-    case '15d':
-      return new Date(end.getTime() - 15 * 86400000);
-    case '30d':
-      return new Date(end.getTime() - 30 * 86400000);
-    case '3m': {
-      const start = new Date(end);
-      start.setMonth(start.getMonth() - 3);
-      return start;
-    }
-    case '6m': {
-      const start = new Date(end);
-      start.setMonth(start.getMonth() - 6);
-      return start;
-    }
-    case '1y': {
-      const start = new Date(end);
-      start.setFullYear(start.getFullYear() - 1);
-      return start;
-    }
-    default:
-      return end;
-  }
-}
-
-function isAllTimeRangeSelection(presetId: TimePresetId, customStart: string, customEnd: string): boolean {
-  return presetId === TIME_PRESET_ALL && !customStart && !customEnd;
 }
 
 function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment, t: TFunction): {
@@ -358,10 +265,6 @@ function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment, t: TFunction): {
     why: t('viz.guide.bytesWhy'),
     recommend: t('viz.guide.bytesRecommend'),
   };
-}
-
-function isCustomTimeRangeSelection(presetId: TimePresetId, customStart: string, customEnd: string): boolean {
-  return presetId === TIME_PRESET_ALL && !!(customStart || customEnd);
 }
 
 type VizDataRow = { timestamp: string; values: Record<string, number> };
@@ -820,6 +723,65 @@ export default function VizDashboardPage() {
     }
     applyChartZoomWindow(newStart, newEnd);
   }, [applyChartZoomWindow, chartData.length, chartZoom, liveMode]);
+
+  const panChartByKeyboard = useCallback((direction: -1 | 1) => {
+    if (liveMode || chartData.length === 0) return;
+    const zoom = chartZoom;
+    if (!zoom || zoom.end - zoom.start + 1 >= chartData.length) return;
+
+    const plotWidth = chartCanvasRef.current?.getPlotClientMetrics()?.plotWidth
+      ?? chartPlotBoundsRef.current.width;
+    if (plotWidth <= 0) return;
+
+    const { start, end } = computePanWindow(
+      chartData,
+      zoom.start,
+      zoom.end,
+      direction * CHART_KEYBOARD_PAN_PX,
+      plotWidth,
+      chartData.length,
+    );
+    applyChartZoomWindow(start, end);
+  }, [applyChartZoomWindow, chartData, chartZoom, liveMode]);
+
+  const handleChartViewportKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (liveMode || isEditableKeyboardTarget(e.target)) return;
+    const action = resolveChartKeyboardAction(e.key);
+    if (!action) return;
+
+    if (action.type === 'reset-zoom') {
+      const zoom = chartZoom;
+      const zoomed = zoom != null
+        && chartData.length > 0
+        && zoom.end - zoom.start + 1 < chartData.length;
+      if (!zoomed) return;
+    }
+
+    switch (action.type) {
+      case 'zoom-in':
+        e.preventDefault();
+        zoomChartByFactor(0.8, 0.5);
+        break;
+      case 'zoom-out':
+        e.preventDefault();
+        zoomChartByFactor(1.25, 0.5);
+        break;
+      case 'pan-left':
+        e.preventDefault();
+        panChartByKeyboard(-1);
+        break;
+      case 'pan-right':
+        e.preventDefault();
+        panChartByKeyboard(1);
+        break;
+      case 'reset-zoom':
+        e.preventDefault();
+        resetChartZoom();
+        break;
+      default:
+        break;
+    }
+  }, [liveMode, chartZoom, chartData.length, zoomChartByFactor, panChartByKeyboard, resetChartZoom]);
 
   const finalizeChartSelection = useCallback(() => {
     const leftClientX = refAreaLeftClientXRef.current;
@@ -2786,7 +2748,10 @@ export default function VizDashboardPage() {
         <div
           ref={chartViewportRef}
           className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
-          tabIndex={-1}
+          role="application"
+          tabIndex={0}
+          aria-label={t('viz.chartKeyboard.region')}
+          onKeyDown={handleChartViewportKeyDown}
           onDoubleClick={liveMode ? undefined : resetChartZoom}
         >
           {selectionOverlay.overlayNode}

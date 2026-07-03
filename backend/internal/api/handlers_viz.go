@@ -180,60 +180,10 @@ func (h *Handler) ApplyVizProfile(c *gin.Context) {
 }
 
 func (h *Handler) VizQuery(c *gin.Context) {
-	var req struct {
-		BoardID    string   `json:"board_id" binding:"required"`
-		SessionID  string   `json:"session_id,omitempty"`
-		FieldNames []string `json:"field_names" binding:"required"`
-		Aggregate  string   `json:"aggregate,omitempty"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	filter := bson.M{"board_id": req.BoardID}
-	if req.SessionID != "" {
-		filter["session_id"] = req.SessionID
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	cursor, err := h.db.UartData().Find(ctx, filter, options.Find().SetSort(bson.M{"timestamp": 1}))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var data []models.UartData
-	if err := cursor.All(ctx, &data); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
-		return
-	}
-
-	_ = req.Aggregate
-	type resultPoint struct {
-		Timestamp time.Time              `json:"timestamp"`
-		Values    map[string]interface{} `json:"values"`
-	}
-
-	results := make([]resultPoint, 0, len(data))
-	for _, d := range data {
-		vals := make(map[string]interface{})
-		for _, name := range req.FieldNames {
-			if d.ParsedFields != nil {
-				if v, ok := d.ParsedFields[name]; ok {
-					vals[name] = v
-				}
-			}
-		}
-		if len(vals) > 0 {
-			results = append(results, resultPoint{Timestamp: d.Timestamp, Values: vals})
-		}
-	}
-
-	c.JSON(http.StatusOK, results)
+	c.JSON(http.StatusGone, gin.H{
+		"error":  "POST /viz/query is deprecated; use POST /viz/query-items instead",
+		"status": "deprecated",
+	})
 }
 
 type VizQueryItemsRequest struct {
