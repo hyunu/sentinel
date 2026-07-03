@@ -1603,9 +1603,10 @@ export default function VizDashboardPage() {
     () => items.filter(item => itemMatchesFieldSearch(item, itemFieldSearch)),
     [items, itemFieldSearch],
   );
-  const chartItems = useMemo(
-    () => visibleItems.slice(0, MAX_CHART_SERIES),
-    [visibleItems],
+  const chartItems = useMemo(() => items, [items]);
+  const activeChartItems = useMemo(
+    () => items.filter(i => i.visible).slice(0, MAX_CHART_SERIES),
+    [items],
   );
   const chartSeriesTruncated = visibleItems.length > MAX_CHART_SERIES;
 
@@ -1846,8 +1847,8 @@ export default function VizDashboardPage() {
   );
 
   const chartItemIds = useMemo(
-    () => new Set(chartItems.map(i => i.id)),
-    [chartItems],
+    () => new Set(activeChartItems.map(i => i.id)),
+    [activeChartItems],
   );
 
   const hoverPrevTimeKey = useMemo(() => {
@@ -1894,10 +1895,10 @@ export default function VizDashboardPage() {
   }, [items]);
 
   const chartYAxes = useMemo(() => {
-    if (chartItems.length === 0) return [];
-    const usesRight = chartItems.some(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
-    const leftItems = chartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
-    const rightItems = chartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    if (activeChartItems.length === 0) return [];
+    const usesRight = activeChartItems.some(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+    const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
     const axes: Array<{ id: string; orientation: 'left' | 'right'; unitLabel: string }> = [
       { id: PRIMARY_Y_AXIS_ID, orientation: 'left', unitLabel: axisUnitLabel(leftItems) },
     ];
@@ -1909,20 +1910,20 @@ export default function VizDashboardPage() {
       });
     }
     return axes;
-  }, [chartItems]);
+  }, [activeChartItems]);
 
   const chartYAxisDomains = useMemo(() => {
-    const leftIds = chartItems
+    const leftIds = activeChartItems
       .filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID)
       .map(i => i.id);
-    const rightIds = chartItems
+    const rightIds = activeChartItems
       .filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID)
       .map(i => i.id);
     return {
       [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftIds),
       [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightIds),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, chartItems]);
+  }, [chartData, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -2546,12 +2547,14 @@ export default function VizDashboardPage() {
         >
           {selectionOverlay.overlayNode}
           {timeMeasureOverlay.overlayNode}
+          {canvasChartData.length > 0 && activeChartItems.length > 0 ? (
           <VizCanvasChart
             ref={chartCanvasRef}
             points={canvasChartData}
             fullTimeline={inMemoryFull ? chartData : undefined}
             windowIndices={canvasWindowIndices}
             chartItems={chartItems}
+            maxVisibleSeries={MAX_CHART_SERIES}
             yAxisDomains={canvasYAxisDomains}
             yAxes={canvasYAxes}
             chartLabel={chartLabel}
@@ -2566,12 +2569,15 @@ export default function VizDashboardPage() {
             formatYTick={formatYAxisTick}
             formatTooltipValue={formatTooltipItemValue}
           />
+          ) : canvasChartData.length > 0 && items.length > 0 ? (
+            <p className="viz-chart-empty muted">{t('viz.noVisibleItems')}</p>
+          ) : null}
         </div>
         {chartNavigatorWindow && (
           <ChartZoomNavigator
             chartData={chartData}
             chartZoom={chartNavigatorWindow}
-            sparkItemId={chartItems[0]?.id}
+            sparkItemId={activeChartItems[0]?.id}
             formatTime={formatChartAxisTime}
             onWindowChange={applyChartZoomWindow}
             totalMatched={queryMeta?.total_matched}

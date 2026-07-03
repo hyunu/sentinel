@@ -40,6 +40,7 @@ export interface VizCanvasChartProps {
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
   chartItems: VizItem[];
+  maxVisibleSeries: number;
   yAxisDomains: Record<string, [number, number] | undefined>;
   yAxes: Array<{ id: string; orientation: 'left' | 'right'; unitLabel: string }>;
   chartLabel: (item: VizItem) => string;
@@ -136,15 +137,26 @@ function buildSeriesConfig(
   chartItems: VizItem[],
   chartLabel: (item: VizItem) => string,
   resolveYScale: (item: VizItem) => typeof PRIMARY_SCALE | typeof SECONDARY_SCALE,
+  maxVisibleSeries: number,
 ): Series[] {
+  let visibleRank = 0;
   return [
     {},
     ...chartItems.map((item): Series => {
       const scale = resolveYScale(item);
+      let show = false;
+      if (item.visible) {
+        show = visibleRank < maxVisibleSeries;
+        visibleRank++;
+      }
+      const base = {
+        label: chartLabel(item),
+        scale,
+        show,
+      };
       if (item.chart_type === 'bar') {
         return {
-          label: chartLabel(item),
-          scale,
+          ...base,
           stroke: item.color,
           fill: item.color,
           paths: uPlot.paths.bars?.({ size: [0.75, 100] }),
@@ -153,16 +165,14 @@ function buildSeriesConfig(
       }
       if (item.chart_type === 'area') {
         return {
-          label: chartLabel(item),
-          scale,
+          ...base,
           stroke: item.color,
           fill: colorWithAlpha(item.color, 0.28),
           width: 1,
         };
       }
       return {
-        label: chartLabel(item),
-        scale,
+        ...base,
         stroke: item.color,
         width: 1,
       };
@@ -190,6 +200,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     fullTimeline,
     windowIndices,
     chartItems,
+    maxVisibleSeries,
     yAxisDomains,
     yAxes,
     chartLabel,
@@ -313,6 +324,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const seriesLayoutKey = chartItems.map(
     i => `${i.id}:${i.color}:${i.chart_type}:${i.y_axis.id}`,
   ).join('|');
+  const visibilityKey = chartItems.map(i => `${i.id}:${i.visible ? 1 : 0}`).join('|');
   const yAxisLayoutKey = yAxes.map(a => `${a.id}:${a.unitLabel}`).join('|');
   const yDomainKey = [
     yAxisDomains.y?.join(','),
@@ -400,6 +412,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         chartItems,
         item => chartLabelRef.current(item),
         item => resolveYScaleRef.current(item),
+        maxVisibleSeries,
       ),
       hooks: {
         ready: [syncPlotBounds],
@@ -436,10 +449,14 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
 
           const rawValues = rawMap.get(point.timeKey);
           let html = `<div class="viz-chart-tooltip-label">${formatChartAxisTime(point.timeKey)}</div>`;
+          let visibleRank = 0;
           for (let seriesIdx = 0; seriesIdx < chartItemsRef.current.length; seriesIdx++) {
             const item = chartItemsRef.current[seriesIdx];
+            if (!item.visible) continue;
+            if (visibleRank >= maxVisibleSeries) break;
+            visibleRank++;
             const value = u.data[seriesIdx + 1]?.[idx];
-            const name = chartLabel(item);
+            const name = chartLabelRef.current(item);
             const display = formatValue(items.get(item.id), rawValues, value);
             html += `<div class="viz-chart-tooltip-row">`
               + `<span class="viz-chart-tooltip-swatch" style="background-color:${item.color}"></span>`
@@ -493,7 +510,21 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, applyWindowIndices, resetWindow]);
+  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, maxVisibleSeries, applyWindowIndices, resetWindow]);
+
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    let visibleRank = 0;
+    chartItems.forEach((item, idx) => {
+      let show = false;
+      if (item.visible) {
+        show = visibleRank < maxVisibleSeries;
+        visibleRank++;
+      }
+      u.setSeries(idx + 1, { show });
+    });
+  }, [visibilityKey, chartItems, maxVisibleSeries]);
 
   const windowIndicesKey = windowIndices
     ? `${windowIndices.start}:${windowIndices.end}`
@@ -533,6 +564,14 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   if (points.length === 0 || chartItems.length === 0) {
     return null;
   }
+  let visibleRank = 0;
+  let hasShownSeries = false;
+  for (const item of chartItems) {
+    if (!item.visible) continue;
+    if (visibleRank < maxVisibleSeries) hasShownSeries = true;
+    visibleRank++;
+  }
+  if (!hasShownSeries) return null;
 
   return (
     <div ref={wrapRef} className="viz-canvas-chart-wrap">

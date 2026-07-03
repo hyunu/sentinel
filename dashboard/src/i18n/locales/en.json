@@ -232,6 +232,7 @@
     "count": "Count",
     "last": "Last",
     "noChartData": "No chart data. Select a board and protocol, then refresh.",
+    "noVisibleItems": "No series visible. Use the eye icon in Field Values or check items in Configuration.",
     "time": {
       "all": "All"
     },

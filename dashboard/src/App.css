@@ -1708,6 +1708,18 @@ tbody tr:last-child td {
   border-radius: var(--radius-sm);
 }
 
+.viz-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .viz-chart-viewport:focus,
 .viz-chart-viewport:focus-visible {
   outline: none;
