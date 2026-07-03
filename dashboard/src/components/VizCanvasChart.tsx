@@ -343,6 +343,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
 
     const axisColor = readCssVar('--chart-axis', '#888aa0');
     const gridColor = readCssVar('--chart-grid', '#2e3040');
+    const axisBorder = { show: true, stroke: axisColor, width: 1 };
 
     const makeOptions = (width: number): Options => ({
       width,
@@ -386,6 +387,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           stroke: axisColor,
           grid: { show: false },
           ticks: { stroke: axisColor },
+          border: axisBorder,
           font: '9px system-ui, sans-serif',
           size: leftAxis?.unitLabel ? 44 : 30,
           values: (_u, splits) => splits.map(v => formatYTick(v)),
@@ -400,6 +402,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           stroke: axisColor,
           grid: { show: false },
           ticks: { stroke: axisColor },
+          border: axisBorder,
           font: '9px system-ui, sans-serif',
           size: rightAxis?.unitLabel ? 44 : 30,
           values: (_u, splits) => splits.map(v => formatYTick(v)),
