@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from '../i18n';
 
 type ChartPoint = { timeKey: string } & Record<string, string | number>;
 
@@ -174,6 +175,7 @@ export default function ChartZoomNavigator({
   returned,
   downsampled,
 }: ChartZoomNavigatorProps) {
+  const { t } = useTranslation();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragSessionRef = useRef<{
     pointerId: number;
@@ -299,7 +301,7 @@ export default function ChartZoomNavigator({
   return (
     <div
       className={`viz-chart-navigator${widthPct >= 99.5 ? ' is-full-range' : ''}`}
-      aria-label="Chart zoom position"
+      aria-label={t('viz.navigator.position')}
     >
       <div
         ref={trackRef}
@@ -328,7 +330,7 @@ export default function ChartZoomNavigator({
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
           onPointerDown={onThumbPointerDown}
           role="slider"
-          aria-label="Zoomed time range"
+          aria-label={t('viz.navigator.range')}
           aria-valuemin={0}
           aria-valuemax={Math.max(0, total - 1)}
           aria-valuenow={windowRange.start}

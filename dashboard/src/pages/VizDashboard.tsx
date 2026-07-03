@@ -76,6 +76,11 @@ function readFieldValuesLayout(): FieldValuesLayout {
   return 'bottom';
 }
 
+function vizErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
 function formatDisplayValue(value: number, unit?: string): string {
   const text = value.toLocaleString();
   const u = unit?.trim();
@@ -190,6 +195,7 @@ function normalizeVizItems(items: VizItem[]): VizItem[] {
   const used = new Set<string>();
   return items.map(item => ({
     ...item,
+    chart_type: String(item.chart_type) === 'scatter' ? 'line' : item.chart_type,
     short_label: ensureUniqueShortLabel(
       item.short_label?.trim() || shortLabelFromField(item.field_ref.field_name || item.label),
       used,
@@ -214,26 +220,65 @@ function makeItem(protoId: string, fieldName: string, idx: number, usedShortLabe
 
 type ChartPoint = { timeKey: string } & Record<string, string | number>;
 
-function computeYAxisDomain(data: ChartPoint[], itemIds: string[]): [number, number] | undefined {
-  if (itemIds.length === 0 || data.length === 0) return undefined;
-  let min = Infinity;
-  let max = -Infinity;
+function yAxisOptionLabel(axisId: string, tr: (key: string) => string): string {
+  if (axisId === PRIMARY_Y_AXIS_ID) return tr('viz.yAxisSide.left');
+  if (axisId === SECONDARY_Y_AXIS_ID) return tr('viz.yAxisSide.right');
+  return axisId;
+}
+
+function computeYAxisDomain(data: ChartPoint[], axisItems: VizItem[]): [number, number] | undefined {
+  if (axisItems.length === 0 || data.length === 0) return undefined;
+  const itemIds = axisItems.map(i => i.id);
+  let dataMin = Infinity;
+  let dataMax = -Infinity;
   for (const point of data) {
     for (const id of itemIds) {
       const v = point[id];
       if (typeof v === 'number' && !Number.isNaN(v)) {
-        if (v < min) min = v;
-        if (v > max) max = v;
+        if (v < dataMin) dataMin = v;
+        if (v > dataMax) dataMax = v;
       }
     }
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+
+  const fixedMins = axisItems
+    .map(i => i.y_axis.min)
+    .filter((v): v is number => v !== undefined && Number.isFinite(v));
+  const fixedMaxs = axisItems
+    .map(i => i.y_axis.max)
+    .filter((v): v is number => v !== undefined && Number.isFinite(v));
+
+  let min: number;
+  let max: number;
+  if (fixedMins.length) {
+    min = Math.min(...fixedMins);
+  } else if (Number.isFinite(dataMin)) {
+    min = dataMin;
+  } else {
+    return undefined;
+  }
+
+  if (fixedMaxs.length) {
+    max = Math.max(...fixedMaxs);
+  } else if (Number.isFinite(dataMax)) {
+    max = dataMax;
+  } else {
+    return undefined;
+  }
+
   if (min === max) {
     const pad = Math.abs(min) * 0.05 || 1;
     return [min - pad, max + pad];
   }
   const pad = (max - min) * 0.05;
   return [min - pad, max + pad];
+}
+
+function parseOptionalNumber(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === '-' || trimmed === '.' || trimmed === '-.') return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 interface Statistics {
@@ -533,6 +578,8 @@ export default function VizDashboardPage() {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [loading, setLoading] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [livePollError, setLivePollError] = useState<string | null>(null);
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
@@ -556,6 +603,7 @@ export default function VizDashboardPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [itemFieldSearch, setItemFieldSearch] = useState('');
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
+  const [addFieldPick, setAddFieldPick] = useState('');
   const itemFieldSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [chartManualOpen, setChartManualOpen] = useState(false);
@@ -1312,21 +1360,22 @@ export default function VizDashboardPage() {
 
   const loadProfile = useCallback(async (id: string) => {
     setProfileError('');
-    const p = await api.viz.getProfile(id);
-    setSelectedBoard(p.board_id);
-    setItems(normalizeVizItems(p.items));
-    setSavedProfileId(p.id);
-    setShowProfileAdd(false);
-    setProfileDraftName('');
-    const protoId = p.items.find(i => i.field_ref.protocol_id)?.field_ref.protocol_id;
-    if (protoId) setSelectedProto(protoId);
-    if (p.time_range?.start && p.time_range?.end) {
-      setCustomStart(formatDateTimeFromDate(new Date(p.time_range.start)));
-      setCustomEnd(formatDateTimeFromDate(new Date(p.time_range.end)));
-      setTimeRangePresetId(TIME_PRESET_ALL);
-    }
+    setQueryError(null);
     setLoading(true);
     try {
+      const p = await api.viz.getProfile(id);
+      setSelectedBoard(p.board_id);
+      setItems(normalizeVizItems(p.items));
+      setSavedProfileId(p.id);
+      setShowProfileAdd(false);
+      setProfileDraftName('');
+      const protoId = p.items.find(i => i.field_ref.protocol_id)?.field_ref.protocol_id;
+      if (protoId) setSelectedProto(protoId);
+      if (p.time_range?.start && p.time_range?.end) {
+        setCustomStart(formatDateTimeFromDate(new Date(p.time_range.start)));
+        setCustomEnd(formatDateTimeFromDate(new Date(p.time_range.end)));
+        setTimeRangePresetId(TIME_PRESET_ALL);
+      }
       const isAllRange = !p.time_range?.start || !p.time_range?.end;
       const result = await queryVizDataset({
         board_id: p.board_id,
@@ -1336,10 +1385,16 @@ export default function VizDashboardPage() {
           : undefined,
       }, { assessAllRange: isAllRange });
       applyQueryResult(result, isAllRange);
+    } catch (e) {
+      setQueryError(vizErrorMessage(e, t('viz.queryError')));
     } finally {
       setLoading(false);
     }
-  }, [applyQueryResult]);
+  }, [applyQueryResult, t]);
+
+  const dismissQueryError = useCallback(() => {
+    setQueryError(null);
+  }, []);
 
   useEffect(() => {
     if (!selectedBoard) { setProfiles([]); return; }
@@ -1365,7 +1420,7 @@ export default function VizDashboardPage() {
 
   const isCustomTimeRange = isCustomTimeRangeSelection(timeRangePresetId, customStart, customEnd);
 
-  const selectTimePreset = useCallback((id: TimePresetId) => {
+  const applyTimePresetState = useCallback((id: TimePresetId) => {
     setTimeRangePresetId(id);
     setCustomStart('');
     setCustomEnd('');
@@ -1380,6 +1435,7 @@ export default function VizDashboardPage() {
   ) => {
     if (!selectedBoard || !itemsRef.current.length) return;
     setLoading(true);
+    setQueryError(null);
     try {
       const result = await queryVizDataset({
         board_id: selectedBoard,
@@ -1387,10 +1443,30 @@ export default function VizDashboardPage() {
         time_range: timeRange,
       }, { assessAllRange });
       applyQueryResult(result, assessAllRange);
+    } catch (e) {
+      setQueryError(vizErrorMessage(e, t('viz.queryError')));
     } finally {
       setLoading(false);
     }
-  }, [selectedBoard, applyQueryResult]);
+  }, [selectedBoard, applyQueryResult, t]);
+
+  const applyTimePresetQuery = useCallback(async (id: TimePresetId) => {
+    if (liveModeRef.current || !selectedBoard || !itemsRef.current.length) return;
+    const isAllRange = id === TIME_PRESET_ALL;
+    const timeRange = isAllRange
+      ? undefined
+      : (() => {
+          const end = new Date();
+          const start = presetRangeStart(end, id);
+          return { start: start.toISOString(), end: end.toISOString() };
+        })();
+    await runVizQuery(timeRange, isAllRange);
+  }, [selectedBoard, runVizQuery]);
+
+  const selectTimePreset = useCallback((id: TimePresetId) => {
+    applyTimePresetState(id);
+    void applyTimePresetQuery(id);
+  }, [applyTimePresetState, applyTimePresetQuery]);
 
   const fetchAll = useCallback(async () => {
     const isAllRange = isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
@@ -1398,15 +1474,9 @@ export default function VizDashboardPage() {
   }, [runVizQuery, buildTimeRange, timeRangePresetId, customStart, customEnd]);
 
   const applyGuideTimePreset = useCallback(async (id: TimePresetId) => {
-    selectTimePreset(id);
-    if (id === TIME_PRESET_ALL) {
-      await runVizQuery(undefined, true);
-      return;
-    }
-    const end = new Date();
-    const start = presetRangeStart(end, id);
-    await runVizQuery({ start: start.toISOString(), end: end.toISOString() }, false);
-  }, [selectTimePreset, runVizQuery]);
+    applyTimePresetState(id);
+    await applyTimePresetQuery(id);
+  }, [applyTimePresetState, applyTimePresetQuery]);
 
   const dismissAllRangeGuide = useCallback(() => {
     setAllRangeGuide(null);
@@ -1435,10 +1505,11 @@ export default function VizDashboardPage() {
         const merged = [...existing, ...result.data];
         return merged.length > MAX_POINTS ? merged.slice(-MAX_POINTS) : merged;
       });
-    } catch {
-      // ignore polling errors
+      setLivePollError(null);
+    } catch (e) {
+      setLivePollError(vizErrorMessage(e, t('viz.livePollError')));
     }
-  }, [selectedBoard]);
+  }, [selectedBoard, t]);
 
   const stopLive = useCallback(() => {
     if (pollTimerRef.current) {
@@ -1458,6 +1529,7 @@ export default function VizDashboardPage() {
       startLive();
     } else {
       stopLive();
+      setLivePollError(null);
     }
     return stopLive;
   }, [liveMode, startLive, stopLive]);
@@ -1488,6 +1560,18 @@ export default function VizDashboardPage() {
       }));
     if (newItems.length) setItems(prev => [...prev, ...newItems]);
   };
+
+  const availableFields = useMemo(
+    () => protocolFieldPaths.filter(name => !existingFieldLabels.has(name)),
+    [protocolFieldPaths, existingFieldLabels],
+  );
+
+  const addField = useCallback((fieldName: string) => {
+    if (!selectedProto || !fieldName) return;
+    const usedShortLabels = new Set(items.map(i => chartLabel(i)));
+    setItems(prev => [...prev, makeItem(selectedProto, fieldName, prev.length, usedShortLabels)]);
+    setAddFieldPick('');
+  }, [selectedProto, items]);
 
   const toggleVisibility = (id: string) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, visible: !i.visible } : i));
@@ -1531,22 +1615,22 @@ export default function VizDashboardPage() {
 
   const saveProfile = async (name: string) => {
     if (!selectedBoard) {
-      setProfileError('Select a board first.');
+      setProfileError(t('viz.profileError.noBoard'));
       return false;
     }
     const trimmed = name.trim();
     if (!trimmed) {
-      setProfileError('Enter a profile name.');
+      setProfileError(t('viz.profileError.noName'));
       return false;
     }
     if (items.length === 0) {
-      setProfileError('No items to save.');
+      setProfileError(t('viz.profileError.noItems'));
       return false;
     }
 
     const existing = profiles.find(p => p.name === trimmed);
     if (!existing && profiles.length >= MAX_PROFILES) {
-      setProfileError(`You can save up to ${MAX_PROFILES} profiles per board.`);
+      setProfileError(t('viz.profileError.maxProfiles', { max: MAX_PROFILES }));
       return false;
     }
 
@@ -1569,7 +1653,7 @@ export default function VizDashboardPage() {
       setProfiles(await api.viz.listProfiles(selectedBoard));
       return true;
     } catch (e) {
-      setProfileError(e instanceof Error ? e.message : 'Failed to save profile.');
+      setProfileError(vizErrorMessage(e, t('viz.profileError.saveFailed')));
       return false;
     } finally {
       setProfileSaving(false);
@@ -1607,7 +1691,7 @@ export default function VizDashboardPage() {
         setProfiles(await api.viz.listProfiles(selectedBoard));
       }
     } catch (e) {
-      setProfileError(e instanceof Error ? e.message : 'Failed to delete profile.');
+      setProfileError(vizErrorMessage(e, t('viz.profileError.deleteFailed')));
     }
   };
 
@@ -1806,6 +1890,14 @@ export default function VizDashboardPage() {
     [allRangeGuide, t],
   );
 
+  const chartEmptyMessage = useMemo(() => {
+    if (loading && rawVizData.length === 0) return t('common.loading');
+    if (!selectedBoard) return t('viz.noBoardSelected');
+    if (!items.length) return t('viz.noItemsConfigured');
+    if (rawVizData.length === 0) return t('viz.noChartData');
+    return null;
+  }, [loading, rawVizData.length, selectedBoard, items.length, t]);
+
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
     parts.push(t('viz.summary.points', { count: canvasChartData.length.toLocaleString() }));
@@ -1913,11 +2005,7 @@ export default function VizDashboardPage() {
     chartPlotBoundsRef.current = bounds;
   }, []);
 
-  const yAxisOptions = useMemo(() => {
-    const ids = new Set(PRESET_Y_AXES.map(a => a.id));
-    for (const item of items) ids.add(item.y_axis.id);
-    return [...ids];
-  }, [items]);
+  const yAxisOptions = useMemo(() => PRESET_Y_AXES.map(axis => axis.id), []);
 
   const chartYAxes = useMemo(() => {
     if (activeChartItems.length === 0) return [];
@@ -1938,17 +2026,26 @@ export default function VizDashboardPage() {
   }, [activeChartItems]);
 
   const chartYAxisDomains = useMemo(() => {
-    const leftIds = activeChartItems
-      .filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID)
-      .map(i => i.id);
-    const rightIds = activeChartItems
-      .filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID)
-      .map(i => i.id);
+    const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+    const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+
+    let domainSource = chartData;
+    if (chartZoom && chartData.length > 0) {
+      const { start, end } = clampChartZoom(chartZoom.start, chartZoom.end, chartData.length);
+      if (end - start + 1 < chartData.length) {
+        if (detailChartData && detailChartData.length > 0 && !inMemoryFull) {
+          domainSource = detailChartData;
+        } else {
+          domainSource = chartData.slice(start, end + 1);
+        }
+      }
+    }
+
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftIds),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightIds),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(domainSource, leftItems),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(domainSource, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, activeChartItems]);
+  }, [chartData, chartZoom, detailChartData, inMemoryFull, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -2185,6 +2282,11 @@ export default function VizDashboardPage() {
                   >
                     {liveMode ? t('viz.liveBadge') : t('viz.live')}
                   </button>
+                  {liveMode && livePollError && (
+                    <p className="viz-live-poll-error" role="alert">
+                      {livePollError}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -2201,6 +2303,27 @@ export default function VizDashboardPage() {
               <button type="button" className="btn-sm" onClick={addAllFields} disabled={!selectedProto}>
                 {t('viz.addAllFields')}
               </button>
+              <div className="viz-add-field-group">
+                <select
+                  value={addFieldPick}
+                  onChange={e => setAddFieldPick(e.target.value)}
+                  disabled={!selectedProto || availableFields.length === 0}
+                  aria-label={t('viz.addField')}
+                >
+                  <option value="">{t('viz.addField')}</option>
+                  {availableFields.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => addField(addFieldPick)}
+                  disabled={!addFieldPick}
+                >
+                  +
+                </button>
+              </div>
             </div>
             <div className="viz-items-header-right">
               {showProfileAdd ? (
@@ -2333,6 +2456,8 @@ export default function VizDashboardPage() {
                 <th>{t('viz.type')}</th>
                 <th>{t('viz.yAxis')}</th>
                 <th>{t('viz.unit')}</th>
+                <th>{t('viz.yMin')}</th>
+                <th>{t('viz.yMax')}</th>
                 <th>{t('viz.offset')}</th>
                 <th>{t('viz.weight')}</th>
                 <th>{t('viz.color')}</th>
@@ -2342,14 +2467,14 @@ export default function VizDashboardPage() {
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="viz-items-empty">
+                  <td colSpan={12} className="viz-items-empty">
                     {t('viz.noItems')}
                   </td>
                 </tr>
               )}
               {items.length > 0 && filteredItems.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="viz-items-empty">
+                  <td colSpan={12} className="viz-items-empty">
                     {t('viz.noFieldMatch', { query: itemFieldSearch.trim() })}
                   </td>
                 </tr>
@@ -2385,10 +2510,20 @@ export default function VizDashboardPage() {
                     </select>
                   </td>
                   <td>
-                    <select value={item.y_axis.id} onChange={e => {
-                      updateItem(item.id, 'y_axis', { ...item.y_axis, id: e.target.value } as YAxisConfig);
-                    }}>
-                      {yAxisOptions.map(yId => <option key={yId} value={yId}>{yId}</option>)}
+                    <select
+                      value={item.y_axis.id === SECONDARY_Y_AXIS_ID ? SECONDARY_Y_AXIS_ID : PRIMARY_Y_AXIS_ID}
+                      onChange={e => {
+                        const preset = PRESET_Y_AXES.find(a => a.id === e.target.value) ?? PRESET_Y_AXES[0];
+                        updateItem(item.id, 'y_axis', {
+                          ...item.y_axis,
+                          id: preset.id,
+                          label: preset.label,
+                        } as YAxisConfig);
+                      }}
+                    >
+                      {yAxisOptions.map(yId => (
+                        <option key={yId} value={yId}>{yAxisOptionLabel(yId, t)}</option>
+                      ))}
                     </select>
                   </td>
                   <td>
@@ -2396,6 +2531,36 @@ export default function VizDashboardPage() {
                       type="text" value={item.y_axis.unit || ''}
                       onChange={e => updateItem(item.id, 'y_axis', { ...item.y_axis, unit: e.target.value } as YAxisConfig)}
                       style={{ width: 50 }}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="viz-item-numeric-input"
+                      value={item.y_axis.min ?? ''}
+                      placeholder="—"
+                      aria-label={t('viz.yMinAria', { label: item.label })}
+                      style={{ width: 48 }}
+                      onChange={e => updateItem(item.id, 'y_axis', {
+                        ...item.y_axis,
+                        min: parseOptionalNumber(e.target.value),
+                      } as YAxisConfig)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="viz-item-numeric-input"
+                      value={item.y_axis.max ?? ''}
+                      placeholder="—"
+                      aria-label={t('viz.yMaxAria', { label: item.label })}
+                      style={{ width: 48 }}
+                      onChange={e => updateItem(item.id, 'y_axis', {
+                        ...item.y_axis,
+                        max: parseOptionalNumber(e.target.value),
+                      } as YAxisConfig)}
                     />
                   </td>
                   <td>
@@ -2438,6 +2603,31 @@ export default function VizDashboardPage() {
       </div>
 
       <div ref={chartCardRef} className={`card table-card viz-chart-card${chartFullscreen ? ' is-fullscreen' : ''}`}>
+        {queryError && (
+          <div className="viz-status-banner viz-status-banner--error" role="alert">
+            <div className="viz-status-banner-content">
+              <strong className="viz-status-banner-title">{t('viz.queryErrorTitle')}</strong>
+              <p className="viz-status-banner-message">{queryError}</p>
+            </div>
+            <div className="viz-status-banner-actions">
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => void fetchAll()}
+                disabled={loading || !selectedBoard || items.length === 0}
+              >
+                {t('viz.queryErrorRetry')}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={dismissQueryError}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        )}
         {allRangeGuideCopy && (
           <div className="viz-all-range-guide" role="status">
             <div className="viz-all-range-guide-content">
@@ -2625,6 +2815,8 @@ export default function VizDashboardPage() {
           />
           ) : canvasChartData.length > 0 && items.length > 0 ? (
             <p className="viz-chart-empty muted">{t('viz.noVisibleItems')}</p>
+          ) : chartEmptyMessage ? (
+            <p className="viz-chart-empty muted">{chartEmptyMessage}</p>
           ) : null}
         </div>
         {chartNavigatorWindow && (
@@ -2681,7 +2873,7 @@ export default function VizDashboardPage() {
             <table>
               <thead>
                 <tr>
-                  <th>NAME</th>
+                  <th>{t('common.name')}</th>
                   <th>{t('viz.min')}</th>
                   <th>{t('viz.max')}</th>
                   <th>{t('viz.avg')}</th>

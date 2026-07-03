@@ -171,7 +171,7 @@ export default function ChartCursorValues({
                     {delta.text ? (
                       <span
                         className={`viz-cursor-value-delta trend-${delta.trend}`}
-                        title="직전 포인트 대비 변화량"
+                        title={t('viz.deltaPrevPoint')}
                       >
                         {delta.text}
                       </span>

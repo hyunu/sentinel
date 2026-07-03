@@ -108,7 +108,7 @@ export interface VizItem {
   color: string;
   visible: boolean;
   field_ref: { protocol_id: string; field_name: string };
-  chart_type: 'line' | 'bar' | 'scatter' | 'area';
+  chart_type: 'line' | 'bar' | 'area';
   y_axis: YAxisConfig;
   offset: number;
   weight: number;

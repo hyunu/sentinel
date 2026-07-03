@@ -178,6 +178,7 @@
     "liveBadge": "● LIVE",
     "items": "Items",
     "addAllFields": "+ Add All Fields",
+    "addField": "Add field",
     "profileName": "Profile name",
     "selectBoardForProfiles": "Select a board to save profiles",
     "addProfile": "Add profile",
@@ -191,6 +192,10 @@
     "type": "Type",
     "yAxis": "Y-Axis",
     "unit": "Unit",
+    "yMin": "Y Min",
+    "yMax": "Y Max",
+    "yMinAria": "{{label}} Y-axis minimum",
+    "yMaxAria": "{{label}} Y-axis maximum",
     "offset": "Offset",
     "weight": "Weight",
     "color": "Color",
@@ -234,8 +239,14 @@
     "avg": "Avg",
     "count": "Count",
     "last": "Last",
-    "noChartData": "No chart data. Select a board and protocol, then refresh.",
+    "noChartData": "No data returned. Adjust Time Range or press Refresh.",
+    "noBoardSelected": "Select a board.",
+    "noItemsConfigured": "Add fields in Configuration.",
     "noVisibleItems": "No series visible. Use the eye icon in Field Values or check items in Configuration.",
+    "queryErrorTitle": "Query failed",
+    "queryError": "Could not load data.",
+    "queryErrorRetry": "Retry",
+    "livePollError": "Could not fetch Live data. Check network and server status.",
     "time": {
       "all": "All"
     },
@@ -243,6 +254,19 @@
       "left": "Left",
       "right": "Right"
     },
+    "profileError": {
+      "noBoard": "Select a board first.",
+      "noName": "Enter a profile name.",
+      "noItems": "No items to save.",
+      "maxProfiles": "You can save up to {{max}} profiles per board.",
+      "saveFailed": "Failed to save profile.",
+      "deleteFailed": "Failed to delete profile."
+    },
+    "navigator": {
+      "position": "Chart zoom position",
+      "range": "Zoomed time range"
+    },
+    "deltaPrevPoint": "Change from previous point",
     "guide": {
       "whyLabel": "Why does it work this way?",
       "adjust7d": "Switch to 7 days",
