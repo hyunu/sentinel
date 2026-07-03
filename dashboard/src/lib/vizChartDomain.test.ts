@@ -46,4 +46,17 @@ describe('computeYAxisDomain', () => {
     const domain = computeYAxisDomain([{ timeKey: 't1', a1: 100 }], [fixed]);
     expect(domain).toEqual([0, 500]);
   });
+
+  it('uses full timeline range so zoom window does not shrink domain', () => {
+    const full = [
+      { timeKey: 't1', a1: 0 },
+      { timeKey: 't2', a1: 1000 },
+    ];
+    const zoomSlice = [{ timeKey: 't2', a1: 1000 }];
+    const fullDomain = computeYAxisDomain(full, [item]);
+    const sliceDomain = computeYAxisDomain(zoomSlice, [item]);
+    expect(fullDomain).toEqual([-50, 1050]);
+    expect(sliceDomain).toEqual([950, 1050]);
+    expect(sliceDomain).not.toEqual(fullDomain);
+  });
 });

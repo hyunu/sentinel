@@ -19,6 +19,7 @@ const SECONDARY_SCALE = 'y2';
 
 export interface VizCanvasChartHandle {
   setWindowByIndex(start: number, end: number): void;
+  setWindowByTimeKeys(startTimeKey: string, endTimeKey: string): void;
   resetWindow(): void;
   refreshPlotBounds(): { left: number; width: number };
   getPlotClientMetrics(): { plotLeft: number; plotWidth: number } | null;
@@ -39,6 +40,7 @@ export interface VizCanvasChartProps {
   points: VizChartPoint[];
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
+  xWindowTimeKeys?: { start: string; end: string } | null;
   chartItems: VizItem[];
   maxVisibleSeries: number;
   yAxisDomains: Record<string, [number, number] | undefined>;
@@ -180,6 +182,13 @@ function buildSeriesConfig(
   ];
 }
 
+function xScaleFromTimeKeys(startTimeKey: string, endTimeKey: string): { min: number; max: number } | null {
+  const min = timeSec(startTimeKey);
+  const max = timeSec(endTimeKey);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return min === max ? { min: min - 0.5, max: max + 0.5 } : { min, max };
+}
+
 function xScaleFromIndices(
   timeline: VizChartPoint[],
   start: number,
@@ -199,6 +208,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     points,
     fullTimeline,
     windowIndices,
+    xWindowTimeKeys,
     chartItems,
     maxVisibleSeries,
     yAxisDomains,
@@ -269,11 +279,19 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
 
   const applyWindowIndices = useCallback((start: number, end: number) => {
     const u = plotRef.current;
-    const timeline = fullTimelineRef.current ?? pointsRef.current;
-    if (!u || timeline.length === 0) return;
+    const timeline = fullTimelineRef.current;
+    if (!u || !timeline || timeline.length === 0) return;
     const range = xScaleFromIndices(timeline, start, end);
     if (range) u.setScale('x', range);
     windowIndicesRef.current = { start, end };
+  }, []);
+
+  const applyXWindowTimeKeys = useCallback((startTimeKey: string, endTimeKey: string) => {
+    const u = plotRef.current;
+    if (!u) return;
+    const range = xScaleFromTimeKeys(startTimeKey, endTimeKey);
+    if (range) u.setScale('x', range);
+    windowIndicesRef.current = null;
   }, []);
 
   const resetWindow = useCallback(() => {
@@ -285,8 +303,21 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     windowIndicesRef.current = null;
   }, []);
 
+  const syncXWindow = useCallback(() => {
+    if (xWindowTimeKeys) {
+      applyXWindowTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
+      return;
+    }
+    if (fullTimeline && windowIndices) {
+      applyWindowIndices(windowIndices.start, windowIndices.end);
+      return;
+    }
+    resetWindow();
+  }, [xWindowTimeKeys, windowIndices, fullTimeline, applyXWindowTimeKeys, applyWindowIndices, resetWindow]);
+
   useImperativeHandle(ref, () => ({
     setWindowByIndex: applyWindowIndices,
+    setWindowByTimeKeys: applyXWindowTimeKeys,
     resetWindow,
     refreshPlotBounds: () => {
       const u = plotRef.current;
@@ -306,6 +337,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     getWheelFocusMsFromClientX: (clientX: number) => {
       const u = plotRef.current;
       if (!u || u.bbox.width <= 0) return null;
+      u.syncRect();
       const rootRect = u.root.getBoundingClientRect();
       const bb = plotBBoxCss(u);
       const plotX = clientX - rootRect.left - bb.left;
@@ -314,7 +346,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       if (!Number.isFinite(focusSec)) return null;
       return focusSec * 1000;
     },
-  }), [applyWindowIndices, resetWindow]);
+  }), [applyWindowIndices, applyXWindowTimeKeys, resetWindow]);
 
   const hideTooltipEl = useCallback(() => {
     const el = tooltipRef.current;
@@ -503,6 +535,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
 
     if (windowIndices) {
       applyWindowIndices(windowIndices.start, windowIndices.end);
+    } else if (xWindowTimeKeys) {
+      applyXWindowTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
     } else if (fullTimeline && fullTimeline.length > 0) {
       resetWindow();
     }
@@ -533,32 +567,23 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ? `${windowIndices.start}:${windowIndices.end}`
     : 'full';
 
+  const xWindowTimeKeysKey = xWindowTimeKeys
+    ? `${xWindowTimeKeys.start}:${xWindowTimeKeys.end}`
+    : 'none';
+
   useEffect(() => {
     const u = plotRef.current;
     if (!u || points.length === 0) return;
     u.setData(buildAlignedData(points, chartItems));
-    const win = windowIndicesRef.current;
-    if (win) {
-      applyWindowIndices(win.start, win.end);
-    } else {
-      resetWindow();
-    }
+    syncXWindow();
     syncPlotBounds(u);
-  }, [points, chartItems, seriesLayoutKey, syncPlotBounds, applyWindowIndices, resetWindow]);
+  }, [points, chartItems, seriesLayoutKey, syncPlotBounds, syncXWindow]);
 
   useEffect(() => {
     const u = plotRef.current;
-    if (!u || !windowIndices) return;
-
-    const current = windowIndicesRef.current;
-    if (
-      !current
-      || current.start !== windowIndices.start
-      || current.end !== windowIndices.end
-    ) {
-      applyWindowIndices(windowIndices.start, windowIndices.end);
-    }
-  }, [windowIndicesKey, windowIndices, applyWindowIndices]);
+    if (!u) return;
+    syncXWindow();
+  }, [windowIndicesKey, xWindowTimeKeysKey, syncXWindow]);
 
   useEffect(() => {
     if (hideTooltip) hideTooltipEl();

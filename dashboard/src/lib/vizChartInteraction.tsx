@@ -140,6 +140,33 @@ export function findChartIndexUpperBoundForTimeMs(
   return Math.max(0, lo - 1);
 }
 
+export function findNearestChartIndexForTimeMs(
+  points: ChartTimePoint[],
+  timeMs: number,
+  totalLength?: number,
+): number {
+  if (points.length === 0) return 0;
+  const limit = totalLength != null
+    ? Math.min(points.length, totalLength)
+    : points.length;
+  if (limit <= 1) return 0;
+
+  let lo = 0;
+  let hi = limit - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const midT = Date.parse(points[mid].timeKey);
+    if (midT > timeMs) hi = mid - 1;
+    else lo = mid;
+  }
+  if (lo > 0) {
+    const loT = Date.parse(points[lo].timeKey);
+    const prevT = Date.parse(points[lo - 1].timeKey);
+    if (Math.abs(prevT - timeMs) < Math.abs(loT - timeMs)) return lo - 1;
+  }
+  return lo;
+}
+
 export function getChartPlotBoundsFromViewport(
   viewportEl: HTMLElement,
 ): { left: number; width: number } {

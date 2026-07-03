@@ -31,6 +31,7 @@ import {
   getChartTimeMsFromClientX,
   findChartIndexLowerBoundForTimeMs,
   findChartIndexUpperBoundForTimeMs,
+  findNearestChartIndexForTimeMs,
   getChartPlotBoundsFromViewport,
   getChartPlotMetricsFromViewport,
   mergeWheelZoomEvent,
@@ -584,10 +585,19 @@ export default function VizDashboardPage() {
 
   const applyCanvasZoomWindow = useCallback((start: number, end: number) => {
     const len = chartDataLengthRef.current;
+    const data = chartDataRef.current;
     if (len === 0) return;
     const next = clampChartZoom(start, end, len);
     chartZoomRef.current = next;
-    chartCanvasRef.current?.setWindowByIndex(next.start, next.end);
+    if (inMemoryFullRef.current) {
+      chartCanvasRef.current?.setWindowByIndex(next.start, next.end);
+    } else {
+      const startTs = data[next.start]?.timeKey;
+      const endTs = data[next.end]?.timeKey;
+      if (startTs && endTs) {
+        chartCanvasRef.current?.setWindowByTimeKeys(startTs, endTs);
+      }
+    }
     syncReactChartZoomFromRef();
   }, [syncReactChartZoomFromRef]);
 
@@ -662,15 +672,17 @@ export default function VizDashboardPage() {
   }, [boards, protocols, selectedBoard, selectedProto, items]);
 
   const applyChartZoomWindow = useCallback((start: number, end: number) => {
-    if (chartData.length === 0) {
+    const len = chartDataLengthRef.current || chartData.length;
+    const data = chartDataRef.current;
+    if (len === 0) {
       syncChartZoomRef(chartZoomRef, null);
       setChartZoom(null);
       chartCanvasRef.current?.resetWindow();
       return;
     }
-    const clamped = clampChartZoom(start, end, chartData.length);
+    const clamped = clampChartZoom(start, end, len);
     const span = clamped.end - clamped.start + 1;
-    if (span >= chartData.length) {
+    if (span >= len) {
       syncChartZoomRef(chartZoomRef, null);
       setChartZoom(null);
       chartCanvasRef.current?.resetWindow();
@@ -678,7 +690,15 @@ export default function VizDashboardPage() {
     }
     syncChartZoomRef(chartZoomRef, clamped);
     setChartZoom(clamped);
-    chartCanvasRef.current?.setWindowByIndex(clamped.start, clamped.end);
+    if (inMemoryFullRef.current) {
+      chartCanvasRef.current?.setWindowByIndex(clamped.start, clamped.end);
+    } else {
+      const startTs = data[clamped.start]?.timeKey;
+      const endTs = data[clamped.end]?.timeKey;
+      if (startTs && endTs) {
+        chartCanvasRef.current?.setWindowByTimeKeys(startTs, endTs);
+      }
+    }
   }, [chartData.length]);
 
   const resetChartZoom = useCallback(() => {
@@ -795,18 +815,25 @@ export default function VizDashboardPage() {
     refAreaRightClientXRef.current = null;
     if (leftClientX == null || rightClientX == null) return;
 
-    const renderPoints = renderChartPointsRef.current;
     const data = chartDataRef.current;
-    if (renderPoints.length === 0 || data.length === 0) return;
-
-    const el = chartViewportRef.current;
-    if (!el) return;
-    const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+    if (data.length === 0) return;
 
     const minX = Math.min(leftClientX, rightClientX);
     const maxX = Math.max(leftClientX, rightClientX);
-    const startMs = getChartTimeMsFromClientX(minX, plotLeft, plotWidth, renderPoints);
-    const endMs = getChartTimeMsFromClientX(maxX, plotLeft, plotWidth, renderPoints);
+    const startMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(minX)
+      ?? (() => {
+        const el = chartViewportRef.current;
+        if (!el) return null;
+        const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+        return getChartTimeMsFromClientX(minX, plotLeft, plotWidth, data);
+      })();
+    const endMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(maxX)
+      ?? (() => {
+        const el = chartViewportRef.current;
+        if (!el) return null;
+        const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
+        return getChartTimeMsFromClientX(maxX, plotLeft, plotWidth, data);
+      })();
     if (startMs == null || endMs == null) return;
 
     const loMs = Math.min(startMs, endMs);
@@ -834,20 +861,27 @@ export default function VizDashboardPage() {
     };
 
     const getRenderIndexFromClientX = (clientX: number): number => {
+      const len = chartDataLengthRef.current;
+      if (len <= 1) return 0;
+      const data = chartDataRef.current;
+      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(clientX);
+      if (focusMs != null && data.length > 0) {
+        return findNearestChartIndexForTimeMs(data, focusMs, len);
+      }
       const { plotLeft, plotWidth } = getPlotMetrics();
       const ratio = Math.max(0, Math.min(1, (clientX - plotLeft) / plotWidth));
-      const len = renderChartDataLengthRef.current;
-      if (len <= 1) return 0;
       return Math.round(ratio * (len - 1));
     };
 
     const getTimeMsFromClientX = (clientX: number): number | null => {
+      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(clientX);
+      if (focusMs != null) return focusMs;
       const { plotLeft, plotWidth } = getPlotMetrics();
       return getChartTimeMsFromClientX(
         clientX,
         plotLeft,
         plotWidth,
-        renderChartPointsRef.current,
+        chartDataRef.current,
       );
     };
 
@@ -937,7 +971,7 @@ export default function VizDashboardPage() {
       }
 
       if (e.shiftKey) {
-        if (chartDataLengthRef.current === 0 || renderChartDataLengthRef.current === 0) return;
+        if (chartDataLengthRef.current === 0) return;
         const rect = el.getBoundingClientRect();
         const overlayX = e.clientX - rect.left;
         const idx = getRenderIndexFromClientX(e.clientX);
@@ -964,7 +998,7 @@ export default function VizDashboardPage() {
       }
 
       if (e.altKey) {
-        if (renderChartDataLengthRef.current === 0) return;
+        if (chartDataLengthRef.current === 0) return;
         const startTimeMs = getTimeMsFromClientX(e.clientX);
         if (startTimeMs == null) return;
         const rect = el.getBoundingClientRect();
@@ -1810,25 +1844,27 @@ export default function VizDashboardPage() {
 
   const canvasChartData = useMemo(() => {
     if (!chartData.length) return [];
-    return inMemoryFull ? chartData : displayChartData;
-  }, [chartData, displayChartData, inMemoryFull]);
+    if (inMemoryFull) return chartData;
+    if (!zoomWindow) return chartData;
+    if (detailChartData && detailChartData.length > 0) return detailChartData;
+    return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
+  }, [chartData, inMemoryFull, zoomWindow, detailChartData]);
 
-  const interactionChartPoints = useMemo(() => {
-    if (!chartData.length) return [];
-    if (zoomWindow && inMemoryFull) {
-      return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
-    }
-    return canvasChartData;
-  }, [chartData, canvasChartData, zoomWindow, inMemoryFull]);
-
-  renderChartDataLengthRef.current = interactionChartPoints.length;
-  renderChartPointsRef.current = interactionChartPoints;
+  renderChartDataLengthRef.current = chartData.length;
+  renderChartPointsRef.current = chartData;
 
   const canvasWindowIndices = useMemo(
-    () => (zoomWindow
+    () => (zoomWindow && inMemoryFull
       ? { start: zoomWindow.start, end: zoomWindow.end }
       : null),
-    [zoomWindow?.start, zoomWindow?.end],
+    [zoomWindow?.start, zoomWindow?.end, inMemoryFull],
+  );
+
+  const canvasXWindowTimeKeys = useMemo(
+    () => (zoomWindow && !inMemoryFull
+      ? { start: zoomWindow.startTs, end: zoomWindow.endTs }
+      : null),
+    [zoomWindow?.startTs, zoomWindow?.endTs, inMemoryFull],
   );
 
   const resolveCanvasYScale = useCallback((item: VizItem) => (
@@ -1862,7 +1898,12 @@ export default function VizDashboardPage() {
 
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
-    parts.push(t('viz.summary.points', { count: canvasChartData.length.toLocaleString() }));
+    parts.push(t('viz.summary.points', {
+      count: (zoomWindow && detailChartData?.length
+        ? detailChartData.length
+        : canvasChartData.length
+      ).toLocaleString(),
+    }));
     if (inMemoryFull && rawVizData.length > 0) {
       parts.push(t('viz.summary.inMemory', { size: formatFullLoadBytes(estimateVizPayloadBytes(rawVizData)) }));
     } else if (chartZoomActive && detailQueryMeta?.downsampled) {
@@ -1899,6 +1940,8 @@ export default function VizDashboardPage() {
   }, [
     t,
     canvasChartData.length,
+    zoomWindow,
+    detailChartData,
     queryMeta,
     rawVizData,
     inMemoryFull,
@@ -1991,23 +2034,11 @@ export default function VizDashboardPage() {
     const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
     const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
 
-    let domainSource = chartData;
-    if (chartZoom && chartData.length > 0) {
-      const { start, end } = clampChartZoom(chartZoom.start, chartZoom.end, chartData.length);
-      if (end - start + 1 < chartData.length) {
-        if (detailChartData && detailChartData.length > 0 && !inMemoryFull) {
-          domainSource = detailChartData;
-        } else {
-          domainSource = chartData.slice(start, end + 1);
-        }
-      }
-    }
-
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(domainSource, leftItems),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(domainSource, rightItems),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftItems),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, chartZoom, detailChartData, inMemoryFull, activeChartItems]);
+  }, [chartData, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -2760,8 +2791,9 @@ export default function VizDashboardPage() {
           <VizCanvasChart
             ref={chartCanvasRef}
             points={canvasChartData}
-            fullTimeline={inMemoryFull ? chartData : undefined}
+            fullTimeline={inMemoryFull && chartData.length > 0 ? chartData : undefined}
             windowIndices={canvasWindowIndices}
+            xWindowTimeKeys={canvasXWindowTimeKeys}
             chartItems={chartItems}
             maxVisibleSeries={MAX_CHART_SERIES}
             yAxisDomains={canvasYAxisDomains}
