@@ -47,6 +47,7 @@ import {
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
 } from '../lib/vizFullLoad';
+import { useTranslation, type TFunction } from '../i18n';
 
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
@@ -228,17 +229,7 @@ const TIME_PRESET_ALL = 'all' as const;
 
 type TimePresetId = typeof TIME_PRESET_ALL | '1d' | '3d' | '7d' | '15d' | '30d' | '3m' | '6m' | '1y';
 
-const TIME_PRESETS: Array<{ id: TimePresetId; label: string }> = [
-  { id: '1d', label: '1d' },
-  { id: '3d', label: '3d' },
-  { id: '7d', label: '7d' },
-  { id: '15d', label: '15d' },
-  { id: '30d', label: '30d' },
-  { id: '3m', label: '3m' },
-  { id: '6m', label: '6m' },
-  { id: '1y', label: '1y' },
-  { id: 'all', label: 'All' },
-];
+const TIME_PRESET_IDS: TimePresetId[] = ['1d', '3d', '7d', '15d', '30d', '3m', '6m', '1y', 'all'];
 
 function presetRangeStart(end: Date, presetId: TimePresetId): Date {
   switch (presetId) {
@@ -276,7 +267,7 @@ function isAllTimeRangeSelection(presetId: TimePresetId, customStart: string, cu
   return presetId === TIME_PRESET_ALL && !customStart && !customEnd;
 }
 
-function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment): {
+function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment, t: TFunction): {
   title: string;
   summary: string;
   why: string;
@@ -289,19 +280,19 @@ function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment): {
 
   if (guide.heavyReason === 'points') {
     return {
-      title: 'All(전체) 조회 — 데이터가 많습니다',
-      summary: `이 보드에 약 ${total}건이 있습니다. 브라우저 전량 적재 한도(${limitPoints}건)를 넘어, 지금 차트에는 전체의 ${sample}포인트 샘플 개요만 표시되고 있습니다.`,
-      why: 'All은 시간 제한 없이 보드에 쌓인 모든 기록을 조회합니다. 데이터가 한도를 넘으면 브라우저 메모리·응답 속도를 보호하기 위해 전체를 한 번에 올리지 않고, 균등 간격으로 줄인 개요를 먼저 보여 줍니다. 확대하면 그때 보이는 시간 구간만 서버에서 다시 가져와 더 촘촘하게 그립니다. 건수가 많을수록 첫 조회와 줌마다 서버·네트워크 부담이 커져 느려질 수 있고, 샘플 간격이 넓어 짧은 이상 징후는 개요에서 누락될 수 있습니다.',
-      recommend: '분석에 필요한 기간만 Time Range에서 선택하면 한도 안에서 전량을 메모리에 올려, 서버 재요청 없이 빠르게 확대·이동할 수 있습니다. 전체 추세만 보려면 아래 「샘플 모드로 계속」을 선택하세요.',
+      title: t('viz.guide.pointsTitle'),
+      summary: t('viz.guide.pointsSummary', { total, sample, limitPoints }),
+      why: t('viz.guide.pointsWhy'),
+      recommend: t('viz.guide.pointsRecommend'),
     };
   }
 
   const est = formatFullLoadBytes(guide.estimatedBytes ?? 0);
   return {
-    title: 'All(전체) 조회 — 예상 용량이 큽니다',
-    summary: `약 ${total}건(예상 ${est})으로 브라우저 적재 한도(${limitBytes})를 넘습니다. 지금은 ${sample}포인트 샘플 개요만 표시되고 있습니다.`,
-    why: '항목 수와 필드 값이 많으면 같은 건수라도 전송·저장 용량이 커집니다. All은 전체 기록을 대상으로 하므로, 예상 용량이 한도를 넘으면 브라우저가 멈추거나 탭이 느려지는 것을 막기 위해 전량 적재 대신 샘플 개요를 사용합니다. 확대 시에는 해당 구간만 다시 조회해 해상도를 높이지만, 구간마다 서버 요청이 필요합니다.',
-    recommend: '필요한 기간을 7일·30일 등으로 줄이면 용량이 한도 안에 들어 전량 적재가 가능해지고, 확대·이동이 더 빠르고 촘촘해집니다. 전체 추세만 보려면 「샘플 모드로 계속」을 선택하세요.',
+    title: t('viz.guide.bytesTitle'),
+    summary: t('viz.guide.bytesSummary', { total, est, limitBytes, sample }),
+    why: t('viz.guide.bytesWhy'),
+    recommend: t('viz.guide.bytesRecommend'),
   };
 }
 
@@ -486,6 +477,14 @@ function VizItemNameInput({ value, onCommit, ariaLabel, title }: VizItemNameInpu
 }
 
 export default function VizDashboardPage() {
+  const { t } = useTranslation();
+  const timePresets = useMemo(
+    () => TIME_PRESET_IDS.map(id => ({
+      id,
+      label: id === TIME_PRESET_ALL ? t('viz.time.all') : id,
+    })),
+    [t],
+  );
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [selectedBoard, setSelectedBoard] = useState('');
@@ -1772,42 +1771,48 @@ export default function VizDashboardPage() {
   const chartZoomActive = zoomWindow != null;
 
   const allRangeGuideCopy = useMemo(
-    () => (allRangeGuide ? buildAllRangeGuideCopy(allRangeGuide) : null),
-    [allRangeGuide],
+    () => (allRangeGuide ? buildAllRangeGuideCopy(allRangeGuide, t) : null),
+    [allRangeGuide, t],
   );
 
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
-    const pointLabel = `${canvasChartData.length.toLocaleString()} points`;
-    parts.push(pointLabel);
+    parts.push(t('viz.summary.points', { count: canvasChartData.length.toLocaleString() }));
     if (inMemoryFull && rawVizData.length > 0) {
-      parts.push(`in-memory ${formatFullLoadBytes(estimateVizPayloadBytes(rawVizData))}`);
+      parts.push(t('viz.summary.inMemory', { size: formatFullLoadBytes(estimateVizPayloadBytes(rawVizData)) }));
     } else if (chartZoomActive && detailQueryMeta?.downsampled) {
-      parts.push(`detail ${detailQueryMeta.returned.toLocaleString()} / ${detailQueryMeta.total_matched.toLocaleString()}`);
+      parts.push(t('viz.summary.detailRatio', {
+        returned: detailQueryMeta.returned.toLocaleString(),
+        total: detailQueryMeta.total_matched.toLocaleString(),
+      }));
     } else if (chartZoomActive && detailQueryMeta) {
-      parts.push(`detail ${detailQueryMeta.returned.toLocaleString()} pts`);
+      parts.push(t('viz.summary.detailPts', { count: detailQueryMeta.returned.toLocaleString() }));
     } else if (queryMeta?.downsampled) {
-      parts.push(`sampled ${queryMeta.returned.toLocaleString()} / ${queryMeta.total_matched.toLocaleString()}`);
+      parts.push(t('viz.summary.sampled', {
+        returned: queryMeta.returned.toLocaleString(),
+        total: queryMeta.total_matched.toLocaleString(),
+      }));
     }
     if (chartSeriesTruncated) {
-      parts.push(`showing ${MAX_CHART_SERIES} / ${visibleItems.length} series`);
+      parts.push(t('viz.summary.series', { shown: MAX_CHART_SERIES, total: visibleItems.length }));
     }
     if (inMemoryFull) {
-      parts.push('canvas');
+      parts.push(t('viz.summary.canvas'));
     }
     if (detailLoading && !detailRawVizData?.length) {
-      parts.push('loading detail');
+      parts.push(t('viz.summary.loadingDetail'));
     } else if (detailLoading) {
-      parts.push('refreshing detail');
+      parts.push(t('viz.summary.refreshingDetail'));
     }
     if (chartZoomActive) {
-      parts.push('zoomed');
+      parts.push(t('viz.summary.zoomed'));
     }
     if (liveMode) {
-      parts.push(`polling every ${POLL_INTERVAL / 1000}s`);
+      parts.push(t('viz.summary.polling', { seconds: POLL_INTERVAL / 1000 }));
     }
     return parts.join(' · ');
   }, [
+    t,
     canvasChartData.length,
     queryMeta,
     rawVizData,
@@ -1980,19 +1985,19 @@ export default function VizDashboardPage() {
   return (
     <div className="page">
       <PageHeader
-        title="Visualization"
-        subtitle="Visualize protocol fields as charts. Use Live mode for real-time data."
+        title={t('viz.title')}
+        subtitle={t('viz.subtitle')}
       />
 
       <div className={`card table-card viz-config-card${configOpen ? '' : ' is-collapsed'}`}>
         <div className="card-header viz-config-header">
           <div className="viz-config-header-main">
-            <h2>Configuration</h2>
+            <h2>{t('viz.configuration')}</h2>
             {!configOpen && (
               <>
                 {liveMode && (
-                  <span className="viz-time-live-badge" aria-label="Live mode active">
-                    Live
+                  <span className="viz-time-live-badge" aria-label={t('viz.liveActive')}>
+                    {t('viz.live')}
                   </span>
                 )}
                 <span className="muted viz-config-summary">{configSummary}</span>
@@ -2002,10 +2007,10 @@ export default function VizDashboardPage() {
           {configOpen && (
             <div className="btn-group viz-config-actions">
               <button type="button" onClick={fetchAll} className="btn-primary btn-sm" disabled={loading}>
-                {loading ? 'Loading…' : 'Refresh'}
+                {loading ? t('common.loading') : t('common.refresh')}
               </button>
               {chartData.length > 0 && (
-                <button type="button" className="btn-sm" onClick={exportCSV}>Export CSV</button>
+                <button type="button" className="btn-sm" onClick={exportCSV}>{t('viz.exportCsv')}</button>
               )}
             </div>
           )}
@@ -2014,8 +2019,8 @@ export default function VizDashboardPage() {
             className="btn-ghost btn-sm viz-config-collapse-btn"
             onClick={() => setConfigOpen(v => !v)}
             aria-expanded={configOpen}
-            aria-label={configOpen ? 'Collapse configuration' : 'Expand configuration'}
-            title={configOpen ? 'Collapse' : 'Expand'}
+            aria-label={configOpen ? t('viz.collapseConfig') : t('viz.expandConfig')}
+            title={configOpen ? t('viz.collapse') : t('viz.expand')}
           >
             <span className={`viz-collapse-chevron${configOpen ? ' open' : ''}`} aria-hidden>›</span>
           </button>
@@ -2024,20 +2029,20 @@ export default function VizDashboardPage() {
         <div className="viz-config-panel">
         <div className="viz-config-row" aria-labelledby="viz-board-title">
           <div className="viz-config-row-head">
-            <div id="viz-board-title" className="viz-config-row-title">Board</div>
+            <div id="viz-board-title" className="viz-config-row-title">{t('common.board')}</div>
           </div>
           <div className="viz-config-row-content viz-source-row">
             <label className="viz-source-field">
-              <span className="viz-source-field-label">Board</span>
+              <span className="viz-source-field-label">{t('common.board')}</span>
               <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
-                <option value="">Select Board</option>
+                <option value="">{t('viz.selectBoard')}</option>
                 {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </label>
             <label className="viz-source-field">
-              <span className="viz-source-field-label">Protocol</span>
+              <span className="viz-source-field-label">{t('common.protocol')}</span>
               <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
-                <option value="">Select Protocol</option>
+                <option value="">{t('viz.selectProtocol')}</option>
                 {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
               </select>
             </label>
@@ -2047,19 +2052,19 @@ export default function VizDashboardPage() {
         <div className={`viz-config-row viz-config-row-time${liveMode ? ' is-live' : ''}`} aria-labelledby="viz-time-range-title">
           <div className="viz-config-row-head">
             <div id="viz-time-range-title" className="viz-config-row-title">
-              Time Range
+              {t('viz.timeRange')}
             </div>
           </div>
           <div className="viz-config-row-content viz-time-toolbar">
             <div className="viz-time-toolbar-main">
               <div className="viz-time-preset-group">
-                <span className="viz-time-group-label">Quick range</span>
+                <span className="viz-time-group-label">{t('viz.quickRange')}</span>
                 <div
                   className="viz-time-presets"
                   role="group"
-                  aria-label="Quick range"
+                  aria-label={t('viz.quickRange')}
                 >
-                  {TIME_PRESETS.map(p => {
+                  {timePresets.map(p => {
                     const isActive = p.id === TIME_PRESET_ALL
                       ? isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd)
                       : timeRangePresetId === p.id;
@@ -2080,9 +2085,9 @@ export default function VizDashboardPage() {
               </div>
               <div
                 className={`viz-time-custom-group${isCustomTimeRange ? ' is-active' : ''}`}
-                aria-label="Search by period"
+                aria-label={t('viz.searchByPeriod')}
               >
-                <span className="viz-time-group-label">Search by period</span>
+                <span className="viz-time-group-label">{t('viz.searchByPeriod')}</span>
                 <div className="viz-time-custom-bar">
                   <input
                     type="text"
@@ -2094,7 +2099,7 @@ export default function VizDashboardPage() {
                       setAllRangeGuide(null);
                     }}
                     disabled={liveMode}
-                    aria-label="Start time"
+                    aria-label={t('viz.startTime')}
                     placeholder="yyyy-MM-dd HH:mm:ss"
                     spellCheck={false}
                     autoComplete="off"
@@ -2111,7 +2116,7 @@ export default function VizDashboardPage() {
                       setAllRangeGuide(null);
                     }}
                     disabled={liveMode}
-                    aria-label="End time"
+                    aria-label={t('viz.endTime')}
                     placeholder="yyyy-MM-dd HH:mm:ss"
                     spellCheck={false}
                     autoComplete="off"
@@ -2124,13 +2129,13 @@ export default function VizDashboardPage() {
                       onClick={clearCustomTimeRange}
                       disabled={liveMode}
                     >
-                      Clear
+                      {t('viz.clear')}
                     </button>
                   )}
                 </div>
               </div>
               <div className="viz-time-live-group">
-                <span className="viz-time-group-label">Live mode</span>
+                <span className="viz-time-group-label">{t('viz.liveMode')}</span>
                 <div className="viz-time-live-bar">
                   <button
                     type="button"
@@ -2138,7 +2143,7 @@ export default function VizDashboardPage() {
                     onClick={() => setLiveMode(v => !v)}
                     aria-pressed={liveMode}
                   >
-                    {liveMode ? '● LIVE' : 'Live'}
+                    {liveMode ? t('viz.liveBadge') : t('viz.live')}
                   </button>
                 </div>
               </div>
@@ -2150,11 +2155,11 @@ export default function VizDashboardPage() {
           <div className="viz-items-header">
             <div className="viz-items-header-left">
               <div className="viz-config-row-title">
-                Items
+                {t('viz.items')}
                 <span className="tag tag-subtle">{items.length}</span>
               </div>
               <button type="button" className="btn-sm" onClick={addAllFields} disabled={!selectedProto}>
-                + Add All Fields
+                {t('viz.addAllFields')}
               </button>
             </div>
             <div className="viz-items-header-right">
@@ -2162,7 +2167,7 @@ export default function VizDashboardPage() {
                 <div className="viz-profile-add-form">
                   <input
                     autoFocus
-                    placeholder="Profile name"
+                    placeholder={t('viz.profileName')}
                     value={profileDraftName}
                     onChange={e => setProfileDraftName(e.target.value)}
                     onKeyDown={e => {
@@ -2177,10 +2182,10 @@ export default function VizDashboardPage() {
                     onClick={() => void confirmSaveProfile()}
                     disabled={profileSaving || items.length === 0 || !selectedBoard}
                   >
-                    {profileSaving ? '…' : 'Save'}
+                    {profileSaving ? '…' : t('common.save')}
                   </button>
                   <button type="button" className="btn-ghost btn-sm" onClick={cancelProfileAdd} disabled={profileSaving}>
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                 </div>
               ) : selectedBoard ? (
@@ -2194,14 +2199,17 @@ export default function VizDashboardPage() {
                         type="button"
                         className="viz-profile-tag"
                         onClick={() => loadProfile(p.id)}
-                        title={`${p.items.length} items · visible ${p.items.filter(i => i.visible).length}`}
+                        title={t('viz.profileItems', {
+                          count: p.items.length,
+                          visible: p.items.filter(i => i.visible).length,
+                        })}
                       >
                         {p.name}
                       </button>
                       <button
                         type="button"
                         className="viz-profile-tag-remove"
-                        aria-label={`Delete ${p.name}`}
+                        aria-label={t('viz.deleteProfile', { name: p.name })}
                         onClick={() => void deleteProfile(p.id)}
                       >
                         ×
@@ -2213,14 +2221,14 @@ export default function VizDashboardPage() {
                       type="button"
                       className="viz-profile-tag-add"
                       onClick={openProfileAdd}
-                      title="Add profile"
+                      title={t('viz.addProfile')}
                     >
                       +
                     </button>
                   )}
                 </div>
               ) : (
-                <span className="muted viz-items-header-hint">Select a board to save profiles</span>
+                <span className="muted viz-items-header-hint">{t('viz.selectBoardForProfiles')}</span>
               )}
               {profileError && (
                 <span className="viz-profile-error-inline" title={profileError}>!</span>
@@ -2241,15 +2249,15 @@ export default function VizDashboardPage() {
                       checked={allVisible}
                       onChange={toggleAllVisibility}
                       disabled={items.length === 0}
-                      title="Select or deselect all"
-                      aria-label="Select or deselect all"
+                      title={t('viz.selectAll')}
+                      aria-label={t('viz.selectAll')}
                     />
                   </div>
                 </th>
                 <th className="viz-name-col">NAME</th>
                 <th className="viz-field-col-head">
                   <div className="viz-field-col-head-inner">
-                    <span>Field</span>
+                    <span>{t('viz.field')}</span>
                     <button
                       type="button"
                       className={`viz-field-search-toggle${itemFieldSearchOpen || itemFieldSearch.trim() ? ' active' : ''}`}
@@ -2257,7 +2265,7 @@ export default function VizDashboardPage() {
                         if (itemFieldSearchOpen) e.preventDefault();
                       }}
                       onClick={toggleItemFieldSearch}
-                      aria-label="Search fields"
+                      aria-label={t('viz.searchFields')}
                       aria-expanded={itemFieldSearchOpen}
                       disabled={items.length === 0}
                     >
@@ -2276,18 +2284,18 @@ export default function VizDashboardPage() {
                             closeItemFieldSearch();
                           }
                         }}
-                        placeholder="Search field…"
-                        aria-label="Search items by field name"
+                        placeholder={t('viz.searchFieldPlaceholder')}
+                        aria-label={t('viz.searchFieldAria')}
                       />
                     )}
                   </div>
                 </th>
-                <th>Type</th>
-                <th>Y-Axis</th>
-                <th>Unit</th>
-                <th>Offset</th>
-                <th>Weight</th>
-                <th>Color</th>
+                <th>{t('viz.type')}</th>
+                <th>{t('viz.yAxis')}</th>
+                <th>{t('viz.unit')}</th>
+                <th>{t('viz.offset')}</th>
+                <th>{t('viz.weight')}</th>
+                <th>{t('viz.color')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -2295,14 +2303,14 @@ export default function VizDashboardPage() {
               {items.length === 0 && (
                 <tr>
                   <td colSpan={10} className="viz-items-empty">
-                    No items. Use + Add All Fields above to add fields.
+                    {t('viz.noItems')}
                   </td>
                 </tr>
               )}
               {items.length > 0 && filteredItems.length === 0 && (
                 <tr>
                   <td colSpan={10} className="viz-items-empty">
-                    No fields match &quot;{itemFieldSearch.trim()}&quot;.
+                    {t('viz.noFieldMatch', { query: itemFieldSearch.trim() })}
                   </td>
                 </tr>
               )}
@@ -2313,8 +2321,8 @@ export default function VizDashboardPage() {
                     <VizItemNameInput
                       value={item.short_label ?? ''}
                       onCommit={v => updateItem(item.id, 'short_label', v)}
-                      title="Name shown on chart"
-                      ariaLabel={`Chart name for ${item.label}`}
+                      title={t('viz.chartNameTitle')}
+                      ariaLabel={t('viz.chartNameAria', { label: item.label })}
                     />
                   </td>
                   <td
@@ -2354,7 +2362,7 @@ export default function VizDashboardPage() {
                     <VizItemNumericInput
                       value={item.offset}
                       emptyFallback={0}
-                      ariaLabel={`Offset for ${item.label}`}
+                      ariaLabel={t('viz.offsetAria', { label: item.label })}
                       onCommit={n => updateItem(item.id, 'offset', n)}
                     />
                   </td>
@@ -2362,7 +2370,7 @@ export default function VizDashboardPage() {
                     <VizItemNumericInput
                       value={item.weight}
                       emptyFallback={1}
-                      ariaLabel={`Weight for ${item.label}`}
+                      ariaLabel={t('viz.weightAria', { label: item.label })}
                       onCommit={n => updateItem(item.id, 'weight', n)}
                     />
                   </td>
@@ -2373,7 +2381,7 @@ export default function VizDashboardPage() {
                       value={item.color}
                       onChange={e => updateItem(item.id, 'color', e.target.value)}
                       title={item.color}
-                      aria-label={`Color for ${item.label}`}
+                      aria-label={t('viz.colorAria', { label: item.label })}
                     />
                   </td>
                   <td><button className="btn-danger" onClick={() => setItems(prev => prev.filter(i => i.id !== item.id))}>×</button></td>
@@ -2396,7 +2404,7 @@ export default function VizDashboardPage() {
               <strong className="viz-all-range-guide-title">{allRangeGuideCopy.title}</strong>
               <p className="viz-all-range-guide-summary">{allRangeGuideCopy.summary}</p>
               <div className="viz-all-range-guide-why">
-                <span className="viz-all-range-guide-why-label">왜 이렇게 동작하나요?</span>
+                <span className="viz-all-range-guide-why-label">{t('viz.guide.whyLabel')}</span>
                 <p>{allRangeGuideCopy.why}</p>
               </div>
               <p className="viz-all-range-guide-recommend">{allRangeGuideCopy.recommend}</p>
@@ -2408,7 +2416,7 @@ export default function VizDashboardPage() {
                 onClick={() => void applyGuideTimePreset('7d')}
                 disabled={loading}
               >
-                7일로 조정
+                {t('viz.guide.adjust7d')}
               </button>
               <button
                 type="button"
@@ -2416,31 +2424,31 @@ export default function VizDashboardPage() {
                 onClick={() => void applyGuideTimePreset('30d')}
                 disabled={loading}
               >
-                30일로 조정
+                {t('viz.guide.adjust30d')}
               </button>
               <button
                 type="button"
                 className="btn-ghost btn-sm"
                 onClick={dismissAllRangeGuide}
               >
-                샘플 모드로 계속
+                {t('viz.guide.continueSample')}
               </button>
             </div>
           </div>
         )}
         <div className="card-header viz-chart-header">
           <div className="viz-chart-header-main">
-            <h2>Chart</h2>
+            <h2>{t('viz.chart')}</h2>
             <p className="viz-chart-summary">{chartSummary}</p>
           </div>
           <div className="viz-chart-toolbar">
-            <div className="viz-chart-toolbar-group" role="group" aria-label="Chart view">
+            <div className="viz-chart-toolbar-group" role="group" aria-label={t('viz.chartView')}>
               <button
                 type="button"
                 className={`viz-chart-icon-btn viz-chart-fullscreen-toggle${chartFullscreen ? ' active' : ''}`}
                 onClick={() => void toggleChartFullscreen()}
-                title={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                aria-label={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                title={chartFullscreen ? t('viz.exitFullscreen') : t('viz.fullscreen')}
+                aria-label={chartFullscreen ? t('viz.exitFullscreen') : t('viz.fullscreen')}
                 aria-pressed={chartFullscreen}
               >
                 {chartFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
@@ -2450,8 +2458,8 @@ export default function VizDashboardPage() {
                 className="viz-chart-icon-btn"
                 onClick={() => zoomChartByFactor(0.8)}
                 disabled={liveMode || displayChartData.length === 0}
-                title="Zoom in horizontally"
-                aria-label="Zoom in horizontally"
+                title={t('viz.zoomIn')}
+                aria-label={t('viz.zoomIn')}
               >
                 <IconZoomIn />
               </button>
@@ -2460,8 +2468,8 @@ export default function VizDashboardPage() {
                 className="viz-chart-icon-btn"
                 onClick={() => zoomChartByFactor(1.25)}
                 disabled={liveMode || !chartZoomActive}
-                title="Zoom out horizontally"
-                aria-label="Zoom out horizontally"
+                title={t('viz.zoomOut')}
+                aria-label={t('viz.zoomOut')}
               >
                 <IconZoomOut />
               </button>
@@ -2470,20 +2478,20 @@ export default function VizDashboardPage() {
                 className="viz-chart-icon-btn"
                 onClick={resetChartZoom}
                 disabled={liveMode || !chartZoomActive}
-                title="Reset zoom"
-                aria-label="Reset zoom"
+                title={t('viz.resetZoom')}
+                aria-label={t('viz.resetZoom')}
               >
                 <IconZoomReset />
               </button>
             </div>
             <div className="viz-chart-toolbar-sep" aria-hidden />
-            <div className="viz-chart-toolbar-group" role="group" aria-label="Tooltip">
+            <div className="viz-chart-toolbar-group" role="group" aria-label={t('viz.tooltip')}>
               <button
                 type="button"
                 className={`viz-chart-icon-btn viz-chart-tooltip-toggle${chartTooltipEnabled ? ' active' : ''}`}
                 onClick={() => setChartTooltipEnabled(v => !v)}
-                title="Show value popup on hover"
-                aria-label="Show value popup on hover"
+                title={t('viz.tooltipToggle')}
+                aria-label={t('viz.tooltipToggle')}
                 aria-pressed={chartTooltipEnabled}
               >
                 <IconTooltip />
@@ -2494,7 +2502,7 @@ export default function VizDashboardPage() {
         <div className="viz-chart-panel">
         {!liveMode && displayChartData.length > 0 && (
           <p className="viz-chart-zoom-hint muted">
-            Shift+drag: zoom region · Alt+drag: measure time · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset
+            {t('viz.zoomHint')}
           </p>
         )}
         <div
@@ -2566,7 +2574,7 @@ export default function VizDashboardPage() {
         <div className={`card table-card viz-stats-card${statsOpen ? '' : ' is-collapsed'}`}>
           <div className="card-header viz-stats-header">
             <div className="viz-stats-header-main">
-              <h2>Statistics</h2>
+              <h2>{t('viz.statistics')}</h2>
               {!statsOpen && statsSummary && (
                 <span className="muted viz-config-summary">{statsSummary}</span>
               )}
@@ -2576,8 +2584,8 @@ export default function VizDashboardPage() {
               className="btn-ghost btn-sm viz-config-collapse-btn"
               onClick={() => setStatsOpen(v => !v)}
               aria-expanded={statsOpen}
-              aria-label={statsOpen ? 'Collapse statistics' : 'Expand statistics'}
-              title={statsOpen ? 'Collapse' : 'Expand'}
+              aria-label={statsOpen ? t('viz.collapse') : t('viz.expand')}
+              title={statsOpen ? t('viz.collapse') : t('viz.expand')}
             >
               <span className={`viz-collapse-chevron${statsOpen ? ' open' : ''}`} aria-hidden>›</span>
             </button>
@@ -2589,11 +2597,11 @@ export default function VizDashboardPage() {
               <thead>
                 <tr>
                   <th>NAME</th>
-                  <th>Min</th>
-                  <th>Max</th>
-                  <th>Avg</th>
-                  <th>Latest</th>
-                  <th>Count</th>
+                  <th>{t('viz.min')}</th>
+                  <th>{t('viz.max')}</th>
+                  <th>{t('viz.avg')}</th>
+                  <th>{t('viz.last')}</th>
+                  <th>{t('viz.count')}</th>
                 </tr>
               </thead>
               <tbody>

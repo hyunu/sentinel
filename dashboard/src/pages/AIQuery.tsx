@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec } from '../api';
 import PageHeader from '../components/PageHeader';
+import { useTranslation } from '../i18n';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -10,6 +11,7 @@ interface Message {
 }
 
 export default function AIQueryPage() {
+  const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [selectedBoard, setSelectedBoard] = useState('');
@@ -38,7 +40,10 @@ export default function AIQueryPage() {
         data: JSON.stringify(result.context, null, 2),
       }]);
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }]);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: t('ai.errorPrefix', { message: String(e) }),
+      }]);
     }
     setLoading(false);
   };
@@ -46,23 +51,23 @@ export default function AIQueryPage() {
   return (
     <div className="page">
       <PageHeader
-        title="AI Query"
-        subtitle="자연어로 보드 데이터를 질의합니다. 먼저 보드를 선택하세요."
+        title={t('ai.title')}
+        subtitle={t('ai.subtitle')}
       />
 
       <div className="card">
         <div className="form-grid">
           <div className="form-field">
-            <label>Board</label>
+            <label>{t('common.board')}</label>
             <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
-              <option value="">Select Board</option>
+              <option value="">{t('ai.selectBoard')}</option>
               {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
           <div className="form-field">
-            <label>Protocol (context)</label>
+            <label>{t('ai.protocolContext')}</label>
             <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
-              <option value="">Optional</option>
+              <option value="">{t('common.optional')}</option>
               {protocols.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -73,27 +78,27 @@ export default function AIQueryPage() {
         <div className="chat-container">
           {messages.length === 0 && (
             <p className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-              예: &quot;Find RPM over 3000&quot;, &quot;Show temperature anomalies&quot;
+              {t('ai.emptyHint')}
             </p>
           )}
           {messages.map((m, i) => (
             <div key={i} className={`chat-msg ${m.role}`}>
-              <strong>{m.role === 'user' ? 'You' : 'Assistant'}</strong>
+              <strong>{m.role === 'user' ? t('ai.you') : t('ai.assistant')}</strong>
               <p>{m.content}</p>
               {m.data && <pre>{m.data}</pre>}
             </div>
           ))}
-          {loading && <div className="chat-msg assistant"><em>Thinking…</em></div>}
+          {loading && <div className="chat-msg assistant"><em>{t('ai.thinking')}</em></div>}
         </div>
         <div className="chat-input-row">
           <input
-            placeholder="데이터에 대해 질문하세요…"
+            placeholder={t('ai.inputPlaceholder')}
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && send()}
           />
           <button type="button" onClick={send} disabled={loading || !selectedBoard} className="btn-primary">
-            Send
+            {t('common.send')}
           </button>
         </div>
       </div>

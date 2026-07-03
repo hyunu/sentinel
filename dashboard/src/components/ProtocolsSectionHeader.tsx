@@ -1,18 +1,18 @@
 import type { ReactNode } from 'react';
 import PageHeader from '../components/PageHeader';
 import ProtocolsSubNav from '../components/ProtocolsSubNav';
-
-const PROTOCOLS_SUBTITLE =
-  'Define UART packet structures and reusable parse_rules templates.';
+import { useTranslation } from '../i18n';
 
 type ProtocolsSectionHeaderProps = {
   children?: ReactNode;
 };
 
 export default function ProtocolsSectionHeader({ children }: ProtocolsSectionHeaderProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="protocols-section-header">
-      <PageHeader title="Protocols" subtitle={PROTOCOLS_SUBTITLE}>
+      <PageHeader title={t('protocols.title')} subtitle={t('protocols.subtitle')}>
         {children}
       </PageHeader>
       <ProtocolsSubNav />

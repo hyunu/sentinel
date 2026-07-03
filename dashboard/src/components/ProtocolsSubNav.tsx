@@ -1,14 +1,17 @@
 import { NavLink } from 'react-router-dom';
+import { useTranslation } from '../i18n';
 
 export default function ProtocolsSubNav() {
+  const { t } = useTranslation();
+
   return (
-    <nav className="protocols-subnav" aria-label="Protocols section">
+    <nav className="protocols-subnav" aria-label={t('protocols.title')}>
       <NavLink to="/protocols" end className={({ isActive }) => (isActive ? 'is-active' : '')}>
-        Saved protocols
+        {t('protocols.savedProtocols')}
       </NavLink>
       <span className="protocols-subnav-sep" aria-hidden>·</span>
       <NavLink to="/protocols/templates" className={({ isActive }) => (isActive ? 'is-active' : '')}>
-        Templates
+        {t('protocols.templates')}
       </NavLink>
     </nav>
   );

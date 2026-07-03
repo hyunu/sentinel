@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from '../i18n';
 
 type ModalProps = {
   open: boolean;
@@ -11,6 +12,8 @@ type ModalProps = {
 };
 
 export default function Modal({ open, onClose, title, children, footer, wide }: ModalProps) {
+  const { t } = useTranslation();
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -38,7 +41,7 @@ export default function Modal({ open, onClose, title, children, footer, wide }: 
       >
         <div className="modal-header">
           <h2 id="modal-title">{title}</h2>
-          <button type="button" className="btn-ghost btn-sm btn-icon modal-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="btn-ghost btn-sm btn-icon modal-close" onClick={onClose} aria-label={t('common.close')}>
             ×
           </button>
         </div>

@@ -4,6 +4,7 @@ import type { Board, ProtocolSpec } from '../api';
 import { formatDateTime } from '../utils/date';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
+import { useTranslation } from '../i18n';
 
 const DEFAULT_PROTOCOL_ID = 'temperature-telemetry-v1';
 
@@ -22,6 +23,7 @@ function emptyRegisterForm() {
 }
 
 export default function BoardsPage() {
+  const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,14 +81,14 @@ export default function BoardsPage() {
 
   const removeBoard = async (id: string, boardName: string, online: boolean) => {
     const msg = online
-      ? `"${boardName}" 보드를 삭제할까요? 연결된 기기에 삭제 알림을 보낸 뒤, 다음 heartbeat에서 데이터가 제거됩니다.`
-      : `"${boardName}" 보드와 관련 데이터(UART, 세션, 온도 등)를 모두 삭제할까요?`;
+      ? t('boards.deleteOnlineConfirm', { name: boardName })
+      : t('boards.deleteOfflineConfirm', { name: boardName });
     if (!window.confirm(msg)) return;
     try {
       const res = await api.boards.delete(id);
       setBoards(prev => prev.filter(b => b.id !== id));
       if (res.pending) {
-        window.alert(`"${boardName}" 삭제 요청을 전송했습니다. 기기가 다음 heartbeat를 보내면 등록이 해제됩니다.`);
+        window.alert(t('boards.deletePendingAlert', { name: boardName }));
       }
     } catch (err) {
       console.error(err);
@@ -122,45 +124,45 @@ export default function BoardsPage() {
   return (
     <div className="page">
       <PageHeader
-        title="Boards"
-        subtitle="등록된 보드 상태, 위치, 연결 정보를 확인합니다. 30초마다 자동 갱신됩니다."
+        title={t('boards.title')}
+        subtitle={t('boards.subtitle')}
       />
 
       <div className="card table-card">
         <div className="card-header">
-          <h2>All Boards</h2>
+          <h2>{t('boards.allBoards')}</h2>
           <div className="btn-group">
-            <span className="count-badge">{onlineCount} online · {boards.length} total</span>
+            <span className="count-badge">{t('boards.onlineTotal', { online: onlineCount, total: boards.length })}</span>
             <button type="button" className="btn-primary btn-sm" onClick={openRegister}>
-              + Register Board
+              + {t('boards.registerBoard')}
             </button>
           </div>
         </div>
 
         {loading ? (
-          <p className="muted protocols-list-empty">불러오는 중…</p>
+          <p className="muted protocols-list-empty">{t('boards.loading')}</p>
         ) : (
           <div className="table-wrap">
             <table className="boards-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>UID</th>
-                  <th>Protocol</th>
-                  <th className="col-location">Location</th>
-                  <th>BLE ID</th>
-                  <th>WiFi MAC</th>
-                  <th>Status</th>
-                  <th>Last Heartbeat</th>
-                  <th>Version</th>
-                  <th>RSSI</th>
-                  <th className="col-actions">Actions</th>
+                  <th>{t('common.name')}</th>
+                  <th>{t('boards.uid')}</th>
+                  <th>{t('common.protocol')}</th>
+                  <th className="col-location">{t('common.location')}</th>
+                  <th>{t('boards.bleId')}</th>
+                  <th>{t('boards.wifiMac')}</th>
+                  <th>{t('common.status')}</th>
+                  <th>{t('boards.lastHeartbeat')}</th>
+                  <th>{t('boards.firmwareVersion')}</th>
+                  <th>{t('boards.rssi')}</th>
+                  <th className="col-actions">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {boards.length === 0 ? (
                   <tr className="empty-row">
-                    <td colSpan={11}>등록된 보드가 없습니다.</td>
+                    <td colSpan={11}>{t('boards.empty')}</td>
                   </tr>
                 ) : boards.map(b => {
                   const online = isBoardOnline(b, now);
@@ -190,7 +192,7 @@ export default function BoardsPage() {
                         <input
                           className="table-inline-input"
                           value={b.location ?? ''}
-                          placeholder="위치"
+                          placeholder={t('boards.locationPlaceholder')}
                           onChange={e => {
                             const location = e.target.value;
                             setBoards(prev => prev.map(row =>
@@ -205,7 +207,7 @@ export default function BoardsPage() {
                       <td className="mono-cell">{b.wifi_mac || '—'}</td>
                       <td>
                         <span className={`badge ${online ? 'badge-online' : 'badge-offline'}`}>
-                          {online ? 'Online' : 'Offline'}
+                          {online ? t('common.online') : t('common.offline')}
                         </span>
                       </td>
                       <td className="mono-cell">{formatDateTime(b.last_heartbeat)}</td>
@@ -219,7 +221,7 @@ export default function BoardsPage() {
                           className="btn-danger btn-sm"
                           onClick={() => removeBoard(b.id, b.name, online)}
                         >
-                          Delete
+                          {t('common.delete')}
                         </button>
                       </td>
                     </tr>
@@ -234,11 +236,11 @@ export default function BoardsPage() {
       <Modal
         open={registerOpen}
         onClose={closeRegister}
-        title="Register Board"
+        title={t('boards.registerBoard')}
         footer={(
           <>
             <button type="button" className="btn-ghost btn-sm" onClick={closeRegister} disabled={registering}>
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -246,41 +248,41 @@ export default function BoardsPage() {
               onClick={register}
               disabled={!canRegister || registering}
             >
-              {registering ? 'Registering…' : 'Register'}
+              {registering ? t('common.registering') : t('common.register')}
             </button>
           </>
         )}
       >
         <div className="form-grid modal-form-grid">
           <div className="form-field">
-            <label>Name</label>
+            <label>{t('common.name')}</label>
             <input
-              placeholder="STN-0001"
+              placeholder={t('boards.registerNamePlaceholder')}
               value={registerForm.name}
               onChange={e => setRegisterForm(f => ({ ...f, name: e.target.value }))}
               autoFocus
             />
           </div>
           <div className="form-field">
-            <label>BLE ID</label>
+            <label>{t('boards.bleId')}</label>
             <input
               className="mono"
-              placeholder="remoteId / UUID"
+              placeholder={t('boards.registerBlePlaceholder')}
               value={registerForm.bleId}
               onChange={e => setRegisterForm(f => ({ ...f, bleId: e.target.value }))}
             />
           </div>
           <div className="form-field">
-            <label>WiFi MAC</label>
+            <label>{t('boards.wifiMac')}</label>
             <input
               className="mono"
-              placeholder="AA:BB:CC:DD:EE:FF"
+              placeholder={t('boards.registerWifiPlaceholder')}
               value={registerForm.wifiMac}
               onChange={e => setRegisterForm(f => ({ ...f, wifiMac: e.target.value }))}
             />
           </div>
           <div className="form-field">
-            <label>Protocol</label>
+            <label>{t('common.protocol')}</label>
             <select
               value={registerForm.protocolId}
               onChange={e => setRegisterForm(f => ({ ...f, protocolId: e.target.value }))}
@@ -292,15 +294,15 @@ export default function BoardsPage() {
             </select>
           </div>
           <div className="form-field">
-            <label>Location</label>
+            <label>{t('common.location')}</label>
             <input
-              placeholder="예: Lab A / Rack 3"
+              placeholder={t('boards.registerLocationPlaceholder')}
               value={registerForm.location}
               onChange={e => setRegisterForm(f => ({ ...f, location: e.target.value }))}
             />
           </div>
         </div>
-        <p className="muted modal-hint">Name과 BLE ID는 필수입니다.</p>
+        <p className="muted modal-hint">{t('boards.registerHint')}</p>
       </Modal>
     </div>
   );

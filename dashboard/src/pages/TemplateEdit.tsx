@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { JsonRuleDocument, ParseResult } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
+import { useTranslation } from '../i18n';
 import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '../lib/ruleBuilderUtils';
 import '../styles/ruleBuilder.css';
 
@@ -16,6 +17,7 @@ function isParseError(result: ParseResult | { error: string }): result is { erro
 }
 
 export default function TemplateEditPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = !id;
@@ -35,7 +37,7 @@ export default function TemplateEditPage() {
 
   const applyRules = useCallback((doc: JsonRuleDocument) => {
     if (!doc.fields?.length) {
-      setRulesError('At least one field is required.');
+      setRulesError(t('protocols.fieldRequired'));
       return;
     }
     setRules(doc);
@@ -65,7 +67,7 @@ export default function TemplateEditPage() {
     try {
       applyRules(JSON.parse(text) as JsonRuleDocument);
     } catch (e) {
-      setRulesError(e instanceof Error ? e.message : 'Invalid JSON format.');
+      setRulesError(e instanceof Error ? e.message : t('protocols.invalidJson'));
     }
   };
 
@@ -79,7 +81,7 @@ export default function TemplateEditPage() {
       const result = await api.protocols.parse({ raw_hex: hex, parse_rules: rules });
       setTestResult(result);
     } catch (e) {
-      setTestResult({ error: e instanceof Error ? e.message : 'Parse failed.' });
+      setTestResult({ error: e instanceof Error ? e.message : t('protocols.parseFailed') });
     }
   }, [testHex, rules, rulesError]);
 
@@ -109,7 +111,7 @@ export default function TemplateEditPage() {
   if (loading) {
     return (
       <div className="page protocol-edit-page">
-        <p className="muted">Loading template…</p>
+        <p className="muted">{t('common.loading')}</p>
       </div>
     );
   }
@@ -121,23 +123,23 @@ export default function TemplateEditPage() {
   return (
     <div className="page protocol-edit-page">
       <div className="page-breadcrumb">
-        <Link to="/protocols/templates" className="page-back-link">← Templates</Link>
+        <Link to="/protocols/templates" className="page-back-link">{t('templates.backLink')}</Link>
       </div>
 
       <div className="protocol-edit-toolbar">
         <PageHeader
-          title={isNew ? 'New Template' : 'Edit Template'}
-          subtitle="Reusable parse_rules preset for Protocol Edit → Load template."
+          title={isNew ? t('templates.newTitle') : t('templates.editTitle')}
+          subtitle={t('templates.editSubtitle')}
         />
         <div className="protocol-edit-toolbar-actions">
-          <Link to="/protocols/templates" className="btn-ghost">Cancel</Link>
+          <Link to="/protocols/templates" className="btn-ghost">{t('common.cancel')}</Link>
           <button
             type="button"
             className="btn-primary"
             disabled={!name.trim() || !!rulesError || saving}
             onClick={save}
           >
-            {saving ? 'Saving…' : isNew ? 'Create' : 'Save'}
+            {saving ? t('common.saving') : isNew ? t('common.create') : t('common.save')}
           </button>
         </div>
       </div>
@@ -145,11 +147,11 @@ export default function TemplateEditPage() {
       <div className="protocol-edit-stack">
         <div className="card protocol-info-card">
           <div className="card-header">
-            <h2>General</h2>
+            <h2>{t('common.general')}</h2>
           </div>
           <div className="protocol-info-grid template-info-grid">
             <div className="form-field">
-              <label>Name</label>
+              <label>{t('common.name')}</label>
               <input value={name} onChange={e => setName(e.target.value)} placeholder="LCP/OSP Function Protocol" />
             </div>
             <div className="form-field">

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { UartData, Board, UartCursor } from '../api';
 import PageHeader from '../components/PageHeader';
+import { useTranslation } from '../i18n';
 
 type TimeRange = 'all' | '1h' | '24h' | '7d';
 type DirectionFilter = '' | 'TX' | 'RX';
@@ -73,6 +74,7 @@ function displayParsedEntries(parsed: Record<string, unknown>): [string, unknown
 }
 
 export default function DataViewerPage() {
+  const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocolNames, setProtocolNames] = useState<Record<string, string>>({});
   const [selectedBoard, setSelectedBoard] = useState('');
@@ -99,7 +101,7 @@ export default function DataViewerPage() {
   const board = boards.find(b => b.id === selectedBoard);
   const assignedProtocolLabel = board?.protocol_id
     ? (protocolNames[board.protocol_id] ?? board.protocol_id)
-    : 'Not assigned';
+    : t('dataViewer.notAssigned');
 
   const fetchPage = useCallback(async (opts: { append?: boolean; cursor?: UartCursor | null } = {}) => {
     if (!selectedBoard) return;
@@ -131,7 +133,7 @@ export default function DataViewerPage() {
       }
     } catch (e) {
       console.error(e);
-      setError('Failed to load UART data.');
+      setError(t('dataViewer.failedToLoad'));
       if (!append) {
         setData([]);
         setTotal(null);
@@ -142,7 +144,7 @@ export default function DataViewerPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [selectedBoard, timeRange, direction, pageSize]);
+  }, [selectedBoard, timeRange, direction, pageSize, t]);
 
   useEffect(() => {
     if (!selectedBoard) {
@@ -153,55 +155,55 @@ export default function DataViewerPage() {
       return;
     }
     fetchPage();
-  }, [selectedBoard, timeRange, direction, pageSize, fetchPage]);
+  }, [selectedBoard, timeRange, direction, pageSize, t]);
 
   const statLabel = total !== null
-    ? `Showing ${formatCount(data.length)} of ${formatCount(total)}`
+    ? t('dataViewer.showingOf', { shown: formatCount(data.length), total: formatCount(total) })
     : data.length > 0
-      ? `Showing ${formatCount(data.length)}`
-      : 'No records';
+      ? t('dataViewer.showing', { count: formatCount(data.length) })
+      : t('dataViewer.noRecords');
 
   return (
     <div className="page">
       <PageHeader
-        title="UART Data"
-        subtitle="수집 시 보드에 매칭된 프로토콜(parse_rules)로 파싱된 결과를 표시합니다."
+        title={t('dataViewer.title')}
+        subtitle={t('dataViewer.subtitle')}
       />
 
       <div className="card">
         <div className="form-row">
           <div className="form-field">
-            <label>Board</label>
+            <label>{t('common.board')}</label>
             <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
-              <option value="">Select board</option>
+              <option value="">{t('dataViewer.selectBoard')}</option>
               {boards.map(b => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
           </div>
           <div className="form-field">
-            <label>Assigned protocol</label>
+            <label>{t('dataViewer.assignedProtocol')}</label>
             <input readOnly value={selectedBoard ? assignedProtocolLabel : '—'} />
           </div>
           <div className="form-field">
-            <label>Time range</label>
+            <label>{t('dataViewer.timeRange')}</label>
             <select value={timeRange} onChange={e => setTimeRange(e.target.value as TimeRange)}>
-              <option value="1h">Last 1 hour</option>
-              <option value="24h">Last 24 hours</option>
-              <option value="7d">Last 7 days</option>
-              <option value="all">All time</option>
+              <option value="1h">{t('dataViewer.last1h')}</option>
+              <option value="24h">{t('dataViewer.last24h')}</option>
+              <option value="7d">{t('dataViewer.last7d')}</option>
+              <option value="all">{t('dataViewer.allTime')}</option>
             </select>
           </div>
           <div className="form-field">
-            <label>Direction</label>
+            <label>{t('dataViewer.direction')}</label>
             <select value={direction} onChange={e => setDirection(e.target.value as DirectionFilter)}>
-              <option value="">All</option>
+              <option value="">{t('common.all')}</option>
               <option value="TX">TX</option>
               <option value="RX">RX</option>
             </select>
           </div>
           <div className="form-field">
-            <label>Page size</label>
+            <label>{t('dataViewer.pageSize')}</label>
             <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
               {PAGE_SIZES.map(n => (
                 <option key={n} value={n}>{n}</option>
@@ -211,7 +213,7 @@ export default function DataViewerPage() {
         </div>
         {selectedBoard && !board?.protocol_id && (
           <p className="muted section-hint">
-            이 보드에 프로토콜이 지정되지 않았습니다. 폰앱 온보딩 또는 Boards 페이지에서 설정하세요.
+            {t('dataViewer.noProtocolHint')}
           </p>
         )}
       </div>
@@ -226,7 +228,7 @@ export default function DataViewerPage() {
               disabled={loading}
               onClick={() => fetchPage()}
             >
-              Refresh
+              {t('common.refresh')}
             </button>
           )}
         </div>
@@ -236,19 +238,19 @@ export default function DataViewerPage() {
         )}
 
         {loading && data.length === 0 ? (
-          <p className="muted" style={{ padding: '24px 16px' }}>Loading…</p>
+          <p className="muted" style={{ padding: '24px 16px' }}>{t('common.loading')}</p>
         ) : !loading && data.length === 0 && selectedBoard ? (
-          <p className="muted" style={{ padding: '24px 16px' }}>No UART records for this filter.</p>
+          <p className="muted" style={{ padding: '24px 16px' }}>{t('dataViewer.noUartRecords')}</p>
         ) : (
           <div className="data-viewer-table-scroll">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Dir</th>
-                  <th>Raw</th>
-                  <th>ASCII</th>
-                  <th>Parsed</th>
+                  <th>{t('dataViewer.time')}</th>
+                  <th>{t('dataViewer.dir')}</th>
+                  <th>{t('dataViewer.raw')}</th>
+                  <th>{t('dataViewer.ascii')}</th>
+                  <th>{t('dataViewer.parsed')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -280,7 +282,7 @@ export default function DataViewerPage() {
               disabled={loadingMore || !nextBefore}
               onClick={() => fetchPage({ append: true, cursor: nextBefore })}
             >
-              {loadingMore ? 'Loading…' : 'Load older'}
+              {loadingMore ? t('common.loading') : t('dataViewer.loadOlder')}
             </button>
           </div>
         )}

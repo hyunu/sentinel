@@ -5,6 +5,7 @@ import type { JsonRuleDocument, ParseResult, SchemaPreset } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
 import ParseRulesManual from '../components/ParseRulesManual';
+import { useTranslation } from '../i18n';
 import { DEFAULT_LCP_PARSE_RULES } from '../lib/protocolFormat';
 import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '../lib/ruleBuilderUtils';
 
@@ -17,6 +18,7 @@ function isParseError(result: ParseResult | { error: string }): result is { erro
 }
 
 export default function ProtocolEditPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isNew = !id;
@@ -38,7 +40,7 @@ export default function ProtocolEditPage() {
 
   const applyRules = useCallback((doc: JsonRuleDocument) => {
     if (!doc.fields?.length) {
-      setRulesError('At least one field is required.');
+      setRulesError(t('protocols.fieldRequired'));
       return;
     }
     setRules(doc);
@@ -72,7 +74,7 @@ export default function ProtocolEditPage() {
     try {
       applyRules(JSON.parse(text) as JsonRuleDocument);
     } catch (e) {
-      setRulesError(e instanceof Error ? e.message : 'Invalid JSON format.');
+      setRulesError(e instanceof Error ? e.message : t('protocols.invalidJson'));
     }
   };
 
@@ -86,7 +88,7 @@ export default function ProtocolEditPage() {
       const result = await api.protocols.parse({ raw_hex: hex, parse_rules: rules });
       setTestResult(result);
     } catch (e) {
-      setTestResult({ error: e instanceof Error ? e.message : 'Parse failed.' });
+      setTestResult({ error: e instanceof Error ? e.message : t('protocols.parseFailed') });
     }
   }, [testHex, rules, rulesError]);
 
@@ -124,7 +126,7 @@ export default function ProtocolEditPage() {
   if (loading) {
     return (
       <div className="page protocol-edit-page">
-        <p className="muted">Loading protocol…</p>
+        <p className="muted">{t('protocols.loading')}</p>
       </div>
     );
   }
@@ -136,26 +138,26 @@ export default function ProtocolEditPage() {
   return (
     <div className="page protocol-edit-page">
       <div className="page-breadcrumb">
-        <Link to="/protocols" className="page-back-link">← Protocols</Link>
+        <Link to="/protocols" className="page-back-link">{t('protocols.backLink')}</Link>
       </div>
 
       <div className="protocol-edit-toolbar">
         <PageHeader
-          title={isNew ? 'New Protocol' : 'Edit Protocol'}
-          subtitle="Define packet structure in the UI; parse_rules JSON is generated automatically."
+          title={isNew ? t('protocols.newTitle') : t('protocols.editTitle')}
+          subtitle={t('protocols.editSubtitle')}
         />
         <div className="protocol-edit-toolbar-actions">
           <button type="button" className="btn-ghost" onClick={() => setManualOpen(true)}>
-            Manual
+            {t('common.manual')}
           </button>
-          <Link to="/protocols" className="btn-ghost">Cancel</Link>
+          <Link to="/protocols" className="btn-ghost">{t('common.cancel')}</Link>
           <button
             type="button"
             className="btn-primary"
             disabled={!name || !!rulesError || saving}
             onClick={save}
           >
-            {saving ? 'Saving…' : isNew ? 'Create' : 'Save'}
+            {saving ? t('common.saving') : isNew ? t('common.create') : t('common.save')}
           </button>
         </div>
       </div>
@@ -165,23 +167,23 @@ export default function ProtocolEditPage() {
       <div className="protocol-edit-stack">
         <div className="card protocol-info-card">
           <div className="card-header">
-            <h2>General</h2>
+            <h2>{t('common.general')}</h2>
           </div>
           <div className="protocol-info-grid">
             <div className="form-field">
-              <label>Name</label>
+              <label>{t('common.name')}</label>
               <input value={name} onChange={e => setName(e.target.value)} placeholder="LCP Protocol" />
             </div>
             <div className="form-field">
-              <label>Version</label>
+              <label>{t('common.version')}</label>
               <input value={version} onChange={e => setVersion(e.target.value)} />
             </div>
             <div className="form-field">
-              <label>Description</label>
-              <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional" />
+              <label>{t('common.description')}</label>
+              <input value={description} onChange={e => setDescription(e.target.value)} placeholder={t('common.optional')} />
             </div>
             <div className="form-field">
-              <label>Load template</label>
+              <label>{t('protocols.loadTemplate')}</label>
               <select
                 className="protocol-template-select"
                 defaultValue=""
@@ -204,14 +206,14 @@ export default function ProtocolEditPage() {
 
         <div className="card rules-editor-card">
           <div className="card-header">
-            <h2>Parse Rules</h2>
+            <h2>{t('protocols.parseRules')}</h2>
             <div className="segmented-control">
               <button
                 type="button"
                 className={editMode === 'ui' ? 'is-active' : ''}
                 onClick={() => setEditMode('ui')}
               >
-                Visual
+                {t('protocols.uiMode')}
               </button>
               <button
                 type="button"
@@ -221,7 +223,7 @@ export default function ProtocolEditPage() {
                   if (!rulesError) setRulesText(documentToJson(rules));
                 }}
               >
-                JSON
+                {t('protocols.jsonMode')}
               </button>
             </div>
           </div>
@@ -251,7 +253,7 @@ export default function ProtocolEditPage() {
 
         <div className="card parse-test-card">
           <div className="card-header">
-            <h2>Parse Test</h2>
+            <h2>{t('protocols.testParse')}</h2>
           </div>
           <p className="parse-test-hint">Enter HEX to validate instantly via the Go engine.</p>
           <input
