@@ -297,7 +297,10 @@ export default function ChartZoomNavigator({
     : null;
 
   return (
-    <div className="viz-chart-navigator" aria-label="Chart zoom position">
+    <div
+      className={`viz-chart-navigator${widthPct >= 99.5 ? ' is-full-range' : ''}`}
+      aria-label="Chart zoom position"
+    >
       <div
         ref={trackRef}
         className="viz-chart-navigator-track"

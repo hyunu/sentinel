@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
+import ChartHelpManual from '../components/ChartHelpManual';
 import ChartCursorValues, { buildCursorValueRows } from '../components/ChartCursorValues';
 import VizCanvasChart, { type VizCanvasChartHandle } from '../components/VizCanvasChart';
 import PageHeader from '../components/PageHeader';
@@ -13,6 +14,7 @@ import {
   IconZoomOut,
   IconZoomReset,
   IconSearch,
+  IconManual,
 } from '../components/ChartControlIcons';
 import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseDateTime } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
@@ -537,6 +539,7 @@ export default function VizDashboardPage() {
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
   const itemFieldSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [chartFullscreen, setChartFullscreen] = useState(false);
+  const [chartManualOpen, setChartManualOpen] = useState(false);
   const [chartViewportHeight, setChartViewportHeight] = useState(600);
   const lastTimestampRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1770,6 +1773,14 @@ export default function VizDashboardPage() {
 
   const chartZoomActive = zoomWindow != null;
 
+  const chartNavigatorWindow = useMemo(() => {
+    if (liveMode || chartData.length <= 1) return null;
+    if (chartZoomActive && chartZoom) {
+      return { start: chartZoom.start, end: chartZoom.end };
+    }
+    return { start: 0, end: chartData.length - 1 };
+  }, [liveMode, chartData.length, chartZoomActive, chartZoom]);
+
   const allRangeGuideCopy = useMemo(
     () => (allRangeGuide ? buildAllRangeGuideCopy(allRangeGuide, t) : null),
     [allRangeGuide, t],
@@ -2442,6 +2453,16 @@ export default function VizDashboardPage() {
             <p className="viz-chart-summary">{chartSummary}</p>
           </div>
           <div className="viz-chart-toolbar">
+            <button
+              type="button"
+              className="viz-chart-icon-btn"
+              onClick={() => setChartManualOpen(true)}
+              title={t('common.manual')}
+              aria-label={t('common.manual')}
+            >
+              <IconManual />
+            </button>
+            <div className="viz-chart-toolbar-sep" aria-hidden />
             <div className="viz-chart-toolbar-group" role="group" aria-label={t('viz.chartView')}>
               <button
                 type="button"
@@ -2500,11 +2521,6 @@ export default function VizDashboardPage() {
           </div>
         </div>
         <div className="viz-chart-panel">
-        {!liveMode && displayChartData.length > 0 && (
-          <p className="viz-chart-zoom-hint muted">
-            {t('viz.zoomHint')}
-          </p>
-        )}
         <div
           ref={chartViewportRef}
           className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
@@ -2534,10 +2550,10 @@ export default function VizDashboardPage() {
             formatTooltipValue={formatTooltipItemValue}
           />
         </div>
-        {chartZoom != null && !liveMode && (
+        {chartNavigatorWindow && (
           <ChartZoomNavigator
             chartData={chartData}
-            chartZoom={chartZoom}
+            chartZoom={chartNavigatorWindow}
             sparkItemId={chartItems[0]?.id}
             formatTime={formatChartAxisTime}
             onWindowChange={applyChartZoomWindow}
@@ -2638,6 +2654,7 @@ export default function VizDashboardPage() {
           {fieldTooltip.text}
         </div>
       )}
+      <ChartHelpManual open={chartManualOpen} onClose={() => setChartManualOpen(false)} />
     </div>
   );
 }

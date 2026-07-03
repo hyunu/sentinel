@@ -47,7 +47,11 @@
     "language": "Language",
     "languageDesc": "Choose the display language for the dashboard UI.",
     "localeEn": "English",
-    "localeKo": "한국어"
+    "localeKo": "한국어",
+    "theme": "Theme",
+    "themeDesc": "Choose the color theme for the dashboard.",
+    "themeDark": "Dark",
+    "themeLight": "Light"
   },
   "boards": {
     "title": "Boards",

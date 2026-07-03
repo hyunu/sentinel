@@ -9,6 +9,8 @@ import uPlot, { type AlignedData, type Options, type Series } from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { VizItem } from '../api';
 import { formatChartAxisTime } from '../utils/date';
+import { readCssVar } from '../lib/themeColors';
+import { useTheme } from '../theme';
 
 export type VizChartPoint = { timeKey: string } & Record<string, string | number>;
 
@@ -204,6 +206,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   },
   ref,
 ) {
+  const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -326,6 +329,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const leftAxis = yAxes.find(a => a.id === PRIMARY_SCALE);
     const rightAxis = yAxes.find(a => a.id === SECONDARY_SCALE);
 
+    const axisColor = readCssVar('--chart-axis', '#888aa0');
+    const gridColor = readCssVar('--chart-grid', '#2e3040');
+
     const makeOptions = (width: number): Options => ({
       width,
       height,
@@ -355,9 +361,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       },
       axes: [
         {
-          stroke: '#888aa0',
-          grid: { stroke: '#2e3040', width: 1 },
-          ticks: { stroke: '#888aa0' },
+          stroke: axisColor,
+          grid: { stroke: gridColor, width: 1 },
+          ticks: { stroke: axisColor },
           font: '11px system-ui, sans-serif',
           gap: 6,
           values: (_u, splits) => splits.map(v => formatChartAxisTime(new Date(v * 1000).toISOString())),
@@ -365,9 +371,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         {
           scale: PRIMARY_SCALE,
           side: 3,
-          stroke: '#888aa0',
+          stroke: axisColor,
           grid: { show: false },
-          ticks: { stroke: '#888aa0' },
+          ticks: { stroke: axisColor },
           font: '9px system-ui, sans-serif',
           size: leftAxis?.unitLabel ? 44 : 30,
           values: (_u, splits) => splits.map(v => formatYTick(v)),
@@ -379,9 +385,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           scale: SECONDARY_SCALE,
           side: 1,
           show: usesRight,
-          stroke: '#888aa0',
+          stroke: axisColor,
           grid: { show: false },
-          ticks: { stroke: '#888aa0' },
+          ticks: { stroke: axisColor },
           font: '9px system-ui, sans-serif',
           size: rightAxis?.unitLabel ? 44 : 30,
           values: (_u, splits) => splits.map(v => formatYTick(v)),
@@ -487,7 +493,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, applyWindowIndices, resetWindow]);
+  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, applyWindowIndices, resetWindow]);
 
   const windowIndicesKey = windowIndices
     ? `${windowIndices.start}:${windowIndices.end}`

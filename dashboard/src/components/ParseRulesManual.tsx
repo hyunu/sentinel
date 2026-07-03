@@ -1,5 +1,6 @@
 import Modal from './Modal';
-import type { ManualBlock, ManualLocale } from '../data/parseRulesManual';
+import ManualBlocks from './ManualBlocks';
+import type { ManualLocale } from '../data/parseRulesManual';
 import {
   MANUAL_EXPRESSIONS,
   MANUAL_GROUPS,
@@ -16,64 +17,10 @@ type ParseRulesManualProps = {
   onClose: () => void;
 };
 
-function ManualBlocks({
-  blocks,
-  locale,
-  tipLabel,
-}: {
-  blocks: ManualBlock[];
-  locale: ManualLocale;
-  tipLabel: string;
-}) {
-  return (
-    <>
-      {blocks.map((block, i) => {
-        switch (block.kind) {
-          case 'p':
-            return <p key={i} className="manual-p">{manualT(block.text, locale)}</p>;
-          case 'ul':
-            return (
-              <ul key={i} className="manual-ul">
-                {block.items.map((item, j) => (
-                  <li key={j}>{manualT(item, locale)}</li>
-                ))}
-              </ul>
-            );
-          case 'json':
-            return (
-              <div key={i} className="manual-code-wrap">
-                {block.label && (
-                  <span className="manual-code-label">{manualT(block.label, locale)}</span>
-                )}
-                <pre className="manual-code mono">{block.code}</pre>
-              </div>
-            );
-          case 'hex':
-            return (
-              <div key={i} className="manual-code-wrap">
-                {block.label && (
-                  <span className="manual-code-label">{manualT(block.label, locale)}</span>
-                )}
-                <pre className="manual-hex mono">{block.code}</pre>
-              </div>
-            );
-          case 'tip':
-            return (
-              <p key={i} className="manual-tip">
-                <strong>{tipLabel}:</strong> {manualT(block.text, locale)}
-              </p>
-            );
-          default:
-            return null;
-        }
-      })}
-    </>
-  );
-}
-
 export default function ParseRulesManual({ open, onClose }: ParseRulesManualProps) {
   const { locale: appLocale } = useTranslation();
   const locale: ManualLocale = appLocale;
+  const tipLabel = manualT(MANUAL_UI.tipLabel, locale);
 
   return (
     <Modal open={open} onClose={onClose} title={manualT(MANUAL_UI.title, locale)} wide>
@@ -81,14 +28,14 @@ export default function ParseRulesManual({ open, onClose }: ParseRulesManualProp
         <details className="manual-section" open>
           <summary>{manualT(MANUAL_UI.gettingStarted, locale)}</summary>
           <div className="manual-section-body">
-            <ManualBlocks blocks={MANUAL_INTRO} locale={locale} tipLabel={manualT(MANUAL_UI.tipLabel, locale)} />
+            <ManualBlocks blocks={MANUAL_INTRO} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
         <details className="manual-section">
           <summary>{manualT(MANUAL_UI.expressions, locale)}</summary>
           <div className="manual-section-body">
-            <ManualBlocks blocks={MANUAL_EXPRESSIONS} locale={locale} tipLabel={manualT(MANUAL_UI.tipLabel, locale)} />
+            <ManualBlocks blocks={MANUAL_EXPRESSIONS} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
@@ -96,7 +43,7 @@ export default function ParseRulesManual({ open, onClose }: ParseRulesManualProp
           <details key={group.id} className="manual-section manual-section--group">
             <summary>{manualT(group.title, locale)}</summary>
             <div className="manual-section-body">
-              <ManualBlocks blocks={group.intro} locale={locale} tipLabel={manualT(MANUAL_UI.tipLabel, locale)} />
+              <ManualBlocks blocks={group.intro} locale={locale} tipLabel={tipLabel} />
               <div className="manual-type-list">
                 {group.types.map(typeDoc => (
                   <details key={typeDoc.type} className="manual-type">
@@ -105,7 +52,7 @@ export default function ParseRulesManual({ open, onClose }: ParseRulesManualProp
                       <span className="manual-type-summary">{manualT(typeDoc.summary, locale)}</span>
                     </summary>
                     <div className="manual-type-body">
-                      <ManualBlocks blocks={typeDoc.blocks} locale={locale} tipLabel={manualT(MANUAL_UI.tipLabel, locale)} />
+                      <ManualBlocks blocks={typeDoc.blocks} locale={locale} tipLabel={tipLabel} />
                     </div>
                   </details>
                 ))}
@@ -117,7 +64,7 @@ export default function ParseRulesManual({ open, onClose }: ParseRulesManualProp
         <details className="manual-section">
           <summary>{manualT(MANUAL_UI.workflow, locale)}</summary>
           <div className="manual-section-body">
-            <ManualBlocks blocks={MANUAL_WORKFLOW} locale={locale} tipLabel={manualT(MANUAL_UI.tipLabel, locale)} />
+            <ManualBlocks blocks={MANUAL_WORKFLOW} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
