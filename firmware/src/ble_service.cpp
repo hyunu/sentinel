@@ -53,13 +53,13 @@ static String _extract_json_field(const String &json, const char *key) {
 }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* srv, NimBLEConnInfo& connInfo) override {
-        (void)srv; (void)connInfo;
+    void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
+        (void)pServer; (void)connInfo;
         deviceConnected = true;
         Serial.println("[BLE] Connected");
     }
-    void onDisconnect(NimBLEServer* srv, NimBLEConnInfo& connInfo, int reason) override {
-        (void)srv; (void)connInfo; (void)reason;
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
+        (void)pServer; (void)connInfo; (void)reason;
         deviceConnected = false;
         Serial.println("[BLE] Disconnected");
         ble_refresh_advertising();
@@ -67,9 +67,9 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 };
 
 class UartWriteCallback : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& connInfo) override {
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
         (void)connInfo;
-        std::string val = c->getValue();
+        std::string val = pCharacteristic->getValue();
         String value = String(val.c_str());
         if (value.length() == 0) return;
         Serial.printf("[BLE] Received write payload: %s\n", value.c_str());
@@ -143,6 +143,10 @@ void ble_set_uid(const String &uid) {
 void ble_set_wifi_connected(bool connected) {
     (void)connected;
     ble_refresh_advertising();
+}
+
+bool ble_is_server_registered() {
+    return gServerRegistered;
 }
 
 void ble_set_server_registered(bool registered) {

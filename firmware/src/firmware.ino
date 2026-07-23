@@ -13,6 +13,7 @@
 #include "ble_service.h"
 #include "wifi_manager.h"
 #include "temp_sensor.h"
+#include "display_manager.h"
 
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastTemp = 0;
@@ -50,8 +51,9 @@ void setup() {
                   UART_BAUD_RATE, UART_MONITOR_TX, UART_MONITOR_RX);
 
     uart_sniffer_init();
-    wifi_init();
+    display_init();
     ble_init();
+    wifi_init();
     wifi_startup();
 
     lastHeartbeat = millis();
@@ -66,6 +68,8 @@ void loop() {
 
     // Handle WiFi connection state
     wifi_loop();
+
+    display_update(wifi_get_uid(), wifi_is_connected(), ble_is_server_registered());
 
     unsigned long now = millis();
 

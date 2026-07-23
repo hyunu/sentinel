@@ -25,3 +25,4 @@ node_modules/
 # Firmware
 firmware/build/
 firmware/sdkconfig
+firmware/.pio/

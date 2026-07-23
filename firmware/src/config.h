@@ -8,7 +8,7 @@
 #define HEARTBEAT_INTERVAL_MS  30000
 #define TEMP_INTERVAL_MS       10000
 
-#define BACKEND_URL             "http://192.168.1.100:5050"
+#define BACKEND_URL             "http://192.168.0.9:5050"
 #define BOARD_ID_PREFIX         "sentinel"
 #define FIRMWARE_VERSION        "1.0.0"
 
@@ -31,5 +31,12 @@
 
 #define FRAME_START_BYTE        0xAA
 #define FRAME_END_BYTE          0xBB
+
+// SSD1306 OLED display (I2C) — same pins as nexio firmware (72×40)
+#define OLED_SDA                5
+#define OLED_SCL                6
+#define OLED_ADDR               0x3C
+#define OLED_WIDTH              72
+#define OLED_HEIGHT             40
 
 #endif

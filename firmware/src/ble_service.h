@@ -9,6 +9,7 @@ void ble_preload_uid(const String &uid);
 void ble_set_uid(const String &uid);
 void ble_set_wifi_connected(bool connected);
 void ble_set_server_registered(bool registered);
+bool ble_is_server_registered();
 void ble_refresh_advertising();
 
 #endif

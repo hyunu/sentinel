@@ -67,7 +67,7 @@ void wifi_init() {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
-    WiFi.setSleep(false);
+    WiFi.setSleep(true);
 
     const String storedUid = nvs_load_string("uid");
     if (storedUid.length() > 0) {
@@ -163,6 +163,10 @@ void wifi_set_uid(const String &uid) {
     nvs_save_string("uid", uid);
     Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
     ble_set_uid(uid);
+}
+
+String wifi_get_uid() {
+    return board_uid;
 }
 
 bool wifi_has_board_uid() {
