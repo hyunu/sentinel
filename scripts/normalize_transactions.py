@@ -7,7 +7,6 @@ import csv
 import glob
 import re
 import uuid
-from io import StringIO
 from pathlib import Path
 
 import pandas as pd
@@ -40,17 +39,18 @@ OUTPUT_COLUMNS = [
     "order_type",
     "order_condition",
     "quantity",
-    "order_quantity",
     "price",
     "amount",
     "exchange",
     "trade_time",
     "fee",
     "tax",
-    "is_filled",
     "source_file",
     "source_format",
 ]
+
+IRP_DETAIL_MARKERS = ("[매수]", "[매도]", "부담금", "분배금", "입금", "디폴트")
+EXCLUDED_SIDES = {"CANCEL", "MODIFY", "REJECT"}
 
 
 def parse_int(value: str | int | float | None) -> int:
@@ -109,6 +109,28 @@ def normalize_side(raw: str) -> str:
     return "OTHER"
 
 
+def is_irp_detail_row(row, type_col) -> bool:
+    type_val = str(row[type_col]).strip() if pd.notna(row[type_col]) else ""
+    return any(marker in type_val for marker in IRP_DETAIL_MARKERS)
+
+
+def is_meaningful_record(record: dict) -> bool:
+    side = record["side"]
+    if side in EXCLUDED_SIDES:
+        return False
+
+    quantity = parse_float(record["quantity"])
+    amount = parse_float(record["amount"])
+
+    if side in {"DIVIDEND", "DEPOSIT"}:
+        return amount > 0
+
+    if side in {"BUY", "SELL"}:
+        return quantity > 0 and amount > 0
+
+    return quantity > 0 or amount > 0
+
+
 def resolve_file(key: str) -> Path:
     matches = glob.glob(str(UPLOAD_DIR / f"*{key}*"))
     if not matches:
@@ -134,6 +156,17 @@ def normalize_csv(key: str) -> list[dict]:
 
     for row in rows:
         filled_qty = parse_int(row.get("총체결수량"))
+        if filled_qty <= 0:
+            continue
+
+        side = normalize_side(row.get("매매구분", ""))
+        if side in EXCLUDED_SIDES:
+            continue
+
+        amount = parse_float(row.get("총체결금액"))
+        if amount <= 0:
+            continue
+
         normalized.append(
             {
                 "account_owner": owner,
@@ -142,19 +175,17 @@ def normalize_csv(key: str) -> list[dict]:
                 "order_id": row.get("주문번호", "").strip(),
                 "symbol_code": row.get("코드", "").strip(),
                 "symbol_name": row.get("종목명", "").strip(),
-                "side": normalize_side(row.get("매매구분", "")),
+                "side": side,
                 "raw_side": row.get("매매구분", "").strip(),
                 "order_type": row.get("주문구분", "").strip(),
                 "order_condition": row.get("조건", "").strip(),
                 "quantity": filled_qty,
-                "order_quantity": parse_int(row.get("주문수량")),
                 "price": parse_float(row.get("평균가")),
-                "amount": parse_float(row.get("총체결금액")),
+                "amount": amount,
                 "exchange": row.get("거래소", "").strip(),
                 "trade_time": row.get("주문시각", "").strip(),
                 "fee": "",
                 "tax": "",
-                "is_filled": filled_qty > 0,
                 "source_file": source_label,
                 "source_format": "csv_order",
             }
@@ -173,10 +204,33 @@ def normalize_irp(key: str) -> list[dict]:
     current: dict | None = None
 
     for _, row in df.iterrows():
+        if is_irp_detail_row(row, cols[1]):
+            if current is None:
+                continue
+
+            detail = str(row[cols[1]]).strip()
+            current["raw_side"] = detail
+            current["side"] = normalize_side(detail)
+
+            time_val = row[cols[5]]
+            if pd.notna(time_val):
+                current["trade_time"] = str(time_val).strip()
+
+            order_date = row[cols[0]]
+            if pd.notna(order_date) and re.match(r"\d{4}", str(order_date)):
+                current["trade_date"] = normalize_date(str(order_date))
+
+            if pd.notna(row[cols[3]]):
+                current["amount"] = parse_float(row[cols[3]])
+            if pd.notna(row[cols[4]]):
+                current["tax"] = parse_float(row[cols[4]])
+            continue
+
         date_val = row[cols[0]]
         if pd.notna(date_val) and re.match(r"\d{4}", str(date_val)):
             if current:
                 normalized.append(current)
+
             qty = parse_float(row[cols[2]])
             amount = parse_float(row[cols[3]])
             price = round(amount / qty, 4) if qty else 0.0
@@ -192,45 +246,20 @@ def normalize_irp(key: str) -> list[dict]:
                 "order_type": "",
                 "order_condition": "",
                 "quantity": int(qty) if qty == int(qty) else qty,
-                "order_quantity": int(qty) if qty == int(qty) else qty,
                 "price": price,
                 "amount": amount,
                 "exchange": "",
                 "trade_time": "",
                 "fee": parse_float(row[cols[4]]),
                 "tax": "",
-                "is_filled": qty > 0 or amount > 0,
                 "source_file": source_label,
                 "source_format": "xls_irp",
             }
-            continue
-
-        if current is None:
-            continue
-
-        detail = str(row[cols[1]]).strip() if pd.notna(row[cols[1]]) else ""
-        if detail:
-            current["raw_side"] = detail
-            current["side"] = normalize_side(detail)
-
-        time_val = row[cols[5]]
-        if pd.notna(time_val):
-            current["trade_time"] = str(time_val).strip()
-
-        order_date = row[cols[0]]
-        if pd.notna(order_date) and re.match(r"\d{4}", str(order_date)):
-            # Some IRP rows include a separate order date on the second line.
-            current["trade_date"] = normalize_date(str(order_date))
-
-        if pd.notna(row[cols[3]]):
-            current["amount"] = parse_float(row[cols[3]])
-        if pd.notna(row[cols[4]]):
-            current["tax"] = parse_float(row[cols[4]])
 
     if current:
         normalized.append(current)
 
-    return normalized
+    return [record for record in normalized if is_meaningful_record(record)]
 
 
 def main() -> None:
@@ -249,7 +278,7 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(records)
 
-    print(f"Wrote {len(records)} records to {OUTPUT_PATH}")
+    print(f"Wrote {len(records)} filled records to {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
