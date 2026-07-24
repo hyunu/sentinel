@@ -50,7 +50,7 @@ OUTPUT_COLUMNS = [
 ]
 
 IRP_DETAIL_MARKERS = ("[매수]", "[매도]", "부담금", "분배금", "입금", "디폴트")
-EXCLUDED_SIDES = {"CANCEL", "MODIFY", "REJECT"}
+EXCLUDED_SIDES = {"CANCEL", "MODIFY", "REJECT", "DIVIDEND"}
 
 
 def parse_int(value: str | int | float | None) -> int:
@@ -122,7 +122,7 @@ def is_meaningful_record(record: dict) -> bool:
     quantity = parse_float(record["quantity"])
     amount = parse_float(record["amount"])
 
-    if side in {"DIVIDEND", "DEPOSIT"}:
+    if side in {"DEPOSIT"}:
         return amount > 0
 
     if side in {"BUY", "SELL"}:
