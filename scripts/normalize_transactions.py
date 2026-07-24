@@ -67,6 +67,14 @@ OUTPUT_COLUMNS = [
 IRP_DETAIL_MARKERS = ("[매수]", "[매도]", "부담금", "분배금", "입금", "디폴트")
 EXCLUDED_SIDES = {"CANCEL", "MODIFY", "REJECT", "DIVIDEND"}
 
+# IRP/현금 등 CSV에 없는 상품명 -> 종목/펀드 코드
+SYMBOL_CODE_OVERRIDES = {
+    "현금성자산": "CASH",
+    "미래전략배분적격TDF2035혼합자산자O": "K55301DW1763",
+    "한국적격TDF알아서2035증권O(주혼-재)": "K55101DX1897",
+    "국민은행 정기예금(3년_디폴트옵션)IRP형": "DEPOSIT",
+}
+
 
 def parse_int(value: str | int | float | None) -> int:
     if value is None or value == "":
@@ -148,6 +156,37 @@ def is_meaningful_record(record: dict) -> bool:
 
 def account_number(owner: str, account_type: str) -> str:
     return ACCOUNT_NUMBERS.get((owner, account_type), "")
+
+
+def build_symbol_code_lookup() -> dict[str, str]:
+    lookup = dict(SYMBOL_CODE_OVERRIDES)
+    for path in glob.glob(str(UPLOAD_DIR / "*.csv")):
+        for encoding in ("utf-8-sig", "cp949", "euc-kr"):
+            try:
+                with Path(path).open(encoding=encoding) as handle:
+                    for row in csv.DictReader(handle):
+                        name = row.get("종목명", "").strip()
+                        code = row.get("코드", "").strip()
+                        if name and code:
+                            lookup[name] = code
+                break
+            except UnicodeDecodeError:
+                continue
+    return lookup
+
+
+def resolve_symbol_code(name: str, code: str, lookup: dict[str, str]) -> str:
+    if code.strip():
+        return code.strip()
+    name = name.strip()
+    if not name:
+        return ""
+    if name in lookup:
+        return lookup[name]
+    for key, value in lookup.items():
+        if name.startswith(key) or key.startswith(name):
+            return value
+    return ""
 
 
 def resolve_file(key: str) -> Path:
@@ -284,12 +323,20 @@ def normalize_irp(key: str) -> list[dict]:
 
 
 def main() -> None:
+    symbol_lookup = build_symbol_code_lookup()
     records: list[dict] = []
     for key in FILE_MAP:
         if key in {"ace7", "0b4f"}:
             records.extend(normalize_irp(key))
         else:
             records.extend(normalize_csv(key))
+
+    for record in records:
+        record["symbol_code"] = resolve_symbol_code(
+            record["symbol_name"],
+            str(record.get("symbol_code", "")),
+            symbol_lookup,
+        )
 
     records.sort(key=lambda item: (item["trade_date"], item["account_owner"], item["account_type"], item["order_id"]))
 
