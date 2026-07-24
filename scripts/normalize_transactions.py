@@ -27,9 +27,24 @@ FILE_MAP = {
     "0b4f": ("현우", "개인IRP", "현우개인IRP-20260723.xls"),
 }
 
+# Dashboard account numbers (owner, account_type) -> account_number
+ACCOUNT_NUMBERS = {
+    ("아버지", "일반계좌"): "47229944-01",
+    ("아버지", "ISA중개형"): "43879071-01",
+    ("연주", "개인연금"): "64837324-22",
+    ("연주", "IRP"): "64837324-29",
+    ("연주", "ISA중개형"): "64840578-01",
+    ("현우", "아버지주식"): "64662581-01",  # 패밀리뱅크
+    ("현우", "연금저축(세액)"): "64800636-22",
+    ("현우", "일반세금우대"): "73075779-01",
+    ("현우", "ISA"): "64798393-01",
+    ("현우", "개인IRP"): "64795283-29",
+}
+
 OUTPUT_COLUMNS = [
     "account_owner",
     "account_type",
+    "account_number",
     "trade_date",
     "order_id",
     "symbol_code",
@@ -131,6 +146,10 @@ def is_meaningful_record(record: dict) -> bool:
     return quantity > 0 or amount > 0
 
 
+def account_number(owner: str, account_type: str) -> str:
+    return ACCOUNT_NUMBERS.get((owner, account_type), "")
+
+
 def resolve_file(key: str) -> Path:
     matches = glob.glob(str(UPLOAD_DIR / f"*{key}*"))
     if not matches:
@@ -171,6 +190,7 @@ def normalize_csv(key: str) -> list[dict]:
             {
                 "account_owner": owner,
                 "account_type": account_type,
+                "account_number": account_number(owner, account_type),
                 "trade_date": normalize_date(row.get("주문일", "")),
                 "order_id": row.get("주문번호", "").strip(),
                 "symbol_code": row.get("코드", "").strip(),
@@ -237,6 +257,7 @@ def normalize_irp(key: str) -> list[dict]:
             current = {
                 "account_owner": owner,
                 "account_type": account_type,
+                "account_number": account_number(owner, account_type),
                 "trade_date": normalize_date(str(date_val)),
                 "order_id": str(uuid.uuid4()),
                 "symbol_code": "",
