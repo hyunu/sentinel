@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UartTest.Client/UartTest.Client.csproj" />
+    <Project Path="src/UartTest.Core/UartTest.Core.csproj" />
+  </Folder>
+</Solution>

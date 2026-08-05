@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:UartTest.Client"
+        x:Class="UartTest.Client.MainWindow"
+        Width="1200" Height="680"
+        MinWidth="1000" MinHeight="560"
+        Title="UART Test">
+  <Grid Margin="20" RowDefinitions="Auto,Auto,*" RowSpacing="14">
+
+    <StackPanel Grid.Row="0" Spacing="2">
+      <TextBlock Classes="h1" Text="UART Test" />
+      <TextBlock Classes="subtitle" Text="CSV 캡처 데이터를 두 개의 UART 포트로 재생합니다" />
+    </StackPanel>
+
+    <Border Grid.Row="1" Classes="card">
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Classes="label" Text="가속도" />
+          <ComboBox Name="SpeedCombo" Width="90" IsEditable="True" />
+        </StackPanel>
+        <Button Name="StartAllButton" Classes="accent" Content="▶  전체 시작" IsEnabled="False" />
+        <TextBlock Name="GlobalStatusText" Classes="label" VerticalAlignment="Center"
+                   Text="두 포트 모두 연결하세요" />
+      </StackPanel>
+    </Border>
+
+    <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="14">
+      <local:RolePanel Grid.Column="0" Name="Panel1" />
+      <local:RolePanel Grid.Column="1" Name="Panel2" />
+    </Grid>
+
+  </Grid>
+</Window>

@@ -1,0 +1,118 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="UartTest.Client.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}" />
+      <Setter Property="FontFamily" Value="Segoe UI, Inter, sans-serif" />
+    </Style>
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="16" />
+      <Setter Property="BoxShadow" Value="0 2 8 0 #40000000" />
+    </Style>
+
+    <Style Selector="TextBlock.h1">
+      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.subtitle">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBlock.mono">
+      <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="Button">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,8" />
+    </Style>
+
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.accent:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+    </Style>
+
+    <Style Selector="ComboBox, TextBox">
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
+    <Style Selector="ListBox">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="{DynamicResource LogBackgroundBrush}" />
+      <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
+      <Setter Property="FontSize" Value="11.5" />
+    </Style>
+
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+
+    <Style Selector="ProgressBar">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="Expander">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="FontSize" Value="15" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="ToggleButton.settings-toggle">
+      <Setter Property="Background" Value="{DynamicResource LogBackgroundBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="ToggleButton.settings-toggle:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="TextBlock.Foreground" Value="White" />
+    </Style>
+  </Application.Styles>
+
+  <Application.Resources>
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0F1117" />
+    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#1A1D29" />
+    <SolidColorBrush x:Key="LogBackgroundBrush" Color="#12141C" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#5B8DEF" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#4A7BDB" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F0F1F5" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#8B92A5" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#2ECC71" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#F5A623" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#E74C3C" />
+    <SolidColorBrush x:Key="IdleBrush" Color="#8B92A5" />
+  </Application.Resources>
+</Application>

@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="UartTest.Client.RolePanel">
+  <Border Classes="card">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*" RowSpacing="10">
+
+      <!-- 헤더: 역할 이름 + 상태 배지 -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" Name="RoleText" Classes="h1" FontSize="19" />
+        <Border Grid.Column="1" Name="StatusBadge" CornerRadius="10" Padding="10,4"
+                Background="#26303C" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Ellipse Name="StatusDot" Width="8" Height="8" Fill="{DynamicResource IdleBrush}" VerticalAlignment="Center" />
+            <TextBlock Name="StatusText" Text="대기 중" FontSize="12" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- 연결 설정 토글 + 현재 포트 요약 + 연결 버튼을 한 줄로 배치 -->
+      <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+        <ToggleButton Grid.Column="0" Name="SettingsToggle" Classes="settings-toggle" Content="⚙ 설정 ▸" />
+        <TextBlock Grid.Column="1" Name="PortSummaryText" Classes="label" Text="포트를 선택하세요" VerticalAlignment="Center" />
+        <Button Grid.Column="2" Name="ConnectButton" Classes="accent" Content="연결" Padding="20,8" />
+      </Grid>
+
+      <!-- 연결 설정 상세: 기본값은 접힘 상태이며 TX/RX 로그에 공간을 양보한다 -->
+      <Grid Grid.Row="2" Name="SettingsPanel" IsVisible="False"
+            ColumnDefinitions="Auto,*,Auto,Auto,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="Port" />
+        <ComboBox Grid.Row="0" Grid.Column="1" Name="PortCombo" IsEditable="True" HorizontalAlignment="Stretch" />
+        <Button Grid.Row="0" Grid.Column="2" Name="RefreshPortsButton" Content="⟳" Padding="10,6" />
+        <TextBlock Grid.Row="0" Grid.Column="3" Classes="label" Text="Baud" />
+        <ComboBox Grid.Row="0" Grid.Column="4" Name="BaudCombo" IsEditable="True" HorizontalAlignment="Stretch" />
+
+        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="Bits" />
+        <ComboBox Grid.Row="1" Grid.Column="1" Name="DataBitsCombo" HorizontalAlignment="Stretch" />
+        <TextBlock Grid.Row="1" Grid.Column="2" Classes="label" Text="Parity" HorizontalAlignment="Center" />
+        <ComboBox Grid.Row="1" Grid.Column="3" Name="ParityCombo" HorizontalAlignment="Stretch" />
+        <ComboBox Grid.Row="1" Grid.Column="4" Name="StopBitsCombo" HorizontalAlignment="Stretch" />
+      </Grid>
+
+      <!-- 진행 상태 -->
+      <StackPanel Grid.Row="3" Spacing="6">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Classes="label" Text="진행률" />
+          <TextBlock Grid.Column="1" Name="CounterText" Classes="label" Text="0 / 0" />
+        </Grid>
+        <ProgressBar Name="ProgressBar" Minimum="0" Maximum="1" Value="0" Height="8" />
+      </StackPanel>
+
+      <TextBlock Grid.Row="4" Classes="section" Text="TX" />
+      <DockPanel Grid.Row="5">
+        <ListBox Name="TxListBox" />
+      </DockPanel>
+
+      <TextBlock Grid.Row="6" Classes="section" Text="RX" />
+      <DockPanel Grid.Row="7">
+        <ListBox Name="RxListBox" />
+      </DockPanel>
+
+    </Grid>
+  </Border>
+</UserControl>
