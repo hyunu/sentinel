@@ -60,6 +60,16 @@
       <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
     </Style>
 
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="{DynamicResource ErrorBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#C0392B" />
+    </Style>
+
     <Style Selector="ComboBox, TextBox">
       <Setter Property="CornerRadius" Value="8" />
     </Style>

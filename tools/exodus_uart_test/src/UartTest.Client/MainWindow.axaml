@@ -18,7 +18,7 @@
           <TextBlock Classes="label" Text="가속도" />
           <ComboBox Name="SpeedCombo" Width="90" IsEditable="True" />
         </StackPanel>
-        <Button Name="StartAllButton" Classes="accent" Content="▶  전체 시작" IsEnabled="False" />
+        <Button Name="StartAllButton" Classes="accent" Content="▶  전송 시작" IsEnabled="False" />
         <TextBlock Name="GlobalStatusText" Classes="label" VerticalAlignment="Center"
                    Text="두 포트 모두 연결하세요" />
       </StackPanel>

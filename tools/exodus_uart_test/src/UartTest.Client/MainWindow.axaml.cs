@@ -9,6 +9,8 @@ namespace UartTest.Client;
 public partial class MainWindow : Window
 {
     private IReadOnlyList<CsvPacket> _allPackets = [];
+    private bool _running;
+    private bool _stopRequestedByUser;
 
     public MainWindow()
     {
@@ -29,6 +31,8 @@ public partial class MainWindow : Window
 
         Panel1.ConnectionChanged += UpdateStartAllEnabled;
         Panel2.ConnectionChanged += UpdateStartAllEnabled;
+        Panel1.ReplayStateChanged += UpdateStartAllEnabled;
+        Panel2.ReplayStateChanged += UpdateStartAllEnabled;
 
         StartAllButton.Click += OnStartAllClicked;
 
@@ -60,10 +64,32 @@ public partial class MainWindow : Window
 
     private void UpdateStartAllEnabled()
     {
-        StartAllButton.IsEnabled = Panel1.IsConnected && Panel2.IsConnected && Panel1.HasSchedule && Panel2.HasSchedule;
+        var wasRunning = _running;
+        _running = Panel1.IsReplayRunning || Panel2.IsReplayRunning;
+
+        if (wasRunning && !_running)
+            GlobalStatusText.Text = _stopRequestedByUser ? "전송 중지됨" : "전송 완료";
+        if (!_running) _stopRequestedByUser = false;
+
+        StartAllButton.Content = _running ? "■  전송 중지" : "▶  전송 시작";
+        StartAllButton.Classes.Set("danger", _running);
+        StartAllButton.Classes.Set("accent", !_running);
+        StartAllButton.IsEnabled = _running
+            || (Panel1.IsConnected && Panel2.IsConnected
+                && (Panel1.HasSchedule || Panel2.HasSchedule));
     }
 
     private void OnStartAllClicked(object? sender, RoutedEventArgs e)
+    {
+        if (_running)
+        {
+            StopAll();
+            return;
+        }
+        StartAll();
+    }
+
+    private void StartAll()
     {
         var speedFactor = double.TryParse(SpeedCombo.SelectedItem as string ?? SpeedCombo.Text,
             CultureInfo.InvariantCulture, out var parsed) ? parsed : 1.0;
@@ -74,5 +100,14 @@ public partial class MainWindow : Window
         Panel2.BeginReplay(sharedStopwatch, speedFactor);
 
         GlobalStatusText.Text = "전송 중";
+        UpdateStartAllEnabled();
+    }
+
+    private void StopAll()
+    {
+        _stopRequestedByUser = true;
+        Panel1.StopReplay();
+        Panel2.StopReplay();
+        GlobalStatusText.Text = "전송 중지됨";
     }
 }

@@ -36,8 +36,13 @@ public partial class RolePanel : UserControl
     private SerialPort? _serialPort;
     private ReplayEngine? _engine;
     private Thread? _replayThread;
+    private bool _replayRunning;
+    private bool _stopRequested;
+    private int _replayGeneration;
+    private AppSettings? _settings;
 
     public event Action? ConnectionChanged;
+    public event Action? ReplayStateChanged;
 
     public bool IsConnected => _serialPort is { IsOpen: true };
     public bool HasSchedule => _schedule.Count > 0;
@@ -58,8 +63,11 @@ public partial class RolePanel : UserControl
         RefreshPortsButton.Click += (_, _) => RefreshPorts();
         ConnectButton.Click += OnConnectClicked;
         SettingsToggle.IsCheckedChanged += (_, _) => ApplySettingsExpanded(SettingsToggle.IsChecked == true);
-        PortCombo.SelectionChanged += (_, _) => UpdatePortSummary();
-        BaudCombo.SelectionChanged += (_, _) => UpdatePortSummary();
+        PortCombo.SelectionChanged += (_, _) => { UpdatePortSummary(); SaveSettings(); };
+        BaudCombo.SelectionChanged += (_, _) => { UpdatePortSummary(); SaveSettings(); };
+        DataBitsCombo.SelectionChanged += (_, _) => SaveSettings();
+        ParityCombo.SelectionChanged += (_, _) => SaveSettings();
+        StopBitsCombo.SelectionChanged += (_, _) => SaveSettings();
     }
 
     public void Initialize(IReadOnlyList<CsvPacket> allPackets, string role)
@@ -67,8 +75,38 @@ public partial class RolePanel : UserControl
         _allPackets = allPackets;
         _role = role;
         RoleText.Text = role;
+        _settings = AppSettings.LoadForRole(role);
         RefreshPorts();
+        ApplySettings();
         CounterText.Text = $"0 / {allPackets.Count}";
+    }
+
+    /// 저장된 설정을 콤보박스에 복원한다.
+    private void ApplySettings()
+    {
+        if (_settings is null) return;
+        if (!string.IsNullOrEmpty(_settings.Port) && PortCombo.Items.Contains(_settings.Port))
+            PortCombo.SelectedItem = _settings.Port;
+        if (_settings.BaudRate > 0)
+            BaudCombo.SelectedItem = _settings.BaudRate.ToString(CultureInfo.InvariantCulture);
+        if (_settings.DataBits >= 5 && _settings.DataBits <= 8)
+            DataBitsCombo.SelectedItem = _settings.DataBits.ToString(CultureInfo.InvariantCulture);
+        if (ParityCombo.Items.Contains(_settings.Parity))
+            ParityCombo.SelectedItem = _settings.Parity;
+        if (StopBitsCombo.Items.Contains(_settings.StopBits))
+            StopBitsCombo.SelectedItem = _settings.StopBits;
+    }
+
+    /// 현재 콤보박스 값을 최종 상태로 저장한다.
+    private void SaveSettings()
+    {
+        if (_settings is null) return;
+        _settings.Port = PortCombo.SelectedItem as string;
+        _settings.BaudRate = int.TryParse(BaudCombo.SelectedItem as string, CultureInfo.InvariantCulture, out var baud) ? baud : 0;
+        _settings.DataBits = int.TryParse(DataBitsCombo.SelectedItem as string, CultureInfo.InvariantCulture, out var dataBits) ? dataBits : 0;
+        _settings.Parity = ParityCombo.SelectedItem as string ?? "";
+        _settings.StopBits = StopBitsCombo.SelectedItem as string ?? "";
+        _settings.SaveForRole(_role);
     }
 
     private void SetStatus(string text, StatusKind kind)
@@ -189,18 +227,41 @@ public partial class RolePanel : UserControl
     {
         if (_serialPort is not { IsOpen: true } || _schedule.Count == 0) return;
 
+        var generation = ++_replayGeneration;
+        _stopRequested = false;
+        _replayRunning = true;
+        ReplayStateChanged?.Invoke();
         SetStatus("전송 중", StatusKind.Sending);
 
         _engine = new ReplayEngine(
             _schedule,
             send: bytes => _serialPort!.Write(bytes, 0, bytes.Length),
             onPacketSent: (sent, total, packet) => Dispatcher.UIThread.Post(() => OnPacketSent(sent, total, packet)),
-            onSendError: ex => Dispatcher.UIThread.Post(() => SetStatus($"전송 오류: {ex.Message}", StatusKind.Error)),
-            onCompleted: () => Dispatcher.UIThread.Post(() => SetStatus("완료", StatusKind.Done)),
+            onSendError: ex => Dispatcher.UIThread.Post(() => EndReplay(generation, $"전송 오류: {ex.Message}", StatusKind.Error)),
+            onCompleted: () => Dispatcher.UIThread.Post(() => EndReplay(generation, _stopRequested ? "중지됨" : "완료", _stopRequested ? StatusKind.Idle : StatusKind.Done)),
             speedFactor: speedFactor);
 
         _replayThread = new Thread(() => _engine.Run(sharedStopwatch)) { IsBackground = true, Name = $"ReplayThread-{_role}" };
         _replayThread.Start();
+    }
+
+    /// 전송을 중지한다. 이미 완료됐다면 아무 일도 하지 않는다.
+    public void StopReplay()
+    {
+        if (!_replayRunning) return;
+        _stopRequested = true;
+        _engine?.Cancel();
+    }
+
+    public bool IsReplayRunning => _replayRunning;
+
+    private void EndReplay(int generation, string status, StatusKind kind)
+    {
+        if (generation != _replayGeneration) return;
+        _replayRunning = false;
+        _engine = null;
+        SetStatus(status, kind);
+        ReplayStateChanged?.Invoke();
     }
 
     private void OnPacketSent(int sent, int total, ScheduledPacket packet)
@@ -275,7 +336,7 @@ public partial class RolePanel : UserControl
         log.Add(entry);
         const int maxEntries = 2000;
         while (log.Count > maxEntries) log.RemoveAt(0);
-        listBox.ScrollIntoView(log[^1]);
+        Dispatcher.UIThread.Post(() => listBox.ScrollIntoView(log[^1]));
     }
 
     private static string ToHex(byte[] bytes) => string.Join(' ', bytes.Select(b => b.ToString("X2")));

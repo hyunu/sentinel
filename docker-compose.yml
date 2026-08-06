@@ -1,8 +1,9 @@
-name: sentinel-dashboard
+name: sentinel
 
 services:
   mongodb:
     image: mongo:7
+    container_name: sentinel-mongodb
     restart: unless-stopped
     ports:
       - "27017:27017"
@@ -15,6 +16,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    container_name: sentinel-backend
     restart: unless-stopped
     ports:
       - "5050:5050"
@@ -30,6 +32,7 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+    container_name: sentinel-dashboard
     restart: unless-stopped
     ports:
       - "5173:80"
