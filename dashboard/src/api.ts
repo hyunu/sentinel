@@ -292,6 +292,25 @@ export const api = {
           timeoutMs: options?.timeoutMs,
         }
       ),
+    spectrum: (data: {
+      board_id: string;
+      start?: string;
+      end?: string;
+      bins?: number;
+    }, options?: { signal?: AbortSignal; timeoutMs?: number }) =>
+      request<{
+        start: string;
+        end: string;
+        bins: number;
+        present: boolean[];
+      }>(
+        '/viz/spectrum', {
+          method: 'POST',
+          body: JSON.stringify(data),
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+        }
+      ),
   },
 
   ai: {

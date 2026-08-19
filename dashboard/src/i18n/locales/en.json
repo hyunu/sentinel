@@ -172,6 +172,10 @@
     "startTime": "Start time",
     "endTime": "End time",
     "clear": "Clear",
+    "selectDateRange": "Select date range",
+    "dateRangeHint": "Select a start date, then an end date.",
+    "spectrumHint": "Drag to select the time range to load",
+    "prevMonth": "Previous month",
     "liveMode": "Live mode",
     "live": "Live",
     "liveActive": "Live mode active",
@@ -264,7 +268,8 @@
     },
     "navigator": {
       "position": "Chart zoom position",
-      "range": "Zoomed time range"
+      "range": "Zoomed time range",
+      "select": "Drag on the band to select a range"
     },
     "deltaPrevPoint": "Change from previous point",
     "chartKeyboard": {

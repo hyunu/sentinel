@@ -1203,6 +1203,62 @@ tbody tr:last-child td {
   min-width: 0;
 }
 
+.viz-time-spectrum {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  height: 20px;
+  margin-top: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
+.viz-time-spectrum-cell {
+  flex: 1 1 0;
+  min-width: 1px;
+  background: transparent;
+  opacity: 0;
+}
+
+.viz-time-spectrum-cell.is-present {
+  background: var(--accent, #7c83ff);
+  opacity: 0.85;
+  border-radius: 1px;
+}
+
+.viz-time-spectrum-select {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(74, 222, 128, 0.9);
+  background: rgba(74, 222, 128, 0.28);
+  pointer-events: none;
+}
+
+.viz-time-spectrum.is-loading {
+  animation: viz-spectrum-pulse 1.2s ease-in-out infinite;
+}
+
+.viz-time-spectrum-loading {
+  flex: 1;
+  background: var(--accent, #7c83ff);
+  opacity: 0.25;
+}
+
+@keyframes viz-spectrum-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .viz-time-preset-group,
 .viz-time-custom-group,
 .viz-time-live-group {
@@ -1341,6 +1397,174 @@ tbody tr:last-child td {
 .viz-time-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.viz-time-input[type="date"] {
+  width: 15ch;
+  min-width: 15ch;
+  cursor: pointer;
+}
+
+.viz-time-input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.viz-date-range-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.viz-date-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: none;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.viz-date-range-trigger.has-range {
+  background: var(--primary-dim);
+  color: var(--primary-hover);
+}
+
+.viz-date-range-trigger:hover:not(:disabled):not(:focus) {
+  background: var(--elevate-hover);
+}
+
+.viz-date-range-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.viz-date-range-text {
+  white-space: nowrap;
+}
+
+.viz-date-range-caret {
+  font-size: 10px;
+  opacity: 0.7;
+  transition: transform 0.12s ease;
+}
+
+.viz-date-range-caret.open {
+  transform: rotate(180deg);
+}
+
+.viz-date-range-popover {
+  position: fixed;
+  z-index: 9999;
+  width: 252px;
+  padding: 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.viz-date-range-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.viz-date-range-month {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.viz-date-range-nav {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.viz-date-range-nav:hover {
+  background: var(--elevate-hover);
+}
+
+.viz-date-range-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.viz-date-range-weekdays {
+  margin-bottom: 4px;
+}
+
+.viz-date-range-weekday {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 22px;
+}
+
+.viz-date-range-day {
+  position: relative;
+  height: 28px;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.viz-date-range-day:hover:not(.out) {
+  background: var(--elevate-hover);
+}
+
+.viz-date-range-day.out {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.viz-date-range-day[data-in-range] {
+  background: var(--primary-dim);
+  color: var(--primary-hover);
+  border-radius: 0;
+}
+
+.viz-date-range-day[data-endpoint] {
+  background: var(--primary);
+  color: var(--on-accent, #fff);
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+}
+
+.viz-date-range-hint {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .viz-time-custom-sep {
@@ -2008,7 +2232,23 @@ tbody tr:last-child td {
   border-radius: var(--radius-sm);
   background: var(--surface-inset);
   overflow: hidden;
-  cursor: pointer;
+  cursor: crosshair;
+}
+
+.viz-chart-navigator-density {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 3px;
+  width: calc(100% - 4px);
+  height: 10px;
+  color: var(--accent, #7c83ff);
+  pointer-events: none;
+}
+
+.viz-chart-navigator-density rect {
+  fill: currentColor;
+  opacity: 0.4;
 }
 
 .viz-chart-navigator-sparkline {
@@ -2018,6 +2258,19 @@ tbody tr:last-child td {
   height: calc(100% - 8px);
   color: var(--chart-axis);
   pointer-events: none;
+}
+
+.viz-chart-navigator-select {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  box-sizing: border-box;
+  min-width: 6px;
+  border: 1px dashed rgba(124, 131, 255, 0.9);
+  border-radius: 3px;
+  background: rgba(124, 131, 255, 0.3);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .viz-chart-navigator-thumb {
@@ -2072,6 +2325,29 @@ tbody tr:last-child td {
   font-size: 10px;
   color: var(--text-muted, #888);
   font-weight: 400;
+}
+
+.viz-chart-navigator.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.viz-chart-navigator.is-disabled .viz-chart-navigator-track {
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(124, 131, 255, 0.05) 6px,
+    rgba(124, 131, 255, 0.05) 12px
+  );
+}
+
+.viz-chart-navigator-disabled-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent, #7c83ff);
 }
 
 .viz-cursor-values {

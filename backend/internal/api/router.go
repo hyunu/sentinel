@@ -73,6 +73,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 			viz.POST("/profiles/:id/apply", h.ApplyVizProfile)
 			viz.POST("/query", h.VizQuery)
 			viz.POST("/query-items", h.VizQueryItems)
+			viz.POST("/spectrum", h.VizSpectrum)
 		}
 
 		v1.POST("/ai/query", h.AIQuery)

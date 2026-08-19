@@ -172,6 +172,10 @@
     "startTime": "시작 시각",
     "endTime": "종료 시각",
     "clear": "지우기",
+    "selectDateRange": "날짜 범위 선택",
+    "dateRangeHint": "시작일을 먼저 선택한 뒤 끝날을 선택하세요.",
+    "spectrumHint": "드래그하여 조회할 시간 범위 선택",
+    "prevMonth": "이전 달",
     "liveMode": "Live 모드",
     "live": "Live",
     "liveActive": "Live 모드 활성",
@@ -264,7 +268,8 @@
     },
     "navigator": {
       "position": "차트 줌 위치",
-      "range": "줌 구간"
+      "range": "줌 구간",
+      "select": "막대를 드래그하여 구간 선택"
     },
     "deltaPrevPoint": "직전 포인트 대비 변화량",
     "chartKeyboard": {

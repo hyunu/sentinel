@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent }
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
+import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
 import ChartSeriesGroup from '../components/ChartSeriesGroup';
 import { buildCursorValueRows } from '../components/ChartCursorValues';
@@ -20,7 +21,7 @@ import {
   IconPanelBottom,
   IconPanelLeft,
 } from '../components/ChartControlIcons';
-import { formatDateTimeFromDate, formatChartAxisTime, formatTimeInterval, parseDateTime } from '../utils/date';
+import { formatDateOnly, formatChartAxisTime, formatTimeInterval, parseDateOnly } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 import {
   cancelChartZoomRaf,
@@ -496,6 +497,12 @@ export default function VizDashboardPage() {
   const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [spectrum, setSpectrum] = useState<{ present: boolean[]; start: string; end: string } | null>(null);
+  const [spectrumLoading, setSpectrumLoading] = useState(false);
+  const [spectrumSel, setSpectrumSel] = useState<{ start: number; end: number } | null>(null);
+  const spectrumSelRef = useRef<{ start: number; end: number } | null>(null);
+  const spectrumDragRef = useRef<{ pointerId: number; startIndex: number } | null>(null);
+  const spectrumTrackRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [livePollError, setLivePollError] = useState<string | null>(null);
@@ -1389,8 +1396,8 @@ export default function VizDashboardPage() {
       const protoId = p.items.find(i => i.field_ref.protocol_id)?.field_ref.protocol_id;
       if (protoId) setSelectedProto(protoId);
       if (p.time_range?.start && p.time_range?.end) {
-        setCustomStart(formatDateTimeFromDate(new Date(p.time_range.start)));
-        setCustomEnd(formatDateTimeFromDate(new Date(p.time_range.end)));
+        setCustomStart(formatDateOnly(new Date(p.time_range.start)));
+        setCustomEnd(formatDateOnly(new Date(p.time_range.end)));
         setTimeRangePresetId(TIME_PRESET_ALL);
       }
       const isAllRange = !p.time_range?.start || !p.time_range?.end;
@@ -1435,16 +1442,51 @@ export default function VizDashboardPage() {
       return { start: start.toISOString(), end: end.toISOString() };
     }
     if (customStart && customEnd) {
-      const startDate = parseDateTime(customStart);
-      const endDate = parseDateTime(customEnd);
+      const startDate = parseDateOnly(customStart);
+      const endDate = parseDateOnly(customEnd);
       if (startDate && endDate) {
-        return { start: startDate.toISOString(), end: endDate.toISOString() };
+        if (endDate.getTime() < startDate.getTime()) return undefined;
+        const endEnd = new Date(endDate.getTime());
+        endEnd.setHours(23, 59, 59, 999);
+        return { start: startDate.toISOString(), end: endEnd.toISOString() };
       }
     }
     return undefined;
   }, [timeRangePresetId, customStart, customEnd]);
 
+  const fetchSpectrum = useCallback(async (boardID: string, start?: string, end?: string) => {
+    if (!boardID || liveModeRef.current) return;
+    setSpectrumLoading(true);
+    try {
+      const res = await api.viz.spectrum(
+        start && end
+          ? { board_id: boardID, start, end }
+          : { board_id: boardID },
+        { timeoutMs: 20000 },
+      );
+      if (res.bins > 0) {
+        setSpectrum({ present: res.present, start: res.start, end: res.end });
+      }
+    } catch (e) {
+      console.error('spectrum fetch failed', e);
+    } finally {
+      setSpectrumLoading(false);
+    }
+  }, []);
+
+  const spectrumRange = buildTimeRange();
+  useEffect(() => {
+    if (!selectedBoard) {
+      setSpectrum(null);
+      return;
+    }
+    const range = spectrumRange;
+    void fetchSpectrum(selectedBoard, range?.start, range?.end);
+  }, [selectedBoard, spectrumRange, fetchSpectrum]);
+
   const isCustomTimeRange = isCustomTimeRangeSelection(timeRangePresetId, customStart, customEnd);
+
+  const timeSpectrumCells = spectrum?.present ?? null;
 
   const applyTimePresetState = useCallback((id: TimePresetId) => {
     setTimeRangePresetId(id);
@@ -1505,6 +1547,71 @@ export default function VizDashboardPage() {
     applyTimePresetState(id);
     void applyTimePresetQuery(id);
   }, [applyTimePresetState, applyTimePresetQuery]);
+
+  const applySpectrumSelection = useCallback((startIdx: number, endIdx: number) => {
+    if (!spectrum || liveModeRef.current) return;
+    const lo = Math.min(startIdx, endIdx);
+    const hi = Math.max(startIdx, endIdx);
+    if (hi - lo < 1) return;
+    const bins = spectrum.present.length;
+    const startMs = Date.parse(spectrum.start);
+    const endMs = Date.parse(spectrum.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || bins <= 0) return;
+    const span = endMs - startMs;
+    const selStart = new Date(startMs + span * (lo / bins));
+    const selEnd = new Date(startMs + span * ((hi + 1) / bins));
+    setSpectrumSel({ start: lo, end: hi });
+    setCustomStart(formatDateOnly(selStart));
+    setCustomEnd(formatDateOnly(selEnd));
+    setTimeRangePresetId(TIME_PRESET_ALL);
+    setAllRangeGuide(null);
+    syncChartZoomRef(chartZoomRef, null);
+    setChartZoom(null);
+    chartCanvasRef.current?.resetWindow();
+    void runVizQuery({ start: selStart.toISOString(), end: selEnd.toISOString() }, false);
+  }, [spectrum, runVizQuery]);
+
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      const drag = spectrumDragRef.current;
+      const track = spectrumTrackRef.current;
+      if (!drag || drag.pointerId !== e.pointerId || !track) return;
+      const bins = spectrum?.present.length ?? 0;
+      if (bins <= 0) return;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const index = Math.min(bins - 1, Math.floor(ratio * bins));
+      const lo = Math.min(drag.startIndex, index);
+      const hi = Math.max(drag.startIndex, index);
+      spectrumSelRef.current = { start: lo, end: hi };
+      setSpectrumSel({ start: lo, end: hi });
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      const drag = spectrumDragRef.current;
+      const track = spectrumTrackRef.current;
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      spectrumDragRef.current = null;
+      if (track?.hasPointerCapture(e.pointerId)) {
+        track.releasePointerCapture(e.pointerId);
+      }
+      const sel = spectrumSelRef.current;
+      spectrumSelRef.current = null;
+      if (sel) {
+        applySpectrumSelection(sel.start, sel.end);
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [spectrum, applySpectrumSelection]);
 
   const fetchAll = useCallback(async () => {
     const isAllRange = isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
@@ -1958,12 +2065,12 @@ export default function VizDashboardPage() {
   const chartZoomActive = zoomWindow != null;
 
   const chartNavigatorWindow = useMemo(() => {
-    if (liveMode || chartData.length <= 1) return null;
+    if (chartData.length <= 1) return null;
     if (chartZoomActive && chartZoom) {
       return { start: chartZoom.start, end: chartZoom.end };
     }
     return { start: 0, end: chartData.length - 1 };
-  }, [liveMode, chartData.length, chartZoomActive, chartZoom]);
+  }, [chartData.length, chartZoomActive, chartZoom]);
 
   const allRangeGuideCopy = useMemo(
     () => (allRangeGuide ? buildAllRangeGuideCopy(allRangeGuide, t) : null),
@@ -2315,38 +2422,16 @@ export default function VizDashboardPage() {
               >
                 <span className="viz-time-group-label">{t('viz.searchByPeriod')}</span>
                 <div className="viz-time-custom-bar">
-                  <input
-                    type="text"
-                    className="viz-time-input mono"
-                    value={customStart}
-                    onChange={e => {
-                      setCustomStart(e.target.value);
+                  <DateRangePicker
+                    start={customStart}
+                    end={customEnd}
+                    disabled={liveMode}
+                    onChange={(s, e) => {
+                      setCustomStart(s);
+                      setCustomEnd(e);
                       setTimeRangePresetId(TIME_PRESET_ALL);
                       setAllRangeGuide(null);
                     }}
-                    disabled={liveMode}
-                    aria-label={t('viz.startTime')}
-                    placeholder="yyyy-MM-dd HH:mm:ss"
-                    spellCheck={false}
-                    autoComplete="off"
-                    lang="en"
-                  />
-                  <span className="viz-time-custom-sep" aria-hidden>→</span>
-                  <input
-                    type="text"
-                    className="viz-time-input mono"
-                    value={customEnd}
-                    onChange={e => {
-                      setCustomEnd(e.target.value);
-                      setTimeRangePresetId(TIME_PRESET_ALL);
-                      setAllRangeGuide(null);
-                    }}
-                    disabled={liveMode}
-                    aria-label={t('viz.endTime')}
-                    placeholder="yyyy-MM-dd HH:mm:ss"
-                    spellCheck={false}
-                    autoComplete="off"
-                    lang="en"
                   />
                   {isCustomTimeRange && (
                     <button
@@ -2379,6 +2464,46 @@ export default function VizDashboardPage() {
                 </div>
               </div>
             </div>
+            {!liveMode && (timeSpectrumCells || spectrumLoading) && (
+              <div
+                ref={spectrumTrackRef}
+                className={`viz-time-spectrum${spectrumLoading ? ' is-loading' : ''}${spectrumSel ? ' has-selection' : ''}`}
+                onPointerDown={e => {
+                  if (e.button !== 0 || !spectrum) return;
+                  const bins = spectrum.present.length;
+                  if (bins <= 0) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (rect.width <= 0) return;
+                  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  const index = Math.min(bins - 1, Math.floor(ratio * bins));
+                  spectrumDragRef.current = { pointerId: e.pointerId, startIndex: index };
+                  spectrumSelRef.current = { start: index, end: index };
+                  setSpectrumSel({ start: index, end: index });
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                title={t('viz.spectrumHint')}
+              >
+                {timeSpectrumCells ? (
+                  timeSpectrumCells.map((present, i) => (
+                    <span
+                      key={i}
+                      className={`viz-time-spectrum-cell${present ? ' is-present' : ''}`}
+                    />
+                  ))
+                ) : (
+                  <span className="viz-time-spectrum-loading" />
+                )}
+                {spectrumSel && spectrum && !spectrumLoading && (
+                  <span
+                    className="viz-time-spectrum-select"
+                    style={{
+                      left: `${(spectrumSel.start / spectrum.present.length) * 100}%`,
+                      width: `${((spectrumSel.end - spectrumSel.start + 1) / spectrum.present.length) * 100}%`,
+                    }}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -2916,12 +3041,13 @@ export default function VizDashboardPage() {
           <ChartZoomNavigator
             chartData={chartData}
             chartZoom={chartNavigatorWindow}
-            sparkItemId={activeChartItems[0]?.id}
+            sparkItemIds={activeChartItems.map(i => i.id)}
             formatTime={formatChartAxisTime}
             onWindowChange={applyChartZoomWindow}
             totalMatched={queryMeta?.total_matched}
             returned={queryMeta?.returned ?? chartData.length}
             downsampled={queryMeta?.downsampled}
+            disabled={liveMode}
           />
         )}
         </div>

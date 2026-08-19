@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hyunu/sentinel/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 )
@@ -232,4 +233,139 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		"data": results,
 		"meta": meta,
 	})
+}
+
+// VizSpectrum returns the data presence distribution (which time buckets have
+// at least one sample) across the given range, without loading all documents.
+// It is designed to render a lightweight spectrum before loading the full chart.
+func (h *Handler) VizSpectrum(c *gin.Context) {
+	var req struct {
+		BoardID string `json:"board_id" binding:"required"`
+		Start   string `json:"start,omitempty"`
+		End     string `json:"end,omitempty"`
+		Bins    *int   `json:"bins,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	bins := 160
+	if req.Bins != nil && *req.Bins > 0 && *req.Bins <= 2000 {
+		bins = *req.Bins
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	// Determine the time range. If start/end are omitted, auto-detect the
+	// board's data extent (min/max timestamp) so the full spectrum is returned.
+	start, end, err := h.spectrumRange(ctx, req.BoardID, req.Start, req.End)
+	if err != nil {
+		h.logger.Error("spectrum range detection failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "spectrum query failed"})
+		return
+	}
+	if end.Before(start) {
+		c.JSON(http.StatusOK, gin.H{
+			"start":   start,
+			"end":     end,
+			"bins":    bins,
+			"present": make([]bool, bins),
+		})
+		return
+	}
+
+	startMs := start.UnixMilli()
+	spanMs := end.UnixMilli() - startMs
+	stepMs := spanMs / int64(bins)
+	if stepMs < 1 {
+		stepMs = 1
+	}
+
+	filter := bson.M{
+		"board_id": req.BoardID,
+		"timestamp": bson.M{"$gte": start, "$lte": end},
+	}
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$group", Value: bson.M{
+			"_id": bson.M{
+				"$floor": bson.M{
+					"$divide": bson.A{
+						bson.M{"$subtract": bson.A{
+							bson.M{"$toLong": "$timestamp"},
+							startMs,
+						}},
+						stepMs,
+					},
+				},
+			},
+		}}},
+		{{Key: "$project", Value: bson.M{"_id": 0, "idx": "$_id"}}},
+	}
+
+	cur, err := h.db.UartData().Aggregate(ctx, pipeline)
+	if err != nil {
+		h.logger.Error("spectrum aggregation failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "spectrum query failed"})
+		return
+	}
+	defer cur.Close(ctx)
+
+	present := make([]bool, bins)
+	for cur.Next(ctx) {
+		var row struct {
+			Idx int64 `bson:"idx"`
+		}
+		if err := cur.Decode(&row); err != nil {
+			continue
+		}
+		if row.Idx >= 0 && row.Idx < int64(bins) {
+			present[row.Idx] = true
+		}
+	}
+	if err := cur.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "spectrum query failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"start":   start,
+		"end":     end,
+		"bins":    bins,
+		"present": present,
+	})
+}
+
+func (h *Handler) spectrumRange(ctx context.Context, boardID, startStr, endStr string) (time.Time, time.Time, error) {
+	if startStr != "" && endStr != "" {
+		start, err1 := time.Parse(time.RFC3339, startStr)
+		end, err2 := time.Parse(time.RFC3339, endStr)
+		if err1 != nil || err2 != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("start/end must be RFC3339")
+		}
+		return start, end, nil
+	}
+
+	var first struct {
+		Ts time.Time `bson:"timestamp"`
+	}
+	var last struct {
+		Ts time.Time `bson:"timestamp"`
+	}
+
+	filter := bson.M{"board_id": boardID}
+
+	opts := options.FindOne().SetSort(bson.D{{Key: "timestamp", Value: 1}})
+	if err := h.db.UartData().FindOne(ctx, filter, opts).Decode(&first); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	opts = options.FindOne().SetSort(bson.D{{Key: "timestamp", Value: -1}})
+	if err := h.db.UartData().FindOne(ctx, filter, opts).Decode(&last); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	return first.Ts, last.Ts, nil
 }

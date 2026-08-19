@@ -36,6 +36,13 @@ export function formatTimeInterval(ms: number): string {
   return remHour > 0 ? `${day}d ${remHour}h` : `${day}d`;
 }
 
+/** Format Date as yyyy-MM-dd (local time). */
+export function formatDateOnly(d: Date): string {
+  if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** Parse yyyy-MM-dd HH:mm:ss (or yyyy-MM-ddTHH:mm[:ss]) into local Date. */
 export function parseDateTime(value: string): Date | null {
   const trimmed = value.trim();
@@ -64,4 +71,22 @@ export function parseDateTime(value: string): Date | null {
 
   const fallback = new Date(trimmed);
   return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/** Parse yyyy-MM-dd into a local Date at midnight (00:00:00.000). */
+export function parseDateOnly(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, y, mo, d] = match;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+  if (
+    date.getFullYear() !== Number(y)
+    || date.getMonth() !== Number(mo) - 1
+    || date.getDate() !== Number(d)
+  ) {
+    return null;
+  }
+  return date;
 }

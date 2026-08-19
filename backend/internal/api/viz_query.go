@@ -73,14 +73,10 @@ func queryTimeoutForVizLimit(limit int) time.Duration {
 }
 
 func buildVizProjection(items []models.VizItem) bson.M {
-	projection := bson.M{"timestamp": 1}
-	for _, item := range items {
-		field := item.FieldRef.FieldName
-		if field == "" {
-			continue
-		}
-		projection["parsed_fields."+field] = 1
+	if len(items) == 0 {
+		return bson.M{"timestamp": 1}
 	}
+	projection := bson.M{"timestamp": 1, "parsed_fields": 1}
 	return projection
 }
 
@@ -327,7 +323,7 @@ func (h *Handler) queryVizSeries(
 		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}}},
 		{{Key: "$project", Value: projection}},
 		{{Key: "$setWindowFields", Value: bson.M{
-			"sortBy": bson.M{"timestamp": 1, "_id": 1},
+			"sortBy": bson.M{"timestamp": 1},
 			"output": bson.M{
 				"rowNum": bson.M{"$documentNumber": bson.M{}},
 			},
