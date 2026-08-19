@@ -52,6 +52,7 @@ const (
 	CollectionBoards      = "boards"
 	CollectionHeartbeats  = "heartbeats"
 	CollectionUartData    = "uart_data"
+	CollectionVizRollups  = "viz_rollups"
 	CollectionSessions    = "sessions"
 	CollectionProtocols   = "protocols"
 	CollectionSchemaPresets = "schema_presets"
@@ -63,6 +64,7 @@ const (
 func (m *MongoDB) Boards() *mongo.Collection      { return m.Collection(CollectionBoards) }
 func (m *MongoDB) Heartbeats() *mongo.Collection   { return m.Collection(CollectionHeartbeats) }
 func (m *MongoDB) UartData() *mongo.Collection     { return m.Collection(CollectionUartData) }
+func (m *MongoDB) VizRollups() *mongo.Collection   { return m.Collection(CollectionVizRollups) }
 func (m *MongoDB) Sessions() *mongo.Collection     { return m.Collection(CollectionSessions) }
 func (m *MongoDB) Protocols() *mongo.Collection    { return m.Collection(CollectionProtocols) }
 func (m *MongoDB) SchemaPresets() *mongo.Collection { return m.Collection(CollectionSchemaPresets) }
@@ -88,6 +90,28 @@ func (m *MongoDB) EnsureIndexes(ctx context.Context) error {
 	})
 	if err != nil {
 		m.logger.Warn("failed to create uart_data board/timestamp index", zap.Error(err))
+	}
+
+	_, err = m.VizRollups().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "board_id", Value: 1},
+			{Key: "granularity_sec", Value: 1},
+			{Key: "bucket_start", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		m.logger.Warn("failed to create viz_rollups unique bucket index", zap.Error(err))
+	}
+
+	_, err = m.VizRollups().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "board_id", Value: 1},
+			{Key: "bucket_start", Value: -1},
+		},
+	})
+	if err != nil {
+		m.logger.Warn("failed to create viz_rollups board/time index", zap.Error(err))
 	}
 
 	return nil

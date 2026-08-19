@@ -271,6 +271,11 @@ function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment, t: TFunction): {
 type VizDataRow = { timestamp: string; values: Record<string, number> };
 type VizQueryMeta = { total_matched: number; returned: number; downsampled: boolean };
 
+function isRequestAborted(error: unknown): boolean {
+  return error instanceof Error
+    && /timeout or cancelled|aborted|abort/i.test(error.message);
+}
+
 function itemsForDataQuery(items: VizItem[]): VizItem[] {
   return items.map(i => ({
     id: i.id,
@@ -295,14 +300,17 @@ type VizQueryParams = {
 
 async function queryVizDataset(
   params: VizQueryParams,
-  options?: { assessAllRange?: boolean },
+  options?: { assessAllRange?: boolean; signal?: AbortSignal; timeoutMs?: number },
 ): Promise<{
   data: VizDataRow[];
   meta: VizQueryMeta | null;
   inMemoryFull: boolean;
   allRangeAssessment: AllRangeLoadAssessment | null;
 }> {
-  const overview = await api.viz.queryItems({ ...params, limit: MAX_POINTS });
+  const overview = await api.viz.queryItems(
+    { ...params, limit: MAX_POINTS },
+    { signal: options?.signal, timeoutMs: options?.timeoutMs },
+  );
   const meta = overview.meta ?? null;
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
@@ -316,10 +324,13 @@ async function queryVizDataset(
       allRangeAssessment,
     };
   }
-  const full = await api.viz.queryItems({
-    ...params,
-    limit: meta!.total_matched,
-  });
+  const full = await api.viz.queryItems(
+    {
+      ...params,
+      limit: meta!.total_matched,
+    },
+    { signal: options?.signal, timeoutMs: options?.timeoutMs },
+  );
   return {
     data: full.data,
     meta: full.meta ?? null,
@@ -458,8 +469,12 @@ export default function VizDashboardPage() {
   const [selectedBoard, setSelectedBoard] = useState('');
   const [selectedProto, setSelectedProto] = useState('');
   const [items, setItems] = useState<VizItem[]>([]);
+  const itemQueryKey = useMemo(
+    () => items.map(i => `${i.id}:${i.field_ref.protocol_id}:${i.field_ref.field_name}:${i.visible}`).join('|'),
+    [items],
+  );
   const itemTransformKey = useMemo(
-    () => items.map(i => `${i.id}:${i.offset}:${i.weight}:${i.visible}:${i.color}:${i.chart_type}:${i.y_axis.id}:${i.y_axis.unit ?? ''}`).join('|'),
+    () => items.map(i => `${i.id}:${i.label}:${i.visible}:${i.offset}:${i.weight}`).join('|'),
     [items],
   );
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
@@ -498,6 +513,9 @@ export default function VizDashboardPage() {
   const detailFetchSeqRef = useRef(0);
   const detailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const detailCacheRef = useRef(new VizDetailCache());
+  const overviewAbortRef = useRef<AbortController | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const liveAbortRef = useRef<AbortController | null>(null);
   const [profileError, setProfileError] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [showProfileAdd, setShowProfileAdd] = useState(false);
@@ -1358,6 +1376,9 @@ export default function VizDashboardPage() {
     setProfileError('');
     setQueryError(null);
     setLoading(true);
+    overviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    overviewAbortRef.current = controller;
     try {
       const p = await api.viz.getProfile(id);
       setSelectedBoard(p.board_id);
@@ -1379,12 +1400,21 @@ export default function VizDashboardPage() {
         time_range: p.time_range?.start && p.time_range?.end
           ? { start: p.time_range.start, end: p.time_range.end }
           : undefined,
-      }, { assessAllRange: isAllRange });
+      }, {
+        assessAllRange: isAllRange,
+        signal: controller.signal,
+        timeoutMs: 45000,
+      });
+      if (controller.signal.aborted) return;
       applyQueryResult(result, isAllRange);
     } catch (e) {
+      if (isRequestAborted(e)) return;
       setQueryError(vizErrorMessage(e, t('viz.queryError')));
     } finally {
-      setLoading(false);
+      if (overviewAbortRef.current === controller) {
+        overviewAbortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [applyQueryResult, t]);
 
@@ -1430,6 +1460,9 @@ export default function VizDashboardPage() {
     assessAllRange: boolean,
   ) => {
     if (!selectedBoard || !itemsRef.current.length) return;
+    overviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    overviewAbortRef.current = controller;
     setLoading(true);
     setQueryError(null);
     try {
@@ -1437,12 +1470,21 @@ export default function VizDashboardPage() {
         board_id: selectedBoard,
         items: itemsForDataQuery(itemsRef.current),
         time_range: timeRange,
-      }, { assessAllRange });
+      }, {
+        assessAllRange,
+        signal: controller.signal,
+        timeoutMs: 45000,
+      });
+      if (controller.signal.aborted) return;
       applyQueryResult(result, assessAllRange);
     } catch (e) {
+      if (isRequestAborted(e)) return;
       setQueryError(vizErrorMessage(e, t('viz.queryError')));
     } finally {
-      setLoading(false);
+      if (overviewAbortRef.current === controller) {
+        overviewAbortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [selectedBoard, applyQueryResult, t]);
 
@@ -1487,13 +1529,17 @@ export default function VizDashboardPage() {
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
     const since = lastTimestampRef.current;
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
     try {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
         items: itemsForDataQuery(itemsRef.current),
         since: since || undefined,
         limit: MAX_POINTS,
-      });
+      }, { signal: controller.signal, timeoutMs: 20000 });
+      if (controller.signal.aborted) return;
       if (!result.data.length) return;
       lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
       setRawVizData(prev => {
@@ -1503,7 +1549,12 @@ export default function VizDashboardPage() {
       });
       setLivePollError(null);
     } catch (e) {
+      if (isRequestAborted(e)) return;
       setLivePollError(vizErrorMessage(e, t('viz.livePollError')));
+    } finally {
+      if (liveAbortRef.current === controller) {
+        liveAbortRef.current = null;
+      }
     }
   }, [selectedBoard, t]);
 
@@ -1512,6 +1563,8 @@ export default function VizDashboardPage() {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+    liveAbortRef.current?.abort();
+    liveAbortRef.current = null;
   }, []);
 
   const startLive = useCallback(() => {
@@ -1529,6 +1582,12 @@ export default function VizDashboardPage() {
     }
     return stopLive;
   }, [liveMode, startLive, stopLive]);
+
+  useEffect(() => () => {
+    overviewAbortRef.current?.abort();
+    detailAbortRef.current?.abort();
+    liveAbortRef.current?.abort();
+  }, []);
 
   const selectedProtocol = useMemo(
     () => protocols.find(p => p.id === selectedProto),
@@ -1735,7 +1794,7 @@ export default function VizDashboardPage() {
     }
 
     const { startTs, endTs, indexKey } = zoomWindow;
-    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemTransformKey);
+    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
     const cached = detailCacheRef.current.get(cacheKey);
 
     const applyDetail = (
@@ -1775,6 +1834,9 @@ export default function VizDashboardPage() {
     if (!cached) setDetailLoading(true);
 
     const runFetch = () => {
+      detailAbortRef.current?.abort();
+      const controller = new AbortController();
+      detailAbortRef.current = controller;
       void (async () => {
         try {
           const result = await api.viz.queryItems({
@@ -1782,16 +1844,21 @@ export default function VizDashboardPage() {
             items: itemsForDataQuery(itemsRef.current),
             time_range: { start: startTs, end: endTs },
             limit: MAX_POINTS,
-          });
+          }, { signal: controller.signal, timeoutMs: 30000 });
+          if (controller.signal.aborted) return;
           if (detailFetchSeqRef.current !== seq) return;
           applyDetail(result.data, result.meta ?? null, false);
-        } catch {
+        } catch (e) {
+          if (isRequestAborted(e)) return;
           if (detailFetchSeqRef.current !== seq) return;
           if (!cached) {
             setDetailRawVizData(null);
             setDetailQueryMeta(null);
           }
         } finally {
+          if (detailAbortRef.current === controller) {
+            detailAbortRef.current = null;
+          }
           if (detailFetchSeqRef.current === seq) {
             setDetailLoading(false);
           }
@@ -1811,8 +1878,10 @@ export default function VizDashboardPage() {
         clearTimeout(detailDebounceRef.current);
         detailDebounceRef.current = null;
       }
+      detailAbortRef.current?.abort();
+      detailAbortRef.current = null;
     };
-  }, [zoomWindow, liveMode, selectedBoard, itemTransformKey, inMemoryFull]);
+  }, [zoomWindow, liveMode, selectedBoard, itemQueryKey, inMemoryFull]);
 
   const displayChartData = useMemo(() => {
     if (!chartData.length) return [];
@@ -1834,13 +1903,26 @@ export default function VizDashboardPage() {
     return rawVizData.slice(zoomWindow.start, zoomWindow.end + 1);
   }, [rawVizData, zoomWindow, detailRawVizData, inMemoryFull]);
 
+  const rawValuesSource = useMemo(() => {
+    if (inMemoryFull) return rawVizData;
+    return displayRawVizData;
+  }, [inMemoryFull, rawVizData, displayRawVizData]);
+
   const rawValuesByTimeKey = useMemo(() => {
     const map = new Map<string, Record<string, number>>();
-    for (const row of displayRawVizData) {
+    for (const row of rawValuesSource) {
       map.set(row.timestamp, row.values);
     }
     return map;
-  }, [displayRawVizData]);
+  }, [rawValuesSource]);
+
+  const rawValuesIndexByTimeKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < rawValuesSource.length; i++) {
+      map.set(rawValuesSource[i].timestamp, i);
+    }
+    return map;
+  }, [rawValuesSource]);
 
   const canvasChartData = useMemo(() => {
     if (!chartData.length) return [];
@@ -1966,10 +2048,10 @@ export default function VizDashboardPage() {
 
   const hoverPrevTimeKey = useMemo(() => {
     if (!hoverTimeKey) return undefined;
-    const idx = displayRawVizData.findIndex(r => r.timestamp === hoverTimeKey);
+    const idx = rawValuesIndexByTimeKey.get(hoverTimeKey) ?? -1;
     if (idx <= 0) return undefined;
-    return displayRawVizData[idx - 1].timestamp;
-  }, [hoverTimeKey, displayRawVizData]);
+    return rawValuesSource[idx - 1]?.timestamp;
+  }, [hoverTimeKey, rawValuesIndexByTimeKey, rawValuesSource]);
 
   const cursorValueRows = useMemo(() => {
     const rows = buildCursorValueRows(
@@ -2035,10 +2117,10 @@ export default function VizDashboardPage() {
     const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
 
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftItems),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightItems),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(canvasChartData, leftItems),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(canvasChartData, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, activeChartItems]);
+  }, [canvasChartData, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -2067,23 +2149,37 @@ export default function VizDashboardPage() {
   }, [canvasChartData, canvasYAxes, chartViewportHeight]);
 
   const statistics = useMemo(() => {
+    if (!statsOpen) return {} as Record<string, Statistics>;
     const stats: Record<string, Statistics> = {};
     for (const item of visibleItems) {
-      const values = displayRawVizData
-        .map(row => row.values[item.label])
-        .filter((v): v is number => typeof v === 'number' && !isNaN(v))
-        .map(raw => applyItemTransform(raw, item));
-      if (!values.length) continue;
+      let min = Infinity;
+      let max = -Infinity;
+      let sum = 0;
+      let count = 0;
+      let last: number | string = '';
+
+      for (const row of displayRawVizData) {
+        const raw = row.values[item.label];
+        if (typeof raw !== 'number' || Number.isNaN(raw)) continue;
+        const value = applyItemTransform(raw, item);
+        if (value < min) min = value;
+        if (value > max) max = value;
+        sum += value;
+        count += 1;
+        last = value;
+      }
+
+      if (!Number.isFinite(min) || !Number.isFinite(max) || count === 0) continue;
       stats[item.label] = {
-        min: Math.min(...values),
-        max: Math.max(...values),
-        avg: values.reduce((a, b) => a + b, 0) / values.length,
-        count: values.length,
-        last: values[values.length - 1],
+        min,
+        max,
+        avg: sum / count,
+        count,
+        last,
       };
     }
     return stats;
-  }, [visibleItems, displayRawVizData]);
+  }, [statsOpen, visibleItems, displayRawVizData]);
 
   const statsSummary = useMemo(() => {
     const seriesCount = Object.keys(statistics).length;

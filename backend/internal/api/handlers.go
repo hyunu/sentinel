@@ -559,6 +559,10 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		return
 	}
 
+	if err := h.upsertVizRollups(ctx, []models.UartData{data}); err != nil {
+		h.logger.Warn("failed to update viz rollups", zap.Error(err))
+	}
+
 	c.JSON(http.StatusCreated, data)
 }
 
@@ -588,6 +592,7 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 
 	now := time.Now()
 	docs := make([]interface{}, len(req.Entries))
+	samples := make([]models.UartData, len(req.Entries))
 	for i, e := range req.Entries {
 		ts := e.Timestamp
 		if ts.IsZero() {
@@ -604,12 +609,17 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 			doc.ParsedFields = parsed
 		}
 		docs[i] = doc
+		samples[i] = doc
 	}
 
 	if _, err := h.db.UartData().InsertMany(ctx, docs); err != nil {
 		h.logger.Error("failed to batch ingest UART data", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ingest data"})
 		return
+	}
+
+	if err := h.upsertVizRollups(ctx, samples); err != nil {
+		h.logger.Warn("failed to update viz rollups", zap.Error(err))
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"inserted": len(docs)})
@@ -818,8 +828,11 @@ func (h *Handler) IngestTemperature(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.InsertTemperatureUartFrame(ctx, boardID, req.Timestamp, req.ValueCelsius); err != nil {
+	frame, err := h.db.InsertTemperatureUartFrame(ctx, boardID, req.Timestamp, req.ValueCelsius)
+	if err != nil {
 		h.logger.Warn("failed to mirror temperature to uart_data", zap.Error(err))
+	} else if err := h.upsertVizRollups(ctx, []models.UartData{frame}); err != nil {
+		h.logger.Warn("failed to update viz rollups", zap.Error(err))
 	}
 
 	c.JSON(http.StatusCreated, temp)

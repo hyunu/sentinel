@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hyunu/sentinel/internal/models"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 func TestNormalizeVizPointLimit(t *testing.T) {
@@ -71,5 +72,63 @@ func TestExpandBucketMinMaxPreservesSpike(t *testing.T) {
 	}
 	if !foundSpike {
 		t.Fatalf("spike value 9999 not preserved in bucket output: %+v", points)
+	}
+}
+
+func TestBuildVizProjection(t *testing.T) {
+	t.Parallel()
+
+	items := []models.VizItem{
+		{FieldRef: models.FieldRef{FieldName: "rpm"}},
+		{FieldRef: models.FieldRef{FieldName: "temp.c"}},
+		{FieldRef: models.FieldRef{FieldName: ""}},
+	}
+
+	got := buildVizProjection(items)
+	want := bson.M{
+		"timestamp":            1,
+		"parsed_fields.rpm":    1,
+		"parsed_fields.temp.c": 1,
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("projection size = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("projection[%q] = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
+func TestRollupBucketStart(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, 8, 19, 10, 33, 47, 0, time.UTC)
+	if got := rollupBucketStart(ts, 10); !got.Equal(time.Date(2026, 8, 19, 10, 33, 40, 0, time.UTC)) {
+		t.Fatalf("rollupBucketStart(10s) = %s", got)
+	}
+	if got := rollupBucketStart(ts, 60); !got.Equal(time.Date(2026, 8, 19, 10, 33, 0, 0, time.UTC)) {
+		t.Fatalf("rollupBucketStart(60s) = %s", got)
+	}
+}
+
+func TestChooseVizRollupGranularity(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
+	end := start.Add(3 * time.Hour)
+
+	gran, use := chooseVizRollupGranularity(200000, 8000, start, true, end, true)
+	if !use {
+		t.Fatalf("expected rollup to be used")
+	}
+	if gran != 10 && gran != 60 {
+		t.Fatalf("unexpected granularity: %d", gran)
+	}
+
+	gran, use = chooseVizRollupGranularity(10000, 8000, start, true, end, true)
+	if use || gran != 0 {
+		t.Fatalf("expected raw path for small overflow, got gran=%d use=%v", gran, use)
 	}
 }

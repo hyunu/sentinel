@@ -13,6 +13,7 @@ var ErrBoardNotFound = errors.New("board not found")
 // BoardDeleteStats counts documents removed during cascade delete.
 type BoardDeleteStats struct {
 	UartData     int64 `json:"uart_data"`
+	VizRollups   int64 `json:"viz_rollups"`
 	Sessions     int64 `json:"sessions"`
 	Temperatures int64 `json:"temperatures"`
 	Heartbeats   int64 `json:"heartbeats"`
@@ -37,6 +38,12 @@ func (m *MongoDB) DeleteBoardCascade(ctx context.Context, boardID string) (Board
 		return stats, fmt.Errorf("delete uart data: %w", err)
 	} else {
 		stats.UartData = res.DeletedCount
+	}
+
+	if res, err := m.VizRollups().DeleteMany(ctx, filter); err != nil {
+		return stats, fmt.Errorf("delete viz rollups: %w", err)
+	} else {
+		stats.VizRollups = res.DeletedCount
 	}
 
 	if res, err := m.Sessions().DeleteMany(ctx, filter); err != nil {

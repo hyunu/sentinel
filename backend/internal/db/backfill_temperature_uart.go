@@ -70,14 +70,14 @@ func (m *MongoDB) BackfillTemperatureUart(ctx context.Context) error {
 	return nil
 }
 
-func (m *MongoDB) InsertTemperatureUartFrame(ctx context.Context, boardID string, ts time.Time, tempC float64) error {
+func (m *MongoDB) InsertTemperatureUartFrame(ctx context.Context, boardID string, ts time.Time, tempC float64) (models.UartData, error) {
 	seqVal, err := m.GetNextSequence(ctx, "temperature_frame_seq")
 	if err != nil {
-		return fmt.Errorf("frame seq: %w", err)
+		return models.UartData{}, fmt.Errorf("frame seq: %w", err)
 	}
 	rawHex, parsed, err := protocol.BuildTemperatureFrameFromValue(uint16(seqVal&0xFFFF), float32(tempC))
 	if err != nil {
-		return err
+		return models.UartData{}, err
 	}
 	doc := models.UartData{
 		ID:           uuid.New().String(),
@@ -88,5 +88,8 @@ func (m *MongoDB) InsertTemperatureUartFrame(ctx context.Context, boardID string
 		ParsedFields: parsed,
 	}
 	_, err = m.UartData().InsertOne(ctx, doc)
-	return err
+	if err != nil {
+		return models.UartData{}, err
+	}
+	return doc, nil
 }

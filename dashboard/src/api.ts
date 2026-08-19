@@ -12,11 +12,39 @@ export type {
 } from './types/ruleparser';
 export { hasParseRules } from './types/ruleparser';
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  });
+interface RequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, options?: RequestOptions): Promise<T> {
+  const { timeoutMs, ...fetchOptions } = options ?? {};
+  const controller = new AbortController();
+  const externalSignal = fetchOptions.signal;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+  const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 30000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Request timeout or cancelled');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || 'Request failed');
@@ -252,12 +280,17 @@ export const api = {
       time_range?: { start: string; end: string };
       since?: string;
       limit?: number;
-    }) =>
+    }, options?: { signal?: AbortSignal; timeoutMs?: number }) =>
       request<{
         data: Array<{ timestamp: string; values: Record<string, number> }>;
         meta?: { total_matched: number; returned: number; downsampled: boolean };
       }>(
-        '/viz/query-items', { method: 'POST', body: JSON.stringify(data) }
+        '/viz/query-items', {
+          method: 'POST',
+          body: JSON.stringify(data),
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+        }
       ),
   },
 

@@ -31,7 +31,6 @@ type vizQueryMeta struct {
 type vizSampleDoc struct {
 	Timestamp    time.Time              `bson:"timestamp"`
 	ParsedFields map[string]interface{} `bson:"parsed_fields"`
-	Total        int64                  `bson:"total"`
 }
 
 type vizBucketDocEntry struct {
@@ -42,7 +41,6 @@ type vizBucketDocEntry struct {
 type vizBucketGroup struct {
 	Bucket int64               `bson:"_id"`
 	Docs   []vizBucketDocEntry `bson:"docs"`
-	Total  int64               `bson:"total"`
 }
 
 func extractVizValue(v interface{}) (float64, bool) {
@@ -72,6 +70,18 @@ func normalizeVizPointLimit(limit int) int {
 
 func queryTimeoutForVizLimit(limit int) time.Duration {
 	return 30 * time.Second
+}
+
+func buildVizProjection(items []models.VizItem) bson.M {
+	projection := bson.M{"timestamp": 1}
+	for _, item := range items {
+		field := item.FieldRef.FieldName
+		if field == "" {
+			continue
+		}
+		projection["parsed_fields."+field] = 1
+	}
+	return projection
 }
 
 func vizValuesFromDoc(d *vizSampleDoc, items []models.VizItem) map[string]interface{} {
@@ -239,38 +249,95 @@ func (h *Handler) queryVizSeries(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
+	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+
+	if total == 0 {
+		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
+	}
+
+	projection := buildVizProjection(items)
+
+	if total <= int64(effectiveLimit) {
+		findOpts := options.Find().
+			SetSort(bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}).
+			SetLimit(int64(effectiveLimit)).
+			SetProjection(projection).
+			SetBatchSize(500)
+
+		cursor, err := h.db.UartData().Find(ctx, filter, findOpts)
+		if err != nil {
+			return nil, vizQueryMeta{}, err
+		}
+		defer cursor.Close(ctx)
+
+		results := make([]vizDataPoint, 0, int(total))
+		for cursor.Next(ctx) {
+			var doc vizSampleDoc
+			if err := cursor.Decode(&doc); err != nil {
+				continue
+			}
+			vals := vizValuesFromDoc(&doc, items)
+			if len(vals) == 0 {
+				continue
+			}
+			results = append(results, vizDataPoint{Timestamp: doc.Timestamp, Values: vals})
+		}
+		if err := cursor.Err(); err != nil {
+			return nil, vizQueryMeta{}, err
+		}
+
+		meta := vizQueryMeta{
+			TotalMatched: total,
+			Returned:     len(results),
+			Downsampled:  false,
+		}
+		return results, meta, nil
+	}
+
+	rollupResults, usedRollup, err := h.queryVizSeriesFromRollups(ctx, filter, items, effectiveLimit, total)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	if usedRollup {
+		meta := vizQueryMeta{
+			TotalMatched: total,
+			Returned:     len(rollupResults),
+			Downsampled:  total > int64(len(rollupResults)),
+		}
+		return rollupResults, meta, nil
+	}
+
 	maxBuckets := vizMaxBucketsForLimit(effectiveLimit)
+	if int64(maxBuckets) > total {
+		maxBuckets = int(total)
+	}
+	if maxBuckets < 1 {
+		maxBuckets = 1
+	}
+	stride := int64(math.Ceil(float64(total) / float64(maxBuckets)))
+	if stride < 1 {
+		stride = 1
+	}
 
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
-		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}}}},
+		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: projection}},
 		{{Key: "$setWindowFields", Value: bson.M{
-			"sortBy": bson.M{"timestamp": 1},
+			"sortBy": bson.M{"timestamp": 1, "_id": 1},
 			"output": bson.M{
 				"rowNum": bson.M{"$documentNumber": bson.M{}},
-				"total":  bson.M{"$count": bson.M{}},
 			},
 		}}},
 		{{Key: "$addFields", Value: bson.M{
-			"stride": bson.M{
-				"$max": bson.A{
-					1,
-					bson.M{"$ceil": bson.M{"$divide": bson.A{
-						"$total",
-						maxBuckets,
-					}}},
-				},
-			},
 			"bucket": bson.M{
 				"$floor": bson.M{
 					"$divide": bson.A{
 						bson.M{"$subtract": bson.A{"$rowNum", 1}},
-						bson.M{
-							"$max": bson.A{
-								1,
-								bson.M{"$ceil": bson.M{"$divide": bson.A{"$total", maxBuckets}}},
-							},
-						},
+						stride,
 					},
 				},
 			},
@@ -281,7 +348,6 @@ func (h *Handler) queryVizSeries(
 				"timestamp":     "$timestamp",
 				"parsed_fields": "$parsed_fields",
 			}},
-			"total": bson.M{"$first": "$total"},
 		}}},
 		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		{{Key: "$limit", Value: maxBuckets}},
@@ -294,14 +360,10 @@ func (h *Handler) queryVizSeries(
 	defer cursor.Close(ctx)
 
 	results := make([]vizDataPoint, 0, effectiveLimit)
-	var total int64
 	for cursor.Next(ctx) {
 		var group vizBucketGroup
 		if err := cursor.Decode(&group); err != nil {
 			continue
-		}
-		if total == 0 && group.Total > 0 {
-			total = group.Total
 		}
 		bucketPoints := expandBucketMinMax(group.Docs, items)
 		results = append(results, bucketPoints...)
@@ -323,7 +385,7 @@ func (h *Handler) queryVizSeries(
 	meta := vizQueryMeta{
 		TotalMatched: total,
 		Returned:     len(results),
-		Downsampled:  total > int64(effectiveLimit),
+		Downsampled:  total > int64(len(results)),
 	}
 	return results, meta, nil
 }

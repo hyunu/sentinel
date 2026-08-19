@@ -1,0 +1,152 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VirtualEsp32Board.Gui.MainWindow"
+        Width="1220" Height="860"
+        MinWidth="900" MinHeight="700"
+        Title="virtual_esp32_board GUI">
+  <Grid RowDefinitions="Auto,*" Margin="18" RowSpacing="14">
+    <Border Grid.Row="0" Classes="card" Background="#101926">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="4">
+          <TextBlock Classes="title" Text="virtual_esp32_board" />
+          <TextBlock Classes="subtitle" Text="CSV 스니핑 데이터를 가상 ESP32 보드처럼 서버로 재생합니다" />
+        </StackPanel>
+        <Border Width="200" Height="42" VerticalAlignment="Center" CornerRadius="21" Background="#0B334A" BorderBrush="#1D5A76" BorderThickness="1">
+          <TextBlock Name="StatusBadge" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold" Text="IDLE" Foreground="#7DD3FC" />
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="1.5*,1*" ColumnSpacing="14">
+      <Border Grid.Column="0" Classes="card">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Spacing="14">
+            <Border Classes="subcard">
+              <StackPanel Spacing="10">
+                <TextBlock Classes="section" Text="Connection &amp; Source" />
+                <Border Classes="divider" />
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="label" Text="CSV File" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox Name="CsvPathBox" Watermark="CSV file path" />
+                    <Button Grid.Column="1" Name="BrowseCsvButton" Content="Browse" MinWidth="96" />
+                  </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="label" Text="Server URL" />
+                  <TextBox Name="ServerBox" Text="http://localhost:5050" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="label" Text="Board Role" />
+                  <ComboBox Name="RoleCombo" IsEditable="True" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="subcard">
+              <StackPanel Spacing="10">
+                <TextBlock Classes="section" Text="Board Registration" />
+                <Border Classes="divider" />
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="label" Text="Registered Preset" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <ComboBox Name="RegisteredBoardCombo" IsEditable="False" />
+                    <Button Grid.Column="1" Name="RefreshBoardsButton" Content="Refresh" MinWidth="96" />
+                  </Grid>
+                </StackPanel>
+
+                <CheckBox Name="FirstRegistrationCheck"
+                          IsChecked="True"
+                          Content="신규처럼 등록(실행 시 새 UID/MAC 생성)" />
+
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="label" Text="Board Name" />
+                  <TextBox Name="BoardNameBox" Watermark="board name" Text="Virtual-ESP32 GUI" />
+                </StackPanel>
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="label" Text="UID" />
+                    <TextBox Name="UidBox" Text="VESP32-GUI" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Classes="label" Text="Protocol" />
+                    <TextBox Name="ProtocolIdBox" Watermark="optional" />
+                  </StackPanel>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="label" Text="BLE MAC" />
+                    <TextBox Name="MacBox" Watermark="AA:BB:CC:DD:EE:11" Text="AA:BB:CC:DD:EE:11" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Classes="label" Text="WiFi MAC" />
+                    <TextBox Name="WifiMacBox" Watermark="AA:BB:CC:DD:EE:12" Text="AA:BB:CC:DD:EE:12" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="subcard">
+              <StackPanel Spacing="10">
+                <TextBlock Classes="section" Text="Replay Controls" />
+                <Border Classes="divider" />
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="label" Text="Speed" />
+                    <TextBox Name="SpeedBox" Text="20" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Classes="label" Text="Max Packets" />
+                    <TextBox Name="MaxPacketsBox" Text="0" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Classes="label" Text="Log Every" />
+                    <TextBox Name="LogEveryBox" Text="200" />
+                  </StackPanel>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                  <StackPanel Spacing="6">
+                    <TextBlock Classes="label" Text="Heartbeat(s)" />
+                    <TextBox Name="HeartbeatBox" Text="10" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Classes="label" Text="Loop Count" />
+                    <TextBox Name="LoopCountBox" Watermark="0 = infinite" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Bottom">
+                    <CheckBox Name="LoopCheck" Content="Loop" IsChecked="True" />
+                  </StackPanel>
+                </Grid>
+
+                <TextBlock Classes="subtitle" Text="실행 중에는 Stop으로 즉시 취소할 수 있습니다." />
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Name="StartButton" Classes="primary" Content="Start Streaming" MinWidth="170" />
+                  <Button Name="StopButton" Classes="stop" Content="Stop" IsEnabled="False" MinWidth="100" />
+                </StackPanel>
+
+                <ProgressBar Name="ReplayProgress" Minimum="0" Maximum="100" Height="14" Value="0" />
+                <TextBlock Name="SummaryText" Classes="subtitle" Text="ready" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <Border Grid.Column="1" Classes="card">
+        <Grid RowDefinitions="Auto,*" RowSpacing="10">
+          <TextBlock Classes="section" Text="Live Log" />
+          <ListBox Name="LogList" Grid.Row="1" />
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
