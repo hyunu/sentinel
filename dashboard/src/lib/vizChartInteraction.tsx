@@ -307,45 +307,16 @@ export function computeWheelZoomWindow(
 
   const s = Math.max(0, Math.min(currentStart, len - 1));
   const e = Math.max(s, Math.min(currentEnd, len - 1));
-  const startMs = Date.parse(points[s]?.timeKey ?? '');
-  const endMs = Date.parse(points[e]?.timeKey ?? '');
 
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    const focusIndex = Math.round(s + focusRatio * (e - s));
-    let newStart = Math.round(focusIndex - focusRatio * (newSpan - 1));
-    let newEnd = newStart + newSpan - 1;
-    if (newStart < 0) {
-      newEnd -= newStart;
-      newStart = 0;
-    }
-    if (newEnd >= len) {
-      newStart -= newEnd - len + 1;
-      newEnd = len - 1;
-    }
-    return {
-      start: Math.max(0, newStart),
-      end: Math.min(len - 1, newEnd),
-    };
+  let focusIndex: number;
+  if (focusMsOverride != null && Number.isFinite(focusMsOverride) && points.length > 0) {
+    focusIndex = findNearestChartIndexForTimeMs(points, focusMsOverride, len);
+  } else {
+    focusIndex = Math.round(s + focusRatio * (e - s));
   }
 
-  const focusMs = focusMsOverride != null && Number.isFinite(focusMsOverride)
-    ? focusMsOverride
-    : startMs + focusRatio * (endMs - startMs);
-  const focusRatioInWindow = Math.max(0, Math.min(1, (focusMs - startMs) / (endMs - startMs)));
-  const currentSpanMs = endMs - startMs;
-  const newSpanMs = currentSpanMs * (newSpan / Math.max(1, e - s + 1));
-  const newStartMs = focusMs - focusRatioInWindow * newSpanMs;
-  const newEndMs = newStartMs + newSpanMs;
-
-  let newStart = findChartIndexLowerBoundForTimeMs(points, newStartMs);
-  let newEnd = findChartIndexUpperBoundForTimeMs(points, newEndMs);
-  if (newEnd < newStart) newEnd = newStart;
-
-  if (newEnd - newStart + 1 > newSpan) {
-    newEnd = Math.min(len - 1, newStart + newSpan - 1);
-  } else if (newEnd - newStart + 1 < newSpan) {
-    newStart = Math.max(0, newEnd - newSpan + 1);
-  }
+  let newStart = Math.round(focusIndex - focusRatio * (newSpan - 1));
+  let newEnd = newStart + newSpan - 1;
 
   if (newStart < 0) {
     newEnd -= newStart;

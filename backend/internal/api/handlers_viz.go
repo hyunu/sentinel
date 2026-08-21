@@ -205,7 +205,7 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	filter := bson.M{"board_id": req.BoardID}
 	if req.Since != "" {
 		if st, err := time.Parse(time.RFC3339, req.Since); err == nil {
-			filter["timestamp"] = bson.M{"$gt": st}
+			filter["timestamp"] = bson.M{"$gte": st}
 		}
 	} else if req.TimeRange != nil && !req.TimeRange.Start.IsZero() {
 		tsFilter := bson.M{"$gte": req.TimeRange.Start}

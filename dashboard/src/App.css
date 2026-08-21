@@ -1259,6 +1259,25 @@ tbody tr:last-child td {
   50% { opacity: 0.4; }
 }
 
+.viz-chart-session-breaks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.viz-chart-session-break {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--text-muted, #6b7280);
+  opacity: 0.6;
+}
+
 .viz-time-preset-group,
 .viz-time-custom-group,
 .viz-time-live-group {

@@ -219,7 +219,7 @@
     "resetZoom": "Reset zoom",
     "tooltip": "Tooltip",
     "tooltipToggle": "Show value popup on hover",
-    "zoomHint": "Shift+drag: zoom region · Alt+drag: measure time · Drag: pan (zoomed) · Bottom bar: pan · Wheel: zoom · Double-click: reset",
+    "zoomHint": "Wheel/vertical scroll: zoom · Shift+wheel/horizontal scroll: pan · Drag: pan · Shift+drag: select region · Alt+drag: measure · Double-click: reset",
     "statistics": "Statistics",
     "valuePanel": {
       "title": "Field Values",

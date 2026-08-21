@@ -219,7 +219,7 @@
     "resetZoom": "줌 초기화",
     "tooltip": "툴팁",
     "tooltipToggle": "호버 시 값 팝업 표시",
-    "zoomHint": "Shift+드래그: 구간 줌 · Alt+드래그: 시간 측정 · 드래그: 이동(줌 시) · 하단 바: 이동 · 휠: 줌 · 더블클릭: 초기화",
+    "zoomHint": "휠/세로 스크롤: 줌 · Shift+휠/가로 스크롤: 이동 · 드래그: 이동 · Shift+드래그: 구간 선택 · Alt+드래그: 시간 측정 · 더블클릭: 초기화",
     "statistics": "통계",
     "valuePanel": {
       "title": "필드 값",

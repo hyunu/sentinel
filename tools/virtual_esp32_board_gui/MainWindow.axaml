@@ -60,7 +60,7 @@
                 </StackPanel>
 
                 <CheckBox Name="FirstRegistrationCheck"
-                          IsChecked="True"
+                          IsChecked="False"
                           Content="신규처럼 등록(실행 시 새 UID/MAC 생성)" />
 
                 <StackPanel Spacing="6">
@@ -75,7 +75,10 @@
                   </StackPanel>
                   <StackPanel Grid.Column="1" Spacing="6">
                     <TextBlock Classes="label" Text="Protocol" />
-                    <TextBox Name="ProtocolIdBox" Watermark="optional" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                      <ComboBox Name="ProtocolCombo" IsEditable="False" />
+                      <Button Grid.Column="1" Name="RefreshProtocolsButton" Content="Refresh" MinWidth="60" />
+                    </Grid>
                   </StackPanel>
                 </Grid>
 

@@ -466,9 +466,8 @@ export default function VizDashboardPage() {
     [t],
   );
   const [boards, setBoards] = useState<Board[]>([]);
-  const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [selectedBoard, setSelectedBoard] = useState('');
-  const [selectedProto, setSelectedProto] = useState('');
+  const [boardProtocol, setBoardProtocol] = useState<ProtocolSpec | null>(null);
   const [items, setItems] = useState<VizItem[]>([]);
   const itemQueryKey = useMemo(
     () => items.map(i => `${i.id}:${i.field_ref.protocol_id}:${i.field_ref.field_name}:${i.visible}`).join('|'),
@@ -633,6 +632,7 @@ export default function VizDashboardPage() {
   applyCanvasZoomWindowRef.current = applyCanvasZoomWindow;
 
   useEffect(() => {
+    if (liveModeRef.current) return;
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
     refAreaLeftRef.current = null;
@@ -691,10 +691,10 @@ export default function VizDashboardPage() {
 
   const configSummary = useMemo(() => {
     const boardName = boards.find(b => b.id === selectedBoard)?.name ?? 'Board not selected';
-    const protoName = protocols.find(p => p.id === selectedProto)?.name;
+    const protoName = boardProtocol?.name;
     const visibleCount = items.filter(i => i.visible).length;
     return [boardName, protoName, `${visibleCount}/${items.length} items visible`].filter(Boolean).join(' · ');
-  }, [boards, protocols, selectedBoard, selectedProto, items]);
+  }, [boards, selectedBoard, boardProtocol, items]);
 
   const applyChartZoomWindow = useCallback((start: number, end: number) => {
     const len = chartDataLengthRef.current || chartData.length;
@@ -747,7 +747,7 @@ export default function VizDashboardPage() {
   }, [selectionOverlay.hide]);
 
   const zoomChartByFactor = useCallback((factor: number, focusRatio = 0.5) => {
-    if (chartData.length === 0 || liveMode) return;
+    if (chartData.length === 0) return;
     const currentStart = chartZoom?.start ?? 0;
     const currentEnd = chartZoom?.end ?? chartData.length - 1;
     const span = currentEnd - currentStart + 1;
@@ -767,10 +767,10 @@ export default function VizDashboardPage() {
       newEnd = chartData.length - 1;
     }
     applyChartZoomWindow(newStart, newEnd);
-  }, [applyChartZoomWindow, chartData.length, chartZoom, liveMode]);
+  }, [applyChartZoomWindow, chartData.length, chartZoom]);
 
   const panChartByKeyboard = useCallback((direction: -1 | 1) => {
-    if (liveMode || chartData.length === 0) return;
+    if (chartData.length === 0) return;
     const zoom = chartZoom;
     if (!zoom || zoom.end - zoom.start + 1 >= chartData.length) return;
 
@@ -787,10 +787,10 @@ export default function VizDashboardPage() {
       chartData.length,
     );
     applyChartZoomWindow(start, end);
-  }, [applyChartZoomWindow, chartData, chartZoom, liveMode]);
+  }, [applyChartZoomWindow, chartData, chartZoom]);
 
   const handleChartViewportKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    if (liveMode || isEditableKeyboardTarget(e.target)) return;
+    if (isEditableKeyboardTarget(e.target)) return;
     const action = resolveChartKeyboardAction(e.key);
     if (!action) return;
 
@@ -910,14 +910,6 @@ export default function VizDashboardPage() {
       );
     };
 
-    const isZoomedIn = (): boolean => {
-      const len = chartDataLengthRef.current;
-      if (len === 0) return false;
-      const zoom = chartZoomRef.current;
-      if (!zoom) return false;
-      return zoom.end - zoom.start + 1 < len;
-    };
-
     const schedulePanDelta = (deltaX: number) => {
       pendingPanDeltaRef.current = deltaX;
       if (panRafRef.current != null) return;
@@ -990,7 +982,7 @@ export default function VizDashboardPage() {
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (liveModeRef.current || e.button !== 0) return;
+      if (e.button !== 0) return;
       if (activeChartPointerRef.current != null) {
         endPointerSession(activeChartPointerRef.current);
       }
@@ -1053,14 +1045,18 @@ export default function VizDashboardPage() {
         return;
       }
 
-      if (isZoomedIn()) {
-        const zoom = chartZoomRef.current!;
+      {
+        const len = chartDataLengthRef.current;
+        if (len === 0) return;
+        const zoom = chartZoomRef.current;
+        const zoomStart = zoom?.start ?? 0;
+        const zoomEnd = zoom?.end ?? len - 1;
         panSessionRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
-          zoomStart: zoom.start,
-          zoomEnd: zoom.end,
-          span: zoom.end - zoom.start + 1,
+          zoomStart,
+          zoomEnd,
+          span: zoomEnd - zoomStart + 1,
         };
         isChartSelectingRef.current = false;
         refAreaLeftRef.current = null;
@@ -1186,14 +1182,6 @@ export default function VizDashboardPage() {
     const el = chartViewportRef.current;
     if (!el) return;
 
-    const isZoomedIn = (): boolean => {
-      const len = chartDataLengthRef.current;
-      if (len === 0) return false;
-      const zoom = chartZoomRef.current;
-      if (!zoom) return false;
-      return zoom.end - zoom.start + 1 < len;
-    };
-
     const getWheelPlotWidth = () => {
       const canvasMetrics = chartCanvasRef.current?.getPlotClientMetrics();
       if (canvasMetrics) return canvasMetrics.plotWidth;
@@ -1205,16 +1193,16 @@ export default function VizDashboardPage() {
       const data = chartDataRef.current;
       if (len === 0 || data.length === 0) return;
       const zoom = chartZoomRef.current;
-      if (!zoom) return;
-      if (zoom.end - zoom.start + 1 >= len) return;
+      const zoomStart = zoom?.start ?? 0;
+      const zoomEnd = zoom?.end ?? len - 1;
 
       const plotWidth = getWheelPlotWidth();
       if (plotWidth <= 0) return;
 
       const { start: newStart, end: newEnd } = computePanWindow(
         data,
-        zoom.start,
-        zoom.end,
+        zoomStart,
+        zoomEnd,
         deltaX,
         plotWidth,
         len,
@@ -1231,7 +1219,6 @@ export default function VizDashboardPage() {
     };
 
     const applyWheelZoom = (deltaY: number, focusRatio: number, focusMs: number | null) => {
-      if (liveModeRef.current) return;
       const len = chartDataLengthRef.current;
       if (len === 0) return;
       const factor = wheelDeltaToZoomFactor(deltaY);
@@ -1245,7 +1232,6 @@ export default function VizDashboardPage() {
         MIN_CHART_ZOOM_POINTS,
         Math.min(len, Math.round(span * factor)),
       );
-      if (newSpan === span) return;
 
       const data = chartDataRef.current;
       let newStart = 0;
@@ -1277,10 +1263,8 @@ export default function VizDashboardPage() {
     };
 
     const onWheel = (e: WheelEvent) => {
-      if (liveModeRef.current || chartDataLengthRef.current === 0) return;
-      e.preventDefault();
+      if (chartDataLengthRef.current === 0) return;
 
-      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(e.clientX) ?? null;
       const canvasMetrics = chartCanvasRef.current?.getPlotClientMetrics();
       const plotLeft = canvasMetrics?.plotLeft
         ?? getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current).plotLeft;
@@ -1290,15 +1274,24 @@ export default function VizDashboardPage() {
 
       const absX = Math.abs(e.deltaX);
       const absY = Math.abs(e.deltaY);
-      const horizontalScroll = absX > absY || (e.shiftKey && absY > 0);
+      const isPinch = e.ctrlKey;
+      const horizontalScroll = !isPinch && (absX > absY || (e.shiftKey && absY > 0));
 
-      if (horizontalScroll && isZoomedIn()) {
+      e.preventDefault();
+
+      if (horizontalScroll) {
+        wheelEventRef.current = null;
+        if (wheelRafRef.current != null) {
+          cancelAnimationFrame(wheelRafRef.current);
+          wheelRafRef.current = null;
+        }
         const panDelta = absX > absY ? e.deltaX : e.deltaY;
         applyWheelPan(panDelta);
         return;
       }
 
       const focusRatio = wheelFocusRatioFromClientX(e.clientX, plotLeft, plotWidth);
+      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(e.clientX) ?? null;
       wheelEventRef.current = mergeWheelZoomEvent(
         wheelEventRef.current,
         normalizeWheelDeltaY(e),
@@ -1332,7 +1325,6 @@ export default function VizDashboardPage() {
 
   useEffect(() => {
     api.boards.list().then(setBoards);
-    api.protocols.list().then(setProtocols);
   }, []);
 
   useEffect(() => {
@@ -1341,13 +1333,7 @@ export default function VizDashboardPage() {
     setSelectedBoard(preferred.id);
   }, [boards, selectedBoard]);
 
-  useEffect(() => {
-    if (!selectedBoard) return;
-    const board = boards.find(b => b.id === selectedBoard);
-    if (board?.protocol_id) {
-      setSelectedProto(board.protocol_id);
-    }
-  }, [selectedBoard, boards]);
+
 
   const applyOverviewResult = useCallback((
     data: VizDataRow[],
@@ -1393,8 +1379,6 @@ export default function VizDashboardPage() {
       setSavedProfileId(p.id);
       setShowProfileAdd(false);
       setProfileDraftName('');
-      const protoId = p.items.find(i => i.field_ref.protocol_id)?.field_ref.protocol_id;
-      if (protoId) setSelectedProto(protoId);
       if (p.time_range?.start && p.time_range?.end) {
         setCustomStart(formatDateOnly(new Date(p.time_range.start)));
         setCustomEnd(formatDateOnly(new Date(p.time_range.end)));
@@ -1454,8 +1438,17 @@ export default function VizDashboardPage() {
     return undefined;
   }, [timeRangePresetId, customStart, customEnd]);
 
+  const buildSpectrumRange = useCallback((): { start: string; end: string } | undefined => {
+    if (timeRangePresetId !== TIME_PRESET_ALL) {
+      const end = new Date();
+      const start = presetRangeStart(end, timeRangePresetId);
+      return { start: start.toISOString(), end: end.toISOString() };
+    }
+    return undefined;
+  }, [timeRangePresetId]);
+
   const fetchSpectrum = useCallback(async (boardID: string, start?: string, end?: string) => {
-    if (!boardID || liveModeRef.current) return;
+    if (!boardID) return;
     setSpectrumLoading(true);
     try {
       const res = await api.viz.spectrum(
@@ -1474,7 +1467,7 @@ export default function VizDashboardPage() {
     }
   }, []);
 
-  const spectrumRange = buildTimeRange();
+  const spectrumRange = buildSpectrumRange();
   useEffect(() => {
     if (!selectedBoard) {
       setSpectrum(null);
@@ -1561,6 +1554,7 @@ export default function VizDashboardPage() {
     const selStart = new Date(startMs + span * (lo / bins));
     const selEnd = new Date(startMs + span * ((hi + 1) / bins));
     setSpectrumSel({ start: lo, end: hi });
+    spectrumSelRef.current = { start: lo, end: hi };
     setCustomStart(formatDateOnly(selStart));
     setCustomEnd(formatDateOnly(selEnd));
     setTimeRangePresetId(TIME_PRESET_ALL);
@@ -1674,9 +1668,10 @@ export default function VizDashboardPage() {
     liveAbortRef.current = null;
   }, []);
 
-  const startLive = useCallback(() => {
+  const startLive = useCallback(async () => {
     stopLive();
-    fetchAll();
+    lastTimestampRef.current = null;
+    await fetchAll();
     pollTimerRef.current = setInterval(() => { appendLive(); }, POLL_INTERVAL);
   }, [fetchAll, appendLive, stopLive]);
 
@@ -1690,16 +1685,36 @@ export default function VizDashboardPage() {
     return stopLive;
   }, [liveMode, startLive, stopLive]);
 
+  useEffect(() => {
+    if (!liveMode || !selectedBoard) return;
+    const range = buildSpectrumRange();
+    void fetchSpectrum(selectedBoard, range?.start, range?.end);
+    const timer = setInterval(() => {
+      if (!selectedBoard) return;
+      const r = buildSpectrumRange();
+      void fetchSpectrum(selectedBoard, r?.start, r?.end);
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [liveMode, selectedBoard, fetchSpectrum, buildSpectrumRange]);
+
   useEffect(() => () => {
     overviewAbortRef.current?.abort();
     detailAbortRef.current?.abort();
     liveAbortRef.current?.abort();
   }, []);
 
-  const selectedProtocol = useMemo(
-    () => protocols.find(p => p.id === selectedProto),
-    [protocols, selectedProto],
-  );
+  useEffect(() => {
+    if (!selectedBoard) {
+      setBoardProtocol(null);
+      return;
+    }
+    const board = boards.find(b => b.id === selectedBoard);
+    if (!board?.protocol_id) {
+      setBoardProtocol(null);
+      return;
+    }
+    api.protocols.get(board.protocol_id).then(setBoardProtocol).catch(() => setBoardProtocol(null));
+  }, [selectedBoard, boards]);
 
   const existingFieldLabels = useMemo(
     () => new Set(items.map(i => i.label)),
@@ -1707,17 +1722,17 @@ export default function VizDashboardPage() {
   );
 
   const protocolFieldPaths = useMemo(
-    () => collectParseRuleFieldPaths(selectedProtocol?.parse_rules),
-    [selectedProtocol],
+    () => collectParseRuleFieldPaths(boardProtocol?.parse_rules),
+    [boardProtocol],
   );
 
   const addAllFields = () => {
-    if (!selectedProto || !selectedProtocol) return;
+    if (!boardProtocol) return;
     const usedShortLabels = new Set(items.map(i => chartLabel(i)));
     const newItems = protocolFieldPaths
       .filter(name => !existingFieldLabels.has(name))
       .map((name, i) => ({
-        ...makeItem(selectedProto, name, items.length + i, usedShortLabels),
+        ...makeItem(boardProtocol.id, name, items.length + i, usedShortLabels),
         visible: i < 5,
       }));
     if (newItems.length) setItems(prev => [...prev, ...newItems]);
@@ -1729,11 +1744,11 @@ export default function VizDashboardPage() {
   );
 
   const addField = useCallback((fieldName: string) => {
-    if (!selectedProto || !fieldName) return;
+    if (!boardProtocol || !fieldName) return;
     const usedShortLabels = new Set(items.map(i => chartLabel(i)));
-    setItems(prev => [...prev, makeItem(selectedProto, fieldName, prev.length, usedShortLabels)]);
+    setItems(prev => [...prev, makeItem(boardProtocol.id, fieldName, prev.length, usedShortLabels)]);
     setAddFieldPick('');
-  }, [selectedProto, items]);
+  }, [boardProtocol, items]);
 
   const toggleVisibility = (id: string) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, visible: !i.visible } : i));
@@ -1904,6 +1919,15 @@ export default function VizDashboardPage() {
     const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
     const cached = detailCacheRef.current.get(cacheKey);
 
+    const zoomStartMs = Date.parse(startTs);
+    const zoomEndMs = Date.parse(endTs);
+    const fullStartMs = chartData.length > 0 ? Date.parse(chartData[0].timeKey) : 0;
+    const fullEndMs = chartData.length > 0 ? Date.parse(chartData[chartData.length - 1].timeKey) : 0;
+    const zoomSpanMs = Math.max(1, zoomEndMs - zoomStartMs);
+    const fullSpanMs = Math.max(1, fullEndMs - fullStartMs);
+    const zoomRatio = fullSpanMs / zoomSpanMs;
+    const detailLimit = Math.min(50000, Math.max(MAX_POINTS, Math.round(MAX_POINTS * zoomRatio)));
+
     const applyDetail = (
       data: VizDataRow[],
       meta: VizQueryMeta | null,
@@ -1950,7 +1974,7 @@ export default function VizDashboardPage() {
             board_id: selectedBoard,
             items: itemsForDataQuery(itemsRef.current),
             time_range: { start: startTs, end: endTs },
-            limit: MAX_POINTS,
+            limit: detailLimit,
           }, { signal: controller.signal, timeoutMs: 30000 });
           if (controller.signal.aborted) return;
           if (detailFetchSeqRef.current !== seq) return;
@@ -2035,9 +2059,11 @@ export default function VizDashboardPage() {
     if (!chartData.length) return [];
     if (inMemoryFull) return chartData;
     if (!zoomWindow) return chartData;
-    if (detailChartData && detailChartData.length > 0) return detailChartData;
+    if (detailChartData && detailChartData.length > 0 && !detailLoading && !isChartPanning) {
+      return detailChartData;
+    }
     return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
-  }, [chartData, inMemoryFull, zoomWindow, detailChartData]);
+  }, [chartData, inMemoryFull, zoomWindow, detailChartData, detailLoading, isChartPanning]);
 
   renderChartDataLengthRef.current = chartData.length;
   renderChartPointsRef.current = chartData;
@@ -2224,10 +2250,10 @@ export default function VizDashboardPage() {
     const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
 
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(canvasChartData, leftItems),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(canvasChartData, rightItems),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftItems),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [canvasChartData, activeChartItems]);
+  }, [chartData, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -2372,13 +2398,7 @@ export default function VizDashboardPage() {
                 {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </label>
-            <label className="viz-source-field">
-              <span className="viz-source-field-label">{t('common.protocol')}</span>
-              <select value={selectedProto} onChange={e => setSelectedProto(e.target.value)}>
-                <option value="">{t('viz.selectProtocol')}</option>
-                {protocols.map(p => <option key={p.id} value={p.id}>{p.name} v{p.version}</option>)}
-              </select>
-            </label>
+
           </div>
         </div>
 
@@ -2407,7 +2427,7 @@ export default function VizDashboardPage() {
                         type="button"
                         className={`viz-time-preset${isActive ? ' is-active' : ''}`}
                         onClick={() => selectTimePreset(p.id)}
-                        disabled={liveMode}
+            disabled={false}
                         aria-pressed={isActive}
                       >
                         {p.label}
@@ -2464,7 +2484,7 @@ export default function VizDashboardPage() {
                 </div>
               </div>
             </div>
-            {!liveMode && (timeSpectrumCells || spectrumLoading) && (
+            {(timeSpectrumCells || spectrumLoading) && (
               <div
                 ref={spectrumTrackRef}
                 className={`viz-time-spectrum${spectrumLoading ? ' is-loading' : ''}${spectrumSel ? ' has-selection' : ''}`}
@@ -2514,14 +2534,14 @@ export default function VizDashboardPage() {
                 {t('viz.items')}
                 <span className="tag tag-subtle">{items.length}</span>
               </div>
-              <button type="button" className="btn-sm" onClick={addAllFields} disabled={!selectedProto}>
+              <button type="button" className="btn-sm" onClick={addAllFields} disabled={!boardProtocol}>
                 {t('viz.addAllFields')}
               </button>
               <div className="viz-add-field-group">
                 <select
                   value={addFieldPick}
                   onChange={e => setAddFieldPick(e.target.value)}
-                  disabled={!selectedProto || availableFields.length === 0}
+                  disabled={!boardProtocol || availableFields.length === 0}
                   aria-label={t('viz.addField')}
                 >
                   <option value="">{t('viz.addField')}</option>
@@ -2911,7 +2931,7 @@ export default function VizDashboardPage() {
                 type="button"
                 className="viz-chart-icon-btn"
                 onClick={() => zoomChartByFactor(0.8)}
-                disabled={liveMode || displayChartData.length === 0}
+                disabled={displayChartData.length === 0}
                 title={t('viz.zoomIn')}
                 aria-label={t('viz.zoomIn')}
               >
@@ -2921,7 +2941,7 @@ export default function VizDashboardPage() {
                 type="button"
                 className="viz-chart-icon-btn"
                 onClick={() => zoomChartByFactor(1.25)}
-                disabled={liveMode || !chartZoomActive}
+                disabled={!chartZoomActive}
                 title={t('viz.zoomOut')}
                 aria-label={t('viz.zoomOut')}
               >
@@ -2931,7 +2951,7 @@ export default function VizDashboardPage() {
                 type="button"
                 className="viz-chart-icon-btn"
                 onClick={resetChartZoom}
-                disabled={liveMode || !chartZoomActive}
+                disabled={!chartZoomActive}
                 title={t('viz.resetZoom')}
                 aria-label={t('viz.resetZoom')}
               >
@@ -3004,7 +3024,7 @@ export default function VizDashboardPage() {
           tabIndex={0}
           aria-label={t('viz.chartKeyboard.region')}
           onKeyDown={handleChartViewportKeyDown}
-          onDoubleClick={liveMode ? undefined : resetChartZoom}
+          onDoubleClick={resetChartZoom}
         >
           {selectionOverlay.overlayNode}
           {timeMeasureOverlay.overlayNode}
@@ -3043,11 +3063,12 @@ export default function VizDashboardPage() {
             chartZoom={chartNavigatorWindow}
             sparkItemIds={activeChartItems.map(i => i.id)}
             formatTime={formatChartAxisTime}
-            onWindowChange={applyChartZoomWindow}
+            onWindowChange={(start, end) => {
+              applyChartZoomWindow(start, end);
+            }}
             totalMatched={queryMeta?.total_matched}
             returned={queryMeta?.returned ?? chartData.length}
             downsampled={queryMeta?.downsampled}
-            disabled={liveMode}
           />
         )}
         </div>

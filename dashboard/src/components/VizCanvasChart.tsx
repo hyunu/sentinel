@@ -16,6 +16,7 @@ export type VizChartPoint = { timeKey: string } & Record<string, string | number
 
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
+const SESSION_GAP_SECONDS = 30;
 
 export interface VizCanvasChartHandle {
   setWindowByIndex(start: number, end: number): void;
@@ -142,6 +143,22 @@ function buildSeriesConfig(
   maxVisibleSeries: number,
 ): Series[] {
   let visibleRank = 0;
+  const gapsRefiner: Series['gaps'] = (u, _seriesIdx, idx0, idx1, nullGaps) => {
+    const gaps = nullGaps ? [...nullGaps] : [];
+    const xs = u.data[0];
+    if (!xs) return gaps;
+    const from = Math.min(idx0, idx1);
+    const to = Math.max(idx0, idx1);
+    for (let i = from; i < to; i++) {
+      const dx = xs[i + 1] - xs[i];
+      if (dx >= SESSION_GAP_SECONDS) {
+        const fromPx = u.valToPos(xs[i], 'x', true);
+        const toPx = u.valToPos(xs[i + 1], 'x', true);
+        gaps.push([fromPx, toPx]);
+      }
+    }
+    return gaps;
+  };
   return [
     {},
     ...chartItems.map((item): Series => {
@@ -171,12 +188,14 @@ function buildSeriesConfig(
           stroke: item.color,
           fill: colorWithAlpha(item.color, 0.28),
           width: 1,
+          gaps: gapsRefiner,
         };
       }
       return {
         ...base,
         stroke: item.color,
         width: 1,
+        gaps: gapsRefiner,
       };
     }),
   ];
@@ -232,6 +251,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const plotRef = useRef<uPlot | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const sessionBreaksRef = useRef<HTMLDivElement | null>(null);
   const pointsRef = useRef(points);
   pointsRef.current = points;
   const fullTimelineRef = useRef(fullTimeline);
@@ -411,6 +431,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           ticks: { stroke: axisColor },
           font: '11px system-ui, sans-serif',
           gap: 6,
+          space: 80,
           values: (_u, splits) => splits.map(v => formatChartAxisTime(new Date(v * 1000).toISOString())),
         },
         {
@@ -589,6 +610,32 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     if (hideTooltip) hideTooltipEl();
   }, [hideTooltip, hideTooltipEl]);
 
+  useEffect(() => {
+    const u = plotRef.current;
+    const overlay = sessionBreaksRef.current;
+    if (!u || !overlay) return;
+    const xs = u.data[0];
+    if (!xs || xs.length < 2) {
+      overlay.replaceChildren();
+      return;
+    }
+    const breaks: number[] = [];
+    for (let i = 0; i < xs.length - 1; i++) {
+      if (xs[i + 1] - xs[i] >= SESSION_GAP_SECONDS) {
+        breaks.push(xs[i + 1]);
+      }
+    }
+    overlay.replaceChildren();
+    for (const t of breaks) {
+      const px = u.valToPos(t, 'x', true);
+      const left = px / uPlot.pxRatio;
+      const line = document.createElement('div');
+      line.className = 'viz-chart-session-break';
+      line.style.left = `${left}px`;
+      overlay.appendChild(line);
+    }
+  }, [points, windowIndicesKey, xWindowTimeKeysKey]);
+
   if (points.length === 0 || chartItems.length === 0) {
     return null;
   }
@@ -604,6 +651,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   return (
     <div ref={wrapRef} className="viz-canvas-chart-wrap">
       <div ref={containerRef} className="viz-canvas-chart-host" />
+      <div ref={sessionBreaksRef} className="viz-chart-session-breaks" />
       <div ref={tooltipRef} className="viz-chart-tooltip viz-canvas-chart-tooltip" hidden />
     </div>
   );

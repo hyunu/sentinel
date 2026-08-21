@@ -14,7 +14,9 @@ public partial class MainWindow : Window
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private CancellationTokenSource? _cts;
     private const string NewBoardChoiceKey = "__NEW__";
+    private const string NoProtocolKey = "__NONE__";
     private List<BoardChoice> _boardChoices = [];
+    private List<ProtocolChoice> _protocolChoices = [];
 
     public MainWindow()
     {
@@ -26,12 +28,15 @@ public partial class MainWindow : Window
 
         BrowseCsvButton.Click += OnBrowseCsvClicked;
         RefreshBoardsButton.Click += OnRefreshBoardsClicked;
+        RefreshProtocolsButton.Click += OnRefreshProtocolsClicked;
         StartButton.Click += OnStartClicked;
         StopButton.Click += OnStopClicked;
         RegisteredBoardCombo.SelectionChanged += OnBoardPresetChanged;
+        ProtocolCombo.SelectionChanged += OnProtocolPresetChanged;
         CsvPathBox.LostFocus += (_, _) => LoadRolesFromCsv(CsvPathBox.Text);
 
         _ = RefreshRegisteredBoardsAsync();
+        _ = RefreshProtocolsAsync();
         LoadRolesFromCsv(CsvPathBox.Text);
     }
 
@@ -62,6 +67,11 @@ public partial class MainWindow : Window
         await RefreshRegisteredBoardsAsync().ConfigureAwait(true);
     }
 
+    private async void OnRefreshProtocolsClicked(object? sender, RoutedEventArgs e)
+    {
+        await RefreshProtocolsAsync().ConfigureAwait(true);
+    }
+
     private void OnBoardPresetChanged(object? sender, SelectionChangedEventArgs e)
     {
         var selected = RegisteredBoardCombo.SelectedItem as BoardChoice;
@@ -72,6 +82,20 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(selected.Board.Name)) BoardNameBox.Text = selected.Board.Name;
         if (!string.IsNullOrWhiteSpace(selected.Board.MacAddress)) MacBox.Text = selected.Board.MacAddress;
         if (!string.IsNullOrWhiteSpace(selected.Board.WifiMac)) WifiMacBox.Text = selected.Board.WifiMac;
+
+        if (!string.IsNullOrWhiteSpace(selected.Board.ProtocolId))
+        {
+            var match = _protocolChoices.FirstOrDefault(p => p.Key == selected.Board.ProtocolId);
+            if (match != null)
+                ProtocolCombo.SelectedItem = match;
+        }
+    }
+
+    private void OnProtocolPresetChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var selected = ProtocolCombo.SelectedItem as ProtocolChoice;
+        if (selected == null || selected.Key == NoProtocolKey) return;
+        if (selected.Protocol == null) return;
     }
 
     private async Task RefreshRegisteredBoardsAsync()
@@ -104,6 +128,38 @@ public partial class MainWindow : Window
             RegisteredBoardCombo.ItemsSource = _boardChoices;
             RegisteredBoardCombo.SelectedIndex = 0;
             Log("WARN: board preset load failed: " + ex.Message);
+        }
+    }
+
+    private async Task RefreshProtocolsAsync()
+    {
+        try
+        {
+            var apiBase = NormalizeApiBase(ServerBox.Text?.Trim() ?? "http://localhost:5050");
+            var protocols = await _http.GetFromJsonAsync<List<ProtocolDto>>($"{apiBase}/protocols").ConfigureAwait(true)
+                ?? [];
+
+            _protocolChoices =
+            [
+                new ProtocolChoice(NoProtocolKey, "(프로토콜 선택 안함)", null),
+                .. protocols
+                    .OrderBy(p => p.Name)
+                    .Select(p => new ProtocolChoice(
+                        p.Id,
+                        $"{p.Name} v{p.Version}",
+                        p))
+            ];
+
+            ProtocolCombo.ItemsSource = _protocolChoices;
+            ProtocolCombo.SelectedIndex = 0;
+            Log($"protocol presets loaded: {_protocolChoices.Count - 1}");
+        }
+        catch (Exception ex)
+        {
+            _protocolChoices = [new ProtocolChoice(NoProtocolKey, "(프로토콜 선택 안함)", null)];
+            ProtocolCombo.ItemsSource = _protocolChoices;
+            ProtocolCombo.SelectedIndex = 0;
+            Log("WARN: protocol preset load failed: " + ex.Message);
         }
     }
 
@@ -196,27 +252,27 @@ public partial class MainWindow : Window
         var loopCount = ParseInt(LoopCountBox.Text, 0, min: 0);
 
         var preset = RegisteredBoardCombo.SelectedItem as BoardChoice;
-        var firstLikeNew = FirstRegistrationCheck.IsChecked ?? true;
+        var firstLikeNew = FirstRegistrationCheck.IsChecked ?? false;
 
         string uid;
         string boardName;
         string mac;
         string wifiMac;
 
-        if (firstLikeNew)
+        if (preset is { Key: not NewBoardChoiceKey, Board: not null })
+        {
+            uid = preset.Board.Uid ?? (UidBox.Text?.Trim() ?? "VESP32-GUI");
+            boardName = preset.Board.Name ?? (BoardNameBox.Text?.Trim() ?? "Virtual-ESP32 GUI");
+            mac = preset.Board.MacAddress ?? (MacBox.Text?.Trim() ?? "AA:BB:CC:DD:EE:11");
+            wifiMac = preset.Board.WifiMac ?? (WifiMacBox.Text?.Trim() ?? "AA:BB:CC:DD:EE:12");
+        }
+        else if (firstLikeNew)
         {
             var identity = GenerateFirstRegistrationIdentity();
             uid = identity.Uid;
             boardName = identity.BoardName;
             mac = identity.MacAddress;
             wifiMac = identity.WifiMac;
-        }
-        else if (preset is { Key: not NewBoardChoiceKey, Board: not null })
-        {
-            uid = preset.Board.Uid ?? (UidBox.Text?.Trim() ?? "VESP32-GUI");
-            boardName = preset.Board.Name ?? (BoardNameBox.Text?.Trim() ?? "Virtual-ESP32 GUI");
-            mac = preset.Board.MacAddress ?? (MacBox.Text?.Trim() ?? "AA:BB:CC:DD:EE:11");
-            wifiMac = preset.Board.WifiMac ?? (WifiMacBox.Text?.Trim() ?? "AA:BB:CC:DD:EE:12");
         }
         else
         {
@@ -231,6 +287,11 @@ public partial class MainWindow : Window
         MacBox.Text = mac;
         WifiMacBox.Text = wifiMac;
 
+        var protocolChoice = ProtocolCombo.SelectedItem as ProtocolChoice;
+        var protocolId = protocolChoice is { Key: not NoProtocolKey, Protocol: not null }
+            ? protocolChoice.Protocol.Id
+            : null;
+
         return new Config(
             CsvPath: csv,
             Server: server,
@@ -239,7 +300,7 @@ public partial class MainWindow : Window
             MacAddress: mac,
             WifiMac: wifiMac,
             Uid: uid,
-            ProtocolId: string.IsNullOrWhiteSpace(ProtocolIdBox.Text) ? null : ProtocolIdBox.Text.Trim(),
+            ProtocolId: protocolId,
             Location: "tools/virtual_esp32_board_gui",
             Speed: speed,
             MaxPackets: maxPackets,
@@ -467,13 +528,26 @@ public partial class MainWindow : Window
         public override string ToString() => Display;
     }
 
+    private sealed record ProtocolChoice(string Key, string Display, ProtocolDto? Protocol)
+    {
+        public override string ToString() => Display;
+    }
+
     private sealed record BoardDto(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("uid")] string? Uid,
         [property: JsonPropertyName("name")] string? Name,
         [property: JsonPropertyName("mac_address")] string? MacAddress,
         [property: JsonPropertyName("wifi_mac")] string? WifiMac,
+        [property: JsonPropertyName("protocol_id")] string? ProtocolId,
         [property: JsonPropertyName("updated_at")] DateTime UpdatedAt
+    );
+
+    private sealed record ProtocolDto(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("version")] string? Version,
+        [property: JsonPropertyName("description")] string? Description
     );
 
     private sealed record Config(
