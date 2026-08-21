@@ -16,7 +16,7 @@ export type VizChartPoint = { timeKey: string } & Record<string, string | number
 
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
-const SESSION_GAP_SECONDS = 30;
+import { VIZ_SESSION_GAP_SECONDS } from '../lib/vizChartConstants';
 
 export interface VizCanvasChartHandle {
   setWindowByIndex(start: number, end: number): void;
@@ -151,7 +151,7 @@ function buildSeriesConfig(
     const to = Math.max(idx0, idx1);
     for (let i = from; i < to; i++) {
       const dx = xs[i + 1] - xs[i];
-      if (dx >= SESSION_GAP_SECONDS) {
+      if (dx >= VIZ_SESSION_GAP_SECONDS) {
         const fromPx = u.valToPos(xs[i], 'x', true);
         const toPx = u.valToPos(xs[i + 1], 'x', true);
         gaps.push([fromPx, toPx]);
@@ -621,7 +621,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     }
     const breaks: number[] = [];
     for (let i = 0; i < xs.length - 1; i++) {
-      if (xs[i + 1] - xs[i] >= SESSION_GAP_SECONDS) {
+      if (xs[i + 1] - xs[i] >= VIZ_SESSION_GAP_SECONDS) {
         breaks.push(xs[i + 1]);
       }
     }

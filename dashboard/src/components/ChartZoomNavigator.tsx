@@ -1,19 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from '../i18n';
+import { buildSparklinePolyline, sparklineMaxValue } from '../lib/vizChartSparkline';
+import {
+  centerNavigatorWindowAtRatio,
+  computeNavigatorRangePercent,
+  shiftNavigatorWindowByTrackDelta,
+} from '../lib/vizChartNavigator';
 
 type ChartPoint = { timeKey: string } & Record<string, string | number>;
 
 export interface ChartZoomRange {
   start: number;
   end: number;
+  startTs?: string;
+  endTs?: string;
 }
 
 interface ChartZoomNavigatorProps {
   chartData: ChartPoint[];
   chartZoom: ChartZoomRange;
   sparkItemIds?: string[];
+  spectrum?: { present: boolean[]; start: string; end: string } | null;
   formatTime: (iso: string) => string;
-  onWindowChange: (start: number, end: number) => void;
+  onWindowChange: (range: ChartZoomRange) => void;
   totalMatched?: number;
   returned?: number;
   downsampled?: boolean;
@@ -21,29 +30,12 @@ interface ChartZoomNavigatorProps {
 }
 
 const DENSITY_BIN_COUNT = 160;
-const MIN_SELECT_POINTS = 3;
 
 function clampWindow(start: number, end: number, total: number): { start: number; end: number } {
   if (total <= 0) return { start: 0, end: 0 };
   const s = Math.max(0, Math.min(start, total - 1));
   const e = Math.max(s, Math.min(end, total - 1));
   return { start: s, end: e };
-}
-
-function sparklineValue(point: ChartPoint, itemId: string): number | null {
-  const raw = point[itemId];
-  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw;
-  return null;
-}
-
-function sparklineMaxValue(point: ChartPoint, itemIds: string[]): number | null {
-  let max: number | null = null;
-  for (const id of itemIds) {
-    const v = sparklineValue(point, id);
-    if (v == null) continue;
-    if (max == null || v > max) max = v;
-  }
-  return max;
 }
 
 function decimateSparklineMinMax(
@@ -97,88 +89,6 @@ function decimateSparklineMinMax(
   return points;
 }
 
-function computeRangePercent(
-  range: { start: number; end: number },
-  chartData: ChartPoint[],
-  totalMatched?: number,
-  returned?: number,
-): { leftPct: number; widthPct: number } {
-  const total = chartData.length;
-  if (total <= 0) return { leftPct: 0, widthPct: 100 };
-
-  const returnedCount = returned ?? total;
-  const matchedTotal = totalMatched ?? returnedCount;
-
-  if (matchedTotal > returnedCount && returnedCount > 1) {
-    const toRank = (index: number) => (index / (returnedCount - 1)) * (matchedTotal - 1);
-    const docStart = toRank(range.start);
-    const docEnd = toRank(range.end);
-    const denom = Math.max(1, matchedTotal - 1);
-    return {
-      leftPct: (docStart / denom) * 100,
-      widthPct: Math.max(0, ((docEnd - docStart) / denom) * 100),
-    };
-  }
-
-  const fullStartMs = Date.parse(chartData[0]?.timeKey ?? '');
-  const fullEndMs = Date.parse(chartData[total - 1]?.timeKey ?? '');
-  const rangeStartMs = Date.parse(chartData[range.start]?.timeKey ?? '');
-  const rangeEndMs = Date.parse(chartData[range.end]?.timeKey ?? '');
-  if (
-    Number.isFinite(fullStartMs)
-    && Number.isFinite(fullEndMs)
-    && fullEndMs > fullStartMs
-    && Number.isFinite(rangeStartMs)
-    && Number.isFinite(rangeEndMs)
-  ) {
-    const spanMs = fullEndMs - fullStartMs;
-    return {
-      leftPct: ((rangeStartMs - fullStartMs) / spanMs) * 100,
-      widthPct: Math.max(0, ((rangeEndMs - rangeStartMs) / spanMs) * 100),
-    };
-  }
-
-  const span = range.end - range.start + 1;
-  return {
-    leftPct: (range.start / total) * 100,
-    widthPct: (span / total) * 100,
-  };
-}
-
-function buildSparklinePolyline(
-  data: ChartPoint[],
-  itemIds: string[],
-  width: number,
-  height: number,
-): string {
-  if (itemIds.length === 0 || data.length < 2) return '';
-  let min = Infinity;
-  let max = -Infinity;
-  const values: number[] = [];
-  for (const point of data) {
-    const value = sparklineMaxValue(point, itemIds);
-    const num = value == null ? NaN : value;
-    values.push(num);
-    if (Number.isFinite(num)) {
-      if (num < min) min = num;
-      if (num > max) max = num;
-    }
-  }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return '';
-
-  const range = max - min || 1;
-  const stepX = width / (data.length - 1);
-  const parts: string[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const value = values[i];
-    if (!Number.isFinite(value)) continue;
-    const x = i * stepX;
-    const y = height - ((value - min) / range) * height;
-    parts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
-  }
-  return parts.join(' ');
-}
-
 function computeDensityBins(data: ChartPoint[], binCount: number): number[] {
   if (data.length === 0) return [];
   const startMs = Date.parse(data[0].timeKey);
@@ -215,18 +125,13 @@ export default function ChartZoomNavigator({
     startX: number;
     zoomStart: number;
     zoomEnd: number;
+    startTs?: string;
+    endTs?: string;
   } | null>(null);
-  const selectSessionRef = useRef<{ pointerId: number; startIndex: number } | null>(null);
   const onWindowChangeRef = useRef(onWindowChange);
   useEffect(() => {
     onWindowChangeRef.current = onWindowChange;
   }, [onWindowChange]);
-  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
-  const selectionRangeRef = useRef<{ start: number; end: number } | null>(null);
-  const setSelection = useCallback((range: { start: number; end: number } | null) => {
-    selectionRangeRef.current = range;
-    setSelectionRange(range);
-  }, []);
 
   const total = chartData.length;
   const windowRange = useMemo(
@@ -235,12 +140,13 @@ export default function ChartZoomNavigator({
   );
   const span = windowRange.end - windowRange.start + 1;
   const { leftPct, widthPct } = useMemo(
-    () => computeRangePercent(windowRange, chartData, totalMatched, returned),
-    [windowRange, chartData, totalMatched, returned],
-  );
-  const selectPct = useMemo(
-    () => (selectionRange ? computeRangePercent(selectionRange, chartData, totalMatched, returned) : null),
-    [selectionRange, chartData, totalMatched, returned],
+    () => computeNavigatorRangePercent(
+      { ...windowRange, startTs: chartZoom.startTs, endTs: chartZoom.endTs },
+      chartData,
+      totalMatched,
+      returned,
+    ),
+    [windowRange, chartData, totalMatched, returned, chartZoom.startTs, chartZoom.endTs],
   );
 
   const sparkData = useMemo(
@@ -262,21 +168,18 @@ export default function ChartZoomNavigator({
     return max || 1;
   }, [densityBins]);
 
+  const windowTimeKeys = useMemo(
+    () => (chartZoom.startTs && chartZoom.endTs
+      ? { startTs: chartZoom.startTs, endTs: chartZoom.endTs }
+      : undefined),
+    [chartZoom.endTs, chartZoom.startTs],
+  );
+
   const moveWindowToRatio = useCallback((focusRatio: number) => {
     if (total <= 0) return;
-    const focusIndex = Math.round(Math.max(0, Math.min(1, focusRatio)) * (total - 1));
-    let newStart = Math.round(focusIndex - (span - 1) / 2);
-    let newEnd = newStart + span - 1;
-    if (newStart < 0) {
-      newEnd -= newStart;
-      newStart = 0;
-    }
-    if (newEnd >= total) {
-      newStart -= newEnd - total + 1;
-      newEnd = total - 1;
-    }
-    onWindowChangeRef.current(newStart, newEnd);
-  }, [span, total]);
+    const next = centerNavigatorWindowAtRatio(chartData, focusRatio, span, windowTimeKeys);
+    onWindowChangeRef.current(next);
+  }, [span, total, chartData, windowTimeKeys]);
 
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
@@ -284,68 +187,33 @@ export default function ChartZoomNavigator({
       if (!track) return;
 
       const panSession = dragSessionRef.current;
-      if (panSession && panSession.pointerId === e.pointerId) {
-        const rect = track.getBoundingClientRect();
-        if (rect.width <= 0 || total <= 0) return;
+      if (!panSession || panSession.pointerId !== e.pointerId) return;
 
-        const shift = Math.round(((e.clientX - panSession.startX) / rect.width) * total);
-        let newStart = panSession.zoomStart + shift;
-        let newEnd = panSession.zoomEnd + shift;
-        if (newStart < 0) {
-          newEnd -= newStart;
-          newStart = 0;
-        }
-        if (newEnd >= total) {
-          newStart -= newEnd - total + 1;
-          newEnd = total - 1;
-        }
-        onWindowChangeRef.current(newStart, newEnd);
-        return;
-      }
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0 || total <= 0) return;
 
-      const selectSession = selectSessionRef.current;
-      if (selectSession && selectSession.pointerId === e.pointerId) {
-        const rect = track.getBoundingClientRect();
-        if (rect.width <= 0 || total <= 0) return;
-        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const index = Math.round(ratio * (total - 1));
-        const start = Math.min(selectSession.startIndex, index);
-        const end = Math.max(selectSession.startIndex, index);
-        setSelection({ start, end });
-      }
+      const shift = e.clientX - panSession.startX;
+        const { start: newStart, end: newEnd, startTs, endTs } = shiftNavigatorWindowByTrackDelta(
+          chartData,
+          panSession.zoomStart,
+          panSession.zoomEnd,
+          shift,
+          rect.width,
+          panSession.startTs && panSession.endTs
+            ? { startTs: panSession.startTs, endTs: panSession.endTs }
+            : windowTimeKeys,
+        );
+        onWindowChangeRef.current({ start: newStart, end: newEnd, startTs, endTs });
     };
 
     const endDrag = (e: PointerEvent) => {
       const track = trackRef.current;
-
       const panSession = dragSessionRef.current;
-      if (panSession && panSession.pointerId === e.pointerId) {
-        dragSessionRef.current = null;
-        if (track?.hasPointerCapture(e.pointerId)) {
-          track.releasePointerCapture(e.pointerId);
-        }
-        return;
-      }
+      if (!panSession || panSession.pointerId !== e.pointerId) return;
 
-      const selectSession = selectSessionRef.current;
-      if (selectSession && selectSession.pointerId === e.pointerId) {
-        selectSessionRef.current = null;
-        if (track?.hasPointerCapture(e.pointerId)) {
-          track.releasePointerCapture(e.pointerId);
-        }
-        const range = selectionRangeRef.current;
-        setSelection(null);
-        if (range && total > 0) {
-          const rangeSpan = range.end - range.start + 1;
-          if (rangeSpan >= MIN_SELECT_POINTS) {
-            onWindowChangeRef.current(range.start, range.end);
-          } else if (track) {
-            const rect = track.getBoundingClientRect();
-            if (rect.width > 0) {
-              moveWindowToRatio((e.clientX - rect.left) / rect.width);
-            }
-          }
-        }
+      dragSessionRef.current = null;
+      if (track?.hasPointerCapture(e.pointerId)) {
+        track.releasePointerCapture(e.pointerId);
       }
     };
 
@@ -357,7 +225,7 @@ export default function ChartZoomNavigator({
       window.removeEventListener('pointerup', endDrag);
       window.removeEventListener('pointercancel', endDrag);
     };
-  }, [total, moveWindowToRatio, setSelection]);
+  }, [total, chartData, windowTimeKeys]);
 
   const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0 || !trackRef.current) return;
@@ -367,10 +235,7 @@ export default function ChartZoomNavigator({
     const rect = trackRef.current.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const index = Math.round(ratio * (total - 1));
-    selectSessionRef.current = { pointerId: e.pointerId, startIndex: index };
-    setSelection({ start: index, end: index });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    moveWindowToRatio(ratio);
   };
 
   const onThumbPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -381,12 +246,14 @@ export default function ChartZoomNavigator({
       startX: e.clientX,
       zoomStart: windowRange.start,
       zoomEnd: windowRange.end,
+      startTs: chartZoom.startTs,
+      endTs: chartZoom.endTs,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  const rangeStart = chartData[windowRange.start]?.timeKey;
-  const rangeEnd = chartData[windowRange.end]?.timeKey;
+  const rangeStart = chartZoom.startTs ?? chartData[windowRange.start]?.timeKey;
+  const rangeEnd = chartZoom.endTs ?? chartData[windowRange.end]?.timeKey;
   const fullStart = chartData[0]?.timeKey;
   const fullEnd = chartData[total - 1]?.timeKey;
 
@@ -406,7 +273,7 @@ export default function ChartZoomNavigator({
         className={`viz-chart-navigator-track${disabled ? ' is-disabled' : ''}`}
         onPointerDown={onTrackPointerDown}
         role="presentation"
-        title={t('viz.navigator.select')}
+        title={t('viz.navigator.move')}
       >
         <svg
           className="viz-chart-navigator-density"
@@ -427,28 +294,24 @@ export default function ChartZoomNavigator({
             );
           })}
         </svg>
-        {sparkline && (
+        {sparkline.length > 0 && (
           <svg
             className="viz-chart-navigator-sparkline"
             viewBox="0 0 100 20"
             preserveAspectRatio="none"
             aria-hidden
           >
-            <polyline
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              vectorEffect="non-scaling-stroke"
-              points={sparkline}
-            />
+            {sparkline.map((points, i) => (
+              <polyline
+                key={i}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                vectorEffect="non-scaling-stroke"
+                points={points}
+              />
+            ))}
           </svg>
-        )}
-        {selectPct && selectionRange && (
-          <div
-            className="viz-chart-navigator-select"
-            style={{ left: `${selectPct.leftPct}%`, width: `${selectPct.widthPct}%` }}
-            aria-hidden
-          />
         )}
         <div
           className="viz-chart-navigator-thumb"

@@ -15,6 +15,8 @@ import {
 export interface ChartZoomRange {
   start: number;
   end: number;
+  startTs?: string;
+  endTs?: string;
 }
 
 export function chartZoomEquals(
@@ -23,7 +25,10 @@ export function chartZoomEquals(
 ): boolean {
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
-  return a.start === b.start && a.end === b.end;
+  return a.start === b.start
+    && a.end === b.end
+    && a.startTs === b.startTs
+    && a.endTs === b.endTs;
 }
 
 export type ChartZoomSetter = (zoom: ChartZoomRange | null) => void;
@@ -152,19 +157,27 @@ export function findNearestChartIndexForTimeMs(
   if (limit <= 1) return 0;
 
   let lo = 0;
-  let hi = limit - 1;
+  let hi = limit;
   while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
+    const mid = Math.floor((lo + hi) / 2);
     const midT = Date.parse(points[mid].timeKey);
-    if (midT > timeMs) hi = mid - 1;
-    else lo = mid;
+    if (midT < timeMs) lo = mid + 1;
+    else hi = mid;
   }
-  if (lo > 0) {
-    const loT = Date.parse(points[lo].timeKey);
-    const prevT = Date.parse(points[lo - 1].timeKey);
-    if (Math.abs(prevT - timeMs) < Math.abs(loT - timeMs)) return lo - 1;
+
+  const candidates = [Math.max(0, lo - 1), Math.min(limit - 1, lo)];
+  let best = candidates[0];
+  let bestDist = Infinity;
+  for (const idx of candidates) {
+    const t = Date.parse(points[idx].timeKey);
+    if (!Number.isFinite(t)) continue;
+    const dist = Math.abs(t - timeMs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = idx;
+    }
   }
-  return lo;
+  return best;
 }
 
 export function getChartPlotBoundsFromViewport(

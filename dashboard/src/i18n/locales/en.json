@@ -268,8 +268,8 @@
     },
     "navigator": {
       "position": "Chart zoom position",
-      "range": "Zoomed time range",
-      "select": "Drag on the band to select a range"
+      "range": "Visible window",
+      "move": "Click the band to move the window"
     },
     "deltaPrevPoint": "Change from previous point",
     "chartKeyboard": {

@@ -268,8 +268,8 @@
     },
     "navigator": {
       "position": "차트 줌 위치",
-      "range": "줌 구간",
-      "select": "막대를 드래그하여 구간 선택"
+      "range": "현재 보이는 구간",
+      "move": "클릭하여 해당 구간으로 이동"
     },
     "deltaPrevPoint": "직전 포인트 대비 변화량",
     "chartKeyboard": {
