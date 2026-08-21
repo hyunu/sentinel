@@ -2255,29 +2255,18 @@ tbody tr:last-child td {
   cursor: crosshair;
 }
 
-.viz-chart-navigator-density {
+.viz-chart-navigator-sparkline {
   position: absolute;
-  left: 2px;
-  right: 2px;
-  bottom: 3px;
+  inset: 3px 2px;
   width: calc(100% - 4px);
-  height: 10px;
+  height: calc(100% - 6px);
   color: var(--accent, #7c83ff);
   pointer-events: none;
 }
 
-.viz-chart-navigator-density rect {
+.viz-chart-navigator-sparkline rect {
   fill: currentColor;
-  opacity: 0.4;
-}
-
-.viz-chart-navigator-sparkline {
-  position: absolute;
-  inset: 4px 0;
-  width: 100%;
-  height: calc(100% - 8px);
-  color: var(--chart-axis);
-  pointer-events: none;
+  opacity: 0.55;
 }
 
 .viz-chart-navigator-thumb {

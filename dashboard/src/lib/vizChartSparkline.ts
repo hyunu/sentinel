@@ -12,6 +12,46 @@ export function sparklineMaxValue(point: SparkPoint, itemIds: string[]): number 
   return max;
 }
 
+/** Per time-bin peak values — matches main chart envelope better than point decimation. */
+export function computeSparklineValueBins(
+  data: SparkPoint[],
+  itemIds: string[],
+  binCount: number,
+): number[] {
+  if (data.length === 0 || itemIds.length === 0 || binCount <= 0) return [];
+
+  const startMs = Date.parse(data[0].timeKey);
+  const endMs = Date.parse(data[data.length - 1].timeKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return new Array(binCount).fill(0);
+  }
+
+  const spanMs = endMs - startMs;
+  const bins = new Array<number>(binCount).fill(0);
+  for (const point of data) {
+    const t = Date.parse(point.timeKey);
+    if (!Number.isFinite(t)) continue;
+    const value = sparklineMaxValue(point, itemIds);
+    if (value == null) continue;
+    const ratio = Math.max(0, Math.min(1, (t - startMs) / spanMs));
+    const idx = Math.min(binCount - 1, Math.floor(ratio * binCount));
+    if (value > bins[idx]) bins[idx] = value;
+  }
+  return bins;
+}
+
+export function sparklineValueScaleMax(
+  bins: number[],
+  valueMaxOverride?: number,
+): number {
+  if (valueMaxOverride != null && Number.isFinite(valueMaxOverride) && valueMaxOverride > 0) {
+    return valueMaxOverride;
+  }
+  let max = 0;
+  for (const v of bins) if (v > max) max = v;
+  return max || 1;
+}
+
 /** Build SVG polyline point strings; breaks segments at session time gaps. */
 export function buildSparklinePolyline(
   data: SparkPoint[],

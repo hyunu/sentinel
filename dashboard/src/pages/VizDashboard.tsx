@@ -2355,6 +2355,11 @@ export default function VizDashboardPage() {
     y2: chartYAxisDomains[SECONDARY_Y_AXIS_ID],
   }), [chartYAxisDomains]);
 
+  const sparkValueMax = useMemo(() => {
+    const domain = chartYAxisDomains[PRIMARY_Y_AXIS_ID];
+    return domain?.[1];
+  }, [chartYAxisDomains]);
+
   const canvasYAxes = useMemo(
     () => chartYAxes.map(axis => ({
       ...axis,
@@ -3157,6 +3162,7 @@ export default function VizDashboardPage() {
             chartData={chartData}
             chartZoom={chartNavigatorWindow}
             sparkItemIds={activeChartItems.map(i => i.id)}
+            sparkValueMax={sparkValueMax}
             formatTime={formatChartAxisTime}
             onWindowChange={applyChartZoomWindow}
             totalMatched={queryMeta?.total_matched}

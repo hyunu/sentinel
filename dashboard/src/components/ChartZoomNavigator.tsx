@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from '../i18n';
-import { buildSparklinePolyline, sparklineMaxValue } from '../lib/vizChartSparkline';
+import {
+  computeSparklineValueBins,
+  sparklineValueScaleMax,
+} from '../lib/vizChartSparkline';
 import {
   centerNavigatorWindowAtRatio,
   computeNavigatorRangePercent,
@@ -20,6 +23,7 @@ interface ChartZoomNavigatorProps {
   chartData: ChartPoint[];
   chartZoom: ChartZoomRange;
   sparkItemIds?: string[];
+  sparkValueMax?: number;
   spectrum?: { present: boolean[]; start: string; end: string } | null;
   formatTime: (iso: string) => string;
   onWindowChange: (range: ChartZoomRange) => void;
@@ -29,7 +33,8 @@ interface ChartZoomNavigatorProps {
   disabled?: boolean;
 }
 
-const DENSITY_BIN_COUNT = 160;
+const SPARKLINE_BIN_COUNT = 160;
+const SPARKLINE_VIEW_HEIGHT = 24;
 
 function clampWindow(start: number, end: number, total: number): { start: number; end: number } {
   if (total <= 0) return { start: 0, end: 0 };
@@ -38,79 +43,11 @@ function clampWindow(start: number, end: number, total: number): { start: number
   return { start: s, end: e };
 }
 
-function decimateSparklineMinMax(
-  data: ChartPoint[],
-  itemIds: string[],
-  maxPoints: number,
-): ChartPoint[] {
-  if (itemIds.length === 0 || data.length <= maxPoints) return data;
-
-  const targetBuckets = Math.max(2, maxPoints - 1);
-  const bucketSize = data.length / targetBuckets;
-  const chosenIndices = new Set<number>([0, data.length - 1]);
-
-  for (let b = 0; b < targetBuckets; b++) {
-    const start = Math.floor(b * bucketSize);
-    const end = Math.min(data.length, Math.floor((b + 1) * bucketSize));
-    if (start >= end) continue;
-
-    let minIdx = start;
-    let maxIdx = start;
-    const firstVal = sparklineMaxValue(data[start], itemIds);
-    if (firstVal == null) continue;
-    let minVal = firstVal;
-    let maxVal = firstVal;
-
-    for (let i = start + 1; i < end; i++) {
-      const v = sparklineMaxValue(data[i], itemIds);
-      if (v == null) continue;
-      if (v < minVal) {
-        minVal = v;
-        minIdx = i;
-      }
-      if (v > maxVal) {
-        maxVal = v;
-        maxIdx = i;
-      }
-    }
-    chosenIndices.add(minIdx);
-    if (maxIdx !== minIdx) chosenIndices.add(maxIdx);
-  }
-
-  let points = [...chosenIndices].sort((a, b) => a - b).map(i => data[i]);
-  if (points.length > maxPoints) {
-    const stride = Math.ceil(points.length / maxPoints);
-    const trimmed: ChartPoint[] = [];
-    for (let i = 0; i < points.length; i += stride) trimmed.push(points[i]);
-    const last = points[points.length - 1];
-    if (trimmed[trimmed.length - 1]?.timeKey !== last.timeKey) trimmed.push(last);
-    points = trimmed;
-  }
-  return points;
-}
-
-function computeDensityBins(data: ChartPoint[], binCount: number): number[] {
-  if (data.length === 0) return [];
-  const startMs = Date.parse(data[0].timeKey);
-  const endMs = Date.parse(data[data.length - 1].timeKey);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
-
-  const spanMs = endMs - startMs;
-  const bins = new Array<number>(binCount).fill(0);
-  for (const point of data) {
-    const t = Date.parse(point.timeKey);
-    if (!Number.isFinite(t)) continue;
-    const ratio = Math.max(0, Math.min(1, (t - startMs) / spanMs));
-    const idx = Math.min(binCount - 1, Math.floor(ratio * binCount));
-    bins[idx] += 1;
-  }
-  return bins;
-}
-
 export default function ChartZoomNavigator({
   chartData,
   chartZoom,
   sparkItemIds,
+  sparkValueMax,
   formatTime,
   onWindowChange,
   totalMatched,
@@ -149,24 +86,14 @@ export default function ChartZoomNavigator({
     [windowRange, chartData, totalMatched, returned, chartZoom.startTs, chartZoom.endTs],
   );
 
-  const sparkData = useMemo(
-    () => decimateSparklineMinMax(chartData, sparkItemIds ?? [], 160),
+  const sparkBins = useMemo(
+    () => computeSparklineValueBins(chartData, sparkItemIds ?? [], SPARKLINE_BIN_COUNT),
     [chartData, sparkItemIds],
   );
-  const sparkline = useMemo(
-    () => buildSparklinePolyline(sparkData, sparkItemIds ?? [], 100, 20),
-    [sparkData, sparkItemIds],
+  const sparkScaleMax = useMemo(
+    () => sparklineValueScaleMax(sparkBins, sparkValueMax),
+    [sparkBins, sparkValueMax],
   );
-
-  const densityBins = useMemo(
-    () => computeDensityBins(chartData, DENSITY_BIN_COUNT),
-    [chartData],
-  );
-  const densityMax = useMemo(() => {
-    let max = 0;
-    for (const count of densityBins) if (count > max) max = count;
-    return max || 1;
-  }, [densityBins]);
 
   const windowTimeKeys = useMemo(
     () => (chartZoom.startTs && chartZoom.endTs
@@ -193,17 +120,17 @@ export default function ChartZoomNavigator({
       if (rect.width <= 0 || total <= 0) return;
 
       const shift = e.clientX - panSession.startX;
-        const { start: newStart, end: newEnd, startTs, endTs } = shiftNavigatorWindowByTrackDelta(
-          chartData,
-          panSession.zoomStart,
-          panSession.zoomEnd,
-          shift,
-          rect.width,
-          panSession.startTs && panSession.endTs
-            ? { startTs: panSession.startTs, endTs: panSession.endTs }
-            : windowTimeKeys,
-        );
-        onWindowChangeRef.current({ start: newStart, end: newEnd, startTs, endTs });
+      const { start: newStart, end: newEnd, startTs, endTs } = shiftNavigatorWindowByTrackDelta(
+        chartData,
+        panSession.zoomStart,
+        panSession.zoomEnd,
+        shift,
+        rect.width,
+        panSession.startTs && panSession.endTs
+          ? { startTs: panSession.startTs, endTs: panSession.endTs }
+          : windowTimeKeys,
+      );
+      onWindowChangeRef.current({ start: newStart, end: newEnd, startTs, endTs });
     };
 
     const endDrag = (e: PointerEvent) => {
@@ -275,42 +202,26 @@ export default function ChartZoomNavigator({
         role="presentation"
         title={t('viz.navigator.move')}
       >
-        <svg
-          className="viz-chart-navigator-density"
-          viewBox={`0 0 ${DENSITY_BIN_COUNT} 10`}
-          preserveAspectRatio="none"
-          aria-hidden
-        >
-          {densityBins.map((count, i) => {
-            const h = count === 0 ? 0 : Math.max(0.5, (count / densityMax) * 10);
-            return (
-              <rect
-                key={i}
-                x={i}
-                y={10 - h}
-                width={1}
-                height={h}
-              />
-            );
-          })}
-        </svg>
-        {sparkline.length > 0 && (
+        {sparkBins.length > 0 && (
           <svg
             className="viz-chart-navigator-sparkline"
-            viewBox="0 0 100 20"
+            viewBox={`0 0 ${SPARKLINE_BIN_COUNT} ${SPARKLINE_VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             aria-hidden
           >
-            {sparkline.map((points, i) => (
-              <polyline
-                key={i}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                vectorEffect="non-scaling-stroke"
-                points={points}
-              />
-            ))}
+            {sparkBins.map((value, i) => {
+              if (value <= 0) return null;
+              const h = Math.max(0.5, (value / sparkScaleMax) * SPARKLINE_VIEW_HEIGHT);
+              return (
+                <rect
+                  key={i}
+                  x={i}
+                  y={SPARKLINE_VIEW_HEIGHT - h}
+                  width={1}
+                  height={h}
+                />
+              );
+            })}
           </svg>
         )}
         <div
