@@ -176,7 +176,7 @@
     "dateRangeHint": "Select a start date, then an end date.",
     "spectrumHint": "Drag to select the time range to load",
     "prevMonth": "Previous month",
-    "liveMode": "Live mode",
+    "liveMode": "Live mode (L)",
     "live": "Live",
     "liveActive": "Live mode active",
     "liveBadge": "● LIVE",
@@ -212,17 +212,19 @@
     "noFieldMatch": "No fields match \"{{query}}\".",
     "chart": "Chart",
     "chartView": "Chart view",
-    "fullscreen": "Fullscreen",
-    "exitFullscreen": "Exit fullscreen",
-    "zoomIn": "Zoom in horizontally",
-    "zoomOut": "Zoom out horizontally",
-    "resetZoom": "Reset zoom",
+    "fullscreen": "Fullscreen (F)",
+    "exitFullscreen": "Exit fullscreen (Esc)",
+    "zoomIn": "Zoom in horizontally (+ / ])",
+    "zoomOut": "Zoom out horizontally (− / [)",
+    "resetZoom": "Reset zoom (Home / 0)",
     "detailLoading": "Loading detail data…",
     "detailRefreshing": "Refreshing detail data…",
     "tooltip": "Tooltip",
-    "tooltipToggle": "Show value popup on hover",
-    "zoomHint": "Wheel/vertical scroll: zoom · Shift+wheel/horizontal scroll: pan · Drag: pan · Shift+drag: select region · Alt+drag: measure · Double-click: reset",
-    "statistics": "Statistics",
+    "tooltipToggle": "Show value popup on hover (T)",
+    "zoomHint": "Wheel/vertical scroll: zoom · Shift+wheel/horizontal scroll: pan · Drag: pan · Shift+drag: select region · Alt+drag: measure · Double-click: reset · Keyboard: focus chart, then +/−, arrows, F/T/V/S",
+    "statistics": "Statistics (S)",
+    "refreshShortcut": "Refresh data (Alt+R)",
+    "manualShortcut": "Chart guide (?)",
     "valuePanel": {
       "title": "Field Values",
       "placeholder": "Hover the chart to see values at that time for all items.",
@@ -238,7 +240,7 @@
     },
     "seriesGroup": {
       "panelToggles": "Chart panel options",
-      "valuesToggle": "Show or hide field values"
+      "valuesToggle": "Show or hide field values (V)"
     },
     "min": "Min",
     "max": "Max",
@@ -275,7 +277,7 @@
     },
     "deltaPrevPoint": "Change from previous point",
     "chartKeyboard": {
-      "region": "Chart — keyboard zoom and pan (+/−, arrows, Home)"
+      "region": "Chart — keyboard shortcuts (+/−, arrows, F/T/V/S, ?). Works by physical key (any keyboard layout)"
     },
     "guide": {
       "whyLabel": "Why does it work this way?",

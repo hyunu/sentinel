@@ -1741,7 +1741,8 @@ tbody tr:last-child td {
   margin-bottom: 12px;
 }
 
-.card.viz-chart-card:fullscreen {
+.card.viz-chart-card:fullscreen,
+.card.viz-chart-card.is-fullscreen {
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -1753,12 +1754,20 @@ tbody tr:last-child td {
   overflow: hidden;
 }
 
-.card.viz-chart-card:fullscreen .card-header {
+.card.viz-chart-card.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+}
+
+.card.viz-chart-card:fullscreen .card-header,
+.card.viz-chart-card.is-fullscreen .card-header {
   padding: 16px 20px 0;
   flex-shrink: 0;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-panel {
+.card.viz-chart-card:fullscreen .viz-chart-panel,
+.card.viz-chart-card.is-fullscreen .viz-chart-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1766,16 +1775,19 @@ tbody tr:last-child td {
   overflow: hidden;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-panel-layout {
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout,
+.card.viz-chart-card.is-fullscreen .viz-chart-panel-layout {
   flex: 1;
   min-height: 0;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left {
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left,
+.card.viz-chart-card.is-fullscreen .viz-chart-panel-layout.is-left {
   flex-direction: row-reverse;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-main {
+.card.viz-chart-card:fullscreen .viz-chart-main,
+.card.viz-chart-card.is-fullscreen .viz-chart-main {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1783,7 +1795,8 @@ tbody tr:last-child td {
   flex-direction: column;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-viewport {
+.card.viz-chart-card:fullscreen .viz-chart-viewport,
+.card.viz-chart-card.is-fullscreen .viz-chart-viewport {
   flex: 1 1 0;
   min-height: 160px;
   height: auto;
@@ -1791,11 +1804,15 @@ tbody tr:last-child td {
 
 .card.viz-chart-card:fullscreen .viz-chart-zoom-hint,
 .card.viz-chart-card:fullscreen .viz-chart-navigator,
-.card.viz-chart-card:fullscreen .viz-series-group {
+.card.viz-chart-card:fullscreen .viz-series-group,
+.card.viz-chart-card.is-fullscreen .viz-chart-zoom-hint,
+.card.viz-chart-card.is-fullscreen .viz-chart-navigator,
+.card.viz-chart-card.is-fullscreen .viz-series-group {
   flex-shrink: 0;
 }
 
-.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left .viz-series-group {
+.card.viz-chart-card:fullscreen .viz-chart-panel-layout.is-left .viz-series-group,
+.card.viz-chart-card.is-fullscreen .viz-chart-panel-layout.is-left .viz-series-group {
   flex: 0 0 300px;
   width: 300px;
   max-width: 36vw;

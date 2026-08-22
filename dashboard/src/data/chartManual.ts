@@ -5,14 +5,15 @@ export const CHART_MANUAL_UI = {
   title: l('Chart Guide', '차트 가이드'),
   tipLabel: l('Tip', '팁'),
   footnote: l(
-    'Shortcuts apply on the chart area when Live mode is off.',
-    'Live 모드가 꺼져 있을 때 차트 영역에서 동작합니다.',
+    'Shortcuts use physical keys (KeyboardEvent.code), so they work in Korean and English layouts. Live mode disables zoom/pan keys.',
+    '단축키는 물리 키(code) 기준이라 한글·영문 자판 모두에서 동작합니다. Live 모드에서는 줌·이동 키가 비활성화됩니다.',
   ),
   overview: l('Overview', '개요'),
   interactions: l('Zoom & pan', '줌 · 이동'),
   minimap: l('Bottom minimap', '하단 미니맵'),
   liveMode: l('Live mode', 'Live 모드'),
   toolbar: l('Toolbar', '툴바'),
+  keyboard: l('Keyboard shortcuts', '키보드 단축키'),
 };
 
 export const CHART_MANUAL_OVERVIEW: ManualBlock[] = [
@@ -44,16 +45,17 @@ export const CHART_MANUAL_INTERACTIONS: ManualBlock[] = [
       l('Drag (while zoomed) — pan left/right.', '드래그(줌 상태) — 좌우 이동'),
       l('Alt + drag — measure elapsed time between two points.', 'Alt + 드래그 — 두 시점 사이 시간 간격 측정'),
       l('Double-click — reset zoom to the full loaded range.', '더블클릭 — 줌 초기화(불러온 전체 구간)'),
-      l('+ / − — zoom in and out (chart focused).', '+ / − — 차트 포커스 시 확대·축소'),
-      l('Arrow keys — pan left/right when zoomed.', '방향키 — 줌 상태에서 좌우 이동'),
-      l('Home / 0 / Esc — reset zoom when zoomed.', 'Home / 0 / Esc — 줌 상태에서 초기화'),
+      l('+ / − or [ / ] — zoom in and out (chart focused).', '+ / − 또는 [ / ] — 차트 포커스 시 확대·축소'),
+      l('Arrow keys — pan left/right when zoomed; Shift + arrows or Page Up/Down for faster pan.', '방향키 — 줌 상태에서 좌우 이동; Shift+방향키 또는 Page Up/Down으로 빠르게 이동'),
+      l('Home / 0 — reset zoom when zoomed.', 'Home / 0 — 줌 상태에서 초기화'),
+      l('Esc — cancel selection/measure, then reset zoom, then exit fullscreen.', 'Esc — 선택/측정 취소 → 줌 초기화 → 전체 화면 종료'),
     ],
   },
   {
     kind: 'tip',
     text: l(
-      'Click the chart area once so it has focus before using keyboard shortcuts.',
-      '키보드 단축키를 쓰려면 차트 영역을 한 번 클릭해 포커스를 맞추세요.',
+      'Click the chart area once so it has focus before using pan/zoom arrow keys.',
+      '좌우 이동·줌 방향키는 차트를 클릭해 포커스를 맞춘 뒤 사용하세요. F/T/V/S 등 토글 키는 페이지 어디서나 동작합니다.',
     ),
   },
   {
@@ -62,6 +64,28 @@ export const CHART_MANUAL_INTERACTIONS: ManualBlock[] = [
       'Horizontal wheel or Shift + vertical wheel pans when zoomed in.',
       '줌인 상태에서 가로 휠 또는 Shift + 세로 휠로 좌우 이동할 수 있습니다.',
     ),
+  },
+];
+
+export const CHART_MANUAL_KEYBOARD: ManualBlock[] = [
+  {
+    kind: 'p',
+    text: l(
+      'Letter keys are matched by physical key position, not the character printed on the key — they work the same in Korean (한글) and English layouts.',
+      '알파벳 단축키는 입력 문자가 아니라 물리 키 위치(code)로 인식되어 한글·영문 자판 모두에서 같게 동작합니다.',
+    ),
+  },
+  {
+    kind: 'ul',
+    items: [
+      l('F — toggle fullscreen', 'F — 전체 화면'),
+      l('T — toggle hover tooltip', 'T — 호버 툴팁'),
+      l('V — toggle field values panel', 'V — 필드 값 패널'),
+      l('S — toggle statistics panel', 'S — 통계 패널'),
+      l('? (Shift + /) — open this guide', '? (Shift + /) — 이 가이드'),
+      l('L — toggle Live mode (anywhere on page)', 'L — Live 모드 (페이지 어디서나)'),
+      l('Alt + R — refresh data (anywhere on page)', 'Alt + R — 데이터 새로고침 (페이지 어디서나)'),
+    ],
   },
 ];
 
@@ -104,11 +128,11 @@ export const CHART_MANUAL_TOOLBAR: ManualBlock[] = [
   {
     kind: 'ul',
     items: [
-      l('Fullscreen — expand the chart card to the screen.', '전체 화면 — 차트 카드를 화면에 맞게 확대'),
-      l('Zoom in / out — step zoom on the time axis.', '확대 / 축소 — 시간축 단계 줌'),
-      l('Reset zoom — same as double-click.', '줌 초기화 — 더블클릭과 동일'),
-      l('Tooltip — show or hide the hover value popup.', '툴팁 — 호버 값 팝업 표시 여부'),
-      l('Field values — show or hide the panel listing values at the cursor time.', '필드 값 — 커서 시각의 항목 값 패널 표시 여부'),
+      l('Fullscreen — expand the chart card to the screen (F).', '전체 화면 — 차트 카드를 화면에 맞게 확대 (F)'),
+      l('Zoom in / out — step zoom on the time axis (+/− or [/]).', '확대 / 축소 — 시간축 단계 줌 (+/− 또는 [/])'),
+      l('Reset zoom — same as double-click (Home / 0).', '줌 초기화 — 더블클릭과 동일 (Home / 0)'),
+      l('Tooltip — show or hide the hover value popup (T).', '툴팁 — 호버 값 팝업 표시 여부 (T)'),
+      l('Field values — show or hide the panel listing values at the cursor time (V).', '필드 값 — 커서 시각의 항목 값 패널 표시 여부 (V)'),
       l('Panel layout — bottom (under the chart) or left (beside the chart).', '패널 위치 — 하단(차트 아래) 또는 좌측(차트 옆)'),
     ],
   },

@@ -3,6 +3,7 @@ import type { MouseEvent } from 'react';
 import type { VizItem } from '../api';
 import { IconEye, IconEyeOff } from './ChartControlIcons';
 import { useTranslation } from '../i18n';
+import { formatVizActualValue, resolveVizItemRawValue } from '../lib/vizDashboardUtils';
 
 export interface CursorValueRow {
   item: VizItem;
@@ -21,15 +22,8 @@ interface ChartCursorValuesProps {
   layout?: 'bottom' | 'left';
 }
 
-function applyTransform(raw: number, item: VizItem): number {
-  return raw * item.weight + item.offset;
-}
-
 function formatValue(raw: number, item: VizItem): string {
-  const unit = item.y_axis.unit?.trim();
-  const v = applyTransform(raw, item);
-  const text = v.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  return unit ? `${text} ${unit}` : text;
+  return formatVizActualValue(raw, item.y_axis.unit);
 }
 
 function formatDelta(curr: number, prev: number | undefined, item: VizItem): {
@@ -39,9 +33,7 @@ function formatDelta(curr: number, prev: number | undefined, item: VizItem): {
   if (prev === undefined || !Number.isFinite(prev)) {
     return { text: '', trend: 'none' };
   }
-  const c = applyTransform(curr, item);
-  const p = applyTransform(prev, item);
-  const d = c - p;
+  const d = curr - prev;
   if (Math.abs(d) < 1e-9) return { text: '', trend: 'none' };
   const unit = item.y_axis.unit?.trim();
   const abs = Math.abs(d).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -195,8 +187,8 @@ export function buildCursorValueRows(
 ): CursorValueRow[] {
   return items.map(item => ({
     item,
-    raw: valuesAtTime?.[item.label],
-    prevRaw: prevValuesAtTime?.[item.label],
+    raw: resolveVizItemRawValue(item, valuesAtTime),
+    prevRaw: resolveVizItemRawValue(item, prevValuesAtTime),
     onChart: chartItemIds.has(item.id),
   }));
 }

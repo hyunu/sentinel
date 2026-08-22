@@ -2,6 +2,7 @@ import Modal from './Modal';
 import ManualBlocks from './ManualBlocks';
 import {
   CHART_MANUAL_INTERACTIONS,
+  CHART_MANUAL_KEYBOARD,
   CHART_MANUAL_LIVE,
   CHART_MANUAL_MINIMAP,
   CHART_MANUAL_OVERVIEW,
@@ -40,8 +41,14 @@ export default function ChartHelpManual({ open, onClose }: ChartHelpManualProps)
           </div>
         </details>
 
+        <details className="manual-section" open>
+          <summary>{manualT(CHART_MANUAL_UI.keyboard, locale)}</summary>
+          <div className="manual-section-body">
+            <ManualBlocks blocks={CHART_MANUAL_KEYBOARD} locale={locale} tipLabel={tipLabel} />
+          </div>
+        </details>
+
         <details className="manual-section">
-          <summary>{manualT(CHART_MANUAL_UI.minimap, locale)}</summary>
           <div className="manual-section-body">
             <ManualBlocks blocks={CHART_MANUAL_MINIMAP} locale={locale} tipLabel={tipLabel} />
           </div>

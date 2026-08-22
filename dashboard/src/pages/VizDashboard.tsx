@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
@@ -68,6 +68,10 @@ import {
   parseOptionalNumber,
   vizErrorMessage,
   yAxisOptionLabel,
+  applyVizItemTransform,
+  formatVizActualValue,
+  formatVizItemActualValue,
+  resolveVizItemRawValue,
   PRIMARY_Y_AXIS_ID,
   SECONDARY_Y_AXIS_ID,
   type VizChartPoint,
@@ -82,8 +86,11 @@ import {
 } from '../lib/vizTimePresets';
 import {
   CHART_KEYBOARD_PAN_PX,
-  isEditableKeyboardTarget,
+  isChartNavigationAction,
   resolveChartKeyboardAction,
+  resolveVizPageKeyboardAction,
+  shouldIgnoreVizKeyboardShortcut,
+  type ChartKeyboardAction,
 } from '../lib/vizChartKeyboard';
 import { spectrumBinRangeToTimeRange } from '../lib/vizChartSpectrum';
 import {
@@ -114,12 +121,6 @@ function readFieldValuesLayout(): FieldValuesLayout {
     /* ignore */
   }
   return 'bottom';
-}
-
-function formatDisplayValue(value: number, unit?: string): string {
-  const text = value.toLocaleString();
-  const u = unit?.trim();
-  return u ? `${text} ${u}` : text;
 }
 
 function axisUnitLabel(itemsOnAxis: VizItem[]): string {
@@ -180,42 +181,6 @@ function itemMatchesFieldSearch(item: VizItem, query: string): boolean {
     chartLabel(item),
   ].join('\n').toLowerCase();
   return haystack.includes(q);
-}
-
-function resolveRawValue(item: VizItem, rawValuesAtTime?: Record<string, number>): number | undefined {
-  if (!rawValuesAtTime) return undefined;
-  for (const key of [item.label, item.field_ref.field_name]) {
-    const v = rawValuesAtTime[key];
-    if (typeof v === 'number' && !Number.isNaN(v)) return v;
-  }
-  return undefined;
-}
-
-function applyItemTransform(raw: number, item: VizItem): number {
-  return raw * item.weight + item.offset;
-}
-
-function formatTooltipItemValue(
-  item: VizItem | undefined,
-  rawValuesAtTime: Record<string, number> | undefined,
-  chartValue: unknown,
-): string {
-  if (!item) return chartValue != null ? String(chartValue) : '';
-  const unit = item.y_axis.unit?.trim();
-  if (typeof chartValue === 'number' && !Number.isNaN(chartValue)) {
-    const display = formatDisplayValue(chartValue, unit);
-    const raw = resolveRawValue(item, rawValuesAtTime);
-    if (typeof raw === 'number' && (item.weight !== 1 || item.offset !== 0)) {
-      return `${display} (raw ${formatDisplayValue(raw, unit)})`;
-    }
-    return display;
-  }
-  const raw = resolveRawValue(item, rawValuesAtTime);
-  if (typeof raw === 'number') {
-    return formatDisplayValue(applyItemTransform(raw, item), unit);
-  }
-  const base = chartValue != null ? String(chartValue) : '';
-  return unit && base ? `${base} ${unit}` : base;
 }
 
 function normalizeVizItems(items: VizItem[]): VizItem[] {
@@ -365,7 +330,7 @@ function toChartPoints(
     for (const item of visible) {
       const raw = row.values[item.label];
       if (typeof raw === 'number' && !Number.isNaN(raw)) {
-        point[item.id] = applyItemTransform(raw, item);
+        point[item.id] = applyVizItemTransform(raw, item);
       }
     }
     return point;
@@ -791,16 +756,29 @@ export default function VizDashboardPage() {
   const toggleChartFullscreen = useCallback(async () => {
     const el = chartCardRef.current;
     if (!el) return;
-    try {
-      if (document.fullscreenElement === el) {
+
+    if (document.fullscreenElement === el) {
+      try {
         await document.exitFullscreen();
-      } else {
-        await el.requestFullscreen();
+      } catch (e) {
+        console.error(e);
+        setChartFullscreen(false);
       }
+      return;
+    }
+
+    if (chartFullscreen) {
+      setChartFullscreen(false);
+      return;
+    }
+
+    try {
+      await el.requestFullscreen();
     } catch (e) {
       console.error(e);
+      setChartFullscreen(true);
     }
-  }, []);
+  }, [chartFullscreen]);
 
   const configSummary = useMemo(() => {
     const boardName = boards.find(b => b.id === selectedBoard)?.name ?? 'Board not selected';
@@ -856,7 +834,7 @@ export default function VizDashboardPage() {
     applyChartZoomFromTimeMs(next.startMs, next.endMs);
   }, [applyChartZoomFromTimeMs, chartData, chartZoom]);
 
-  const panChartByKeyboard = useCallback((direction: -1 | 1) => {
+  const panChartByKeyboard = useCallback((direction: -1 | 1, fast = false) => {
     if (chartData.length === 0) return;
     const zoom = chartZoom;
     const fullSpan = fullChartTimeSpan(chartData);
@@ -868,9 +846,10 @@ export default function VizDashboardPage() {
       ?? chartPlotBoundsRef.current.width;
     if (plotWidth <= 0) return;
 
+    const panPx = fast ? CHART_KEYBOARD_PAN_PX * 4 : CHART_KEYBOARD_PAN_PX;
     const next = computePanTimeRange(
       current,
-      direction * CHART_KEYBOARD_PAN_PX,
+      direction * panPx,
       plotWidth,
       fullSpan.startMs,
       fullSpan.endMs,
@@ -878,43 +857,102 @@ export default function VizDashboardPage() {
     applyChartZoomFromTimeMs(next.startMs, next.endMs);
   }, [applyChartZoomFromTimeMs, chartData, chartZoom]);
 
-  const handleChartViewportKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    if (isEditableKeyboardTarget(e.target)) return;
-    const action = resolveChartKeyboardAction(e.key);
-    if (!action) return;
-
-    if (action.type === 'reset-zoom') {
-      if (!chartZoom || chartData.length === 0) return;
-      const fullSpan = fullChartTimeSpan(chartData);
-      const current = resolveChartZoomTimeRange(chartData, chartZoom, chartData.length);
-      if (!fullSpan || !current || isFullChartTimeRange(current, fullSpan.startMs, fullSpan.endMs)) return;
+  const cancelChartInteraction = useCallback(() => {
+    let cancelled = false;
+    if (isChartSelectingRef.current || isChartSelecting) {
+      isChartSelectingRef.current = false;
+      setIsChartSelecting(false);
+      selectionOverlay.hide();
+      refAreaLeftRef.current = null;
+      refAreaRightRef.current = null;
+      refAreaLeftClientXRef.current = null;
+      refAreaRightClientXRef.current = null;
+      cancelled = true;
     }
+    if (isChartMeasuringRef.current || isChartMeasuring || measureSessionRef.current) {
+      measureSessionRef.current = null;
+      isChartMeasuringRef.current = false;
+      setIsChartMeasuring(false);
+      timeMeasureOverlay.hide();
+      cancelled = true;
+    }
+    return cancelled;
+  }, [isChartSelecting, isChartMeasuring, selectionOverlay.hide, timeMeasureOverlay.hide]);
+
+  const executeChartKeyboardAction = useCallback((action: ChartKeyboardAction): boolean => {
+    if (liveMode && isChartNavigationAction(action)) return false;
 
     switch (action.type) {
       case 'zoom-in':
-        e.preventDefault();
         zoomChartByFactor(0.8, 0.5);
-        break;
+        return true;
       case 'zoom-out':
-        e.preventDefault();
         zoomChartByFactor(1.25, 0.5);
-        break;
+        return true;
       case 'pan-left':
-        e.preventDefault();
-        panChartByKeyboard(-1);
-        break;
+        panChartByKeyboard(-1, action.fast);
+        return true;
       case 'pan-right':
-        e.preventDefault();
-        panChartByKeyboard(1);
-        break;
-      case 'reset-zoom':
-        e.preventDefault();
+        panChartByKeyboard(1, action.fast);
+        return true;
+      case 'reset-zoom': {
+        if (!chartZoom || chartData.length === 0) return false;
+        const fullSpan = fullChartTimeSpan(chartData);
+        const current = resolveChartZoomTimeRange(chartData, chartZoom, chartData.length);
+        if (!fullSpan || !current || isFullChartTimeRange(current, fullSpan.startMs, fullSpan.endMs)) {
+          return false;
+        }
         resetChartZoom();
-        break;
+        return true;
+      }
+      case 'cancel-interaction':
+        if (cancelChartInteraction()) return true;
+        if (chartZoom && chartData.length > 0) {
+          const fullSpan = fullChartTimeSpan(chartData);
+          const current = resolveChartZoomTimeRange(chartData, chartZoom, chartData.length);
+          if (fullSpan && current && !isFullChartTimeRange(current, fullSpan.startMs, fullSpan.endMs)) {
+            resetChartZoom();
+            return true;
+          }
+        }
+        if (chartFullscreen) {
+          if (document.fullscreenElement) {
+            void document.exitFullscreen();
+          } else {
+            setChartFullscreen(false);
+          }
+          return true;
+        }
+        return false;
+      case 'toggle-fullscreen':
+        void toggleChartFullscreen();
+        return true;
+      case 'toggle-tooltip':
+        setChartTooltipEnabled(v => !v);
+        return true;
+      case 'toggle-field-values':
+        setSeriesValuesOpen(v => !v);
+        return true;
+      case 'toggle-stats':
+        setStatsOpen(v => !v);
+        return true;
+      case 'open-manual':
+        setChartManualOpen(true);
+        return true;
       default:
-        break;
+        return false;
     }
-  }, [liveMode, chartZoom, chartData.length, zoomChartByFactor, panChartByKeyboard, resetChartZoom]);
+  }, [
+    liveMode,
+    chartZoom,
+    chartData,
+    chartFullscreen,
+    zoomChartByFactor,
+    panChartByKeyboard,
+    resetChartZoom,
+    cancelChartInteraction,
+    toggleChartFullscreen,
+  ]);
 
   const finalizeChartSelection = useCallback(() => {
     const leftClientX = refAreaLeftClientXRef.current;
@@ -1086,6 +1124,7 @@ export default function VizDashboardPage() {
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      el.focus({ preventScroll: true });
       if (activeChartPointerRef.current != null) {
         endPointerSession(activeChartPointerRef.current);
       }
@@ -1720,6 +1759,38 @@ export default function VizDashboardPage() {
       && isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
     await runVizQuery(buildTimeRange(), isAllRange);
   }, [runVizQuery, buildTimeRange, chartQueryTimeRange, timeRangePresetId, customStart, customEnd]);
+
+  useEffect(() => {
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (shouldIgnoreVizKeyboardShortcut(e.target, chartManualOpen)) return;
+
+      const pageAction = resolveVizPageKeyboardAction(e);
+      if (pageAction) {
+        e.preventDefault();
+        e.stopPropagation();
+        switch (pageAction.type) {
+          case 'refresh':
+            if (!loading) void fetchAll();
+            break;
+          case 'toggle-live':
+            setLiveMode(v => !v);
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+
+      const chartAction = resolveChartKeyboardAction(e);
+      if (!chartAction) return;
+      if (executeChartKeyboardAction(chartAction)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [chartManualOpen, loading, fetchAll, executeChartKeyboardAction]);
 
   const applyGuideTimePreset = useCallback(async (id: TimePresetId) => {
     applyTimePresetState(id);
@@ -2554,14 +2625,13 @@ export default function VizDashboardPage() {
       let last: number | string = '';
 
       for (const row of displayRawVizData) {
-        const raw = row.values[item.label];
+        const raw = resolveVizItemRawValue(item, row.values);
         if (typeof raw !== 'number' || Number.isNaN(raw)) continue;
-        const value = applyItemTransform(raw, item);
-        if (value < min) min = value;
-        if (value > max) max = value;
-        sum += value;
+        if (raw < min) min = raw;
+        if (raw > max) max = raw;
+        sum += raw;
         count += 1;
-        last = value;
+        last = raw;
       }
 
       if (!Number.isFinite(min) || !Number.isFinite(max) || count === 0) continue;
@@ -2627,7 +2697,7 @@ export default function VizDashboardPage() {
           </div>
           {configOpen && (
             <div className="btn-group viz-config-actions">
-              <button type="button" onClick={fetchAll} className="btn-primary btn-sm" disabled={loading}>
+              <button type="button" onClick={fetchAll} className="btn-primary btn-sm" disabled={loading} title={t('viz.refreshShortcut')}>
                 {loading ? t('common.loading') : t('common.refresh')}
               </button>
               {chartData.length > 0 && (
@@ -3175,8 +3245,8 @@ export default function VizDashboardPage() {
               type="button"
               className="viz-chart-icon-btn"
               onClick={() => setChartManualOpen(true)}
-              title={t('common.manual')}
-              aria-label={t('common.manual')}
+              title={t('viz.manualShortcut')}
+              aria-label={t('viz.manualShortcut')}
             >
               <IconManual />
             </button>
@@ -3299,7 +3369,6 @@ export default function VizDashboardPage() {
           role="application"
           tabIndex={0}
           aria-label={t('viz.chartKeyboard.region')}
-          onKeyDown={handleChartViewportKeyDown}
           onDoubleClick={resetChartZoom}
         >
           {selectionOverlay.overlayNode}
@@ -3326,7 +3395,7 @@ export default function VizDashboardPage() {
             onHoverTimeKey={handleChartHoverTimeKey}
             onPlotBoundsChange={handleChartPlotBoundsChange}
             formatYTick={formatYAxisTick}
-            formatTooltipValue={formatTooltipItemValue}
+            formatTooltipValue={formatVizItemActualValue}
           />
           ) : canvasChartData.length > 0 && items.length > 0 ? (
             <p className="viz-chart-empty muted">{t('viz.noVisibleItems')}</p>
@@ -3402,7 +3471,7 @@ export default function VizDashboardPage() {
                   const s = statistics[item.label];
                   if (!s) return null;
                   const unit = item.y_axis.unit?.trim();
-                  const fmt = (v: number) => formatDisplayValue(v, unit);
+                  const fmt = (v: number) => formatVizActualValue(v, unit);
                   return (
                     <tr key={item.label}>
                       <td title={item.label}>{chartLabel(item)}</td>

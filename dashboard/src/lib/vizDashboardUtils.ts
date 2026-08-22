@@ -30,6 +30,54 @@ export function yAxisOptionLabel(axisId: string, tr: (key: string) => string): s
   return axisId;
 }
 
+/** Raw field value from a timestamp row (before offset/weight). */
+export function resolveVizItemRawValue(
+  item: VizItem,
+  valuesAtTime?: Record<string, number>,
+): number | undefined {
+  if (!valuesAtTime) return undefined;
+  for (const key of [item.label, item.field_ref.field_name]) {
+    const v = valuesAtTime[key];
+    if (typeof v === 'number' && !Number.isNaN(v)) return v;
+  }
+  return undefined;
+}
+
+export function applyVizItemTransform(raw: number, item: VizItem): number {
+  return raw * item.weight + item.offset;
+}
+
+export function formatVizActualValue(value: number, unit?: string): string {
+  const text = value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const u = unit?.trim();
+  return u ? `${text} ${u}` : text;
+}
+
+/** Tooltip / field panel: always show stored raw value, not chart transform. */
+export function formatVizItemActualValue(
+  item: VizItem | undefined,
+  rawValuesAtTime: Record<string, number> | undefined,
+  chartValue: unknown,
+): string {
+  if (!item) return chartValue != null ? String(chartValue) : '';
+  const unit = item.y_axis.unit?.trim();
+  const raw = resolveVizItemRawValue(item, rawValuesAtTime);
+  if (typeof raw === 'number') {
+    return formatVizActualValue(raw, unit);
+  }
+  if (typeof chartValue === 'number' && !Number.isNaN(chartValue) && item.weight !== 0) {
+    const inferred = (chartValue - item.offset) / item.weight;
+    if (Number.isFinite(inferred)) {
+      return formatVizActualValue(inferred, unit);
+    }
+  }
+  if (typeof chartValue === 'number' && !Number.isNaN(chartValue)) {
+    return formatVizActualValue(chartValue, unit);
+  }
+  const base = chartValue != null ? String(chartValue) : '';
+  return unit && base ? `${base} ${unit}` : base;
+}
+
 export function computeYAxisDomain(data: VizChartPoint[], axisItems: VizItem[]): [number, number] | undefined {
   if (axisItems.length === 0 || data.length === 0) return undefined;
   const itemIds = axisItems.map(i => i.id);

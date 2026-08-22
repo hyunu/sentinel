@@ -176,7 +176,7 @@
     "dateRangeHint": "시작일을 먼저 선택한 뒤 끝날을 선택하세요.",
     "spectrumHint": "드래그하여 조회할 시간 범위 선택",
     "prevMonth": "이전 달",
-    "liveMode": "Live 모드",
+    "liveMode": "Live 모드 (L)",
     "live": "Live",
     "liveActive": "Live 모드 활성",
     "liveBadge": "● LIVE",
@@ -212,17 +212,19 @@
     "noFieldMatch": "\"{{query}}\"와(과) 일치하는 필드가 없습니다.",
     "chart": "차트",
     "chartView": "차트 보기",
-    "fullscreen": "전체 화면",
-    "exitFullscreen": "전체 화면 종료",
-    "zoomIn": "가로 확대",
-    "zoomOut": "가로 축소",
-    "resetZoom": "줌 초기화",
+    "fullscreen": "전체 화면 (F)",
+    "exitFullscreen": "전체 화면 종료 (Esc)",
+    "zoomIn": "가로 확대 (+ / ])",
+    "zoomOut": "가로 축소 (− / [)",
+    "resetZoom": "줌 초기화 (Home / 0)",
     "detailLoading": "상세 데이터 불러오는 중…",
     "detailRefreshing": "상세 데이터 갱신 중…",
     "tooltip": "툴팁",
-    "tooltipToggle": "호버 시 값 팝업 표시",
-    "zoomHint": "휠/세로 스크롤: 줌 · Shift+휠/가로 스크롤: 이동 · 드래그: 이동 · Shift+드래그: 구간 선택 · Alt+드래그: 시간 측정 · 더블클릭: 초기화",
-    "statistics": "통계",
+    "tooltipToggle": "호버 시 값 팝업 표시 (T)",
+    "zoomHint": "휠/세로 스크롤: 줌 · Shift+휠/가로 스크롤: 이동 · 드래그: 이동 · Shift+드래그: 구간 선택 · Alt+드래그: 시간 측정 · 더블클릭: 초기화 · 키보드: 차트 포커스 후 +/−·방향키·F/T/V/S",
+    "statistics": "통계 (S)",
+    "refreshShortcut": "데이터 새로고침 (Alt+R)",
+    "manualShortcut": "차트 가이드 (?)",
     "valuePanel": {
       "title": "필드 값",
       "placeholder": "차트에 마우스를 올리면 해당 시점의 모든 항목 값이 표시됩니다.",
@@ -238,7 +240,7 @@
     },
     "seriesGroup": {
       "panelToggles": "차트 패널 옵션",
-      "valuesToggle": "필드 값 표시/숨기기"
+      "valuesToggle": "필드 값 표시/숨기기 (V)"
     },
     "min": "Min",
     "max": "Max",
@@ -275,7 +277,7 @@
     },
     "deltaPrevPoint": "직전 포인트 대비 변화량",
     "chartKeyboard": {
-      "region": "차트 — 키보드로 줌·이동 가능 (+/−, 방향키, Home)"
+      "region": "차트 — 키보드 단축키 (+/−, 방향키, F/T/V/S, ?). 한글 자판에서도 물리 키 기준으로 동작"
     },
     "guide": {
       "whyLabel": "왜 이렇게 동작하나요?",
