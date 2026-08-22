@@ -1274,8 +1274,6 @@ tbody tr:last-child td {
 
 .viz-chart-session-break {
   position: absolute;
-  top: 0;
-  bottom: 0;
   width: 0;
   border-left: 2px solid var(--chart-session-break, #e040fb);
   opacity: 1;
@@ -1920,6 +1918,25 @@ tbody tr:last-child td {
 
 .viz-chart-icon-btn svg {
   display: block;
+}
+
+.viz-chart-detail-loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--primary-hover, #7c83ff);
+  flex-shrink: 0;
+}
+
+.viz-chart-detail-loading-indicator svg {
+  display: block;
+  animation: viz-chart-detail-spin 0.85s linear infinite;
+}
+
+@keyframes viz-chart-detail-spin {
+  to { transform: rotate(360deg); }
 }
 
 .viz-chart-zoom-hint {

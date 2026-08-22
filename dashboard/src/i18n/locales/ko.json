@@ -217,6 +217,8 @@
     "zoomIn": "가로 확대",
     "zoomOut": "가로 축소",
     "resetZoom": "줌 초기화",
+    "detailLoading": "상세 데이터 불러오는 중…",
+    "detailRefreshing": "상세 데이터 갱신 중…",
     "tooltip": "툴팁",
     "tooltipToggle": "호버 시 값 팝업 표시",
     "zoomHint": "휠/세로 스크롤: 줌 · Shift+휠/가로 스크롤: 이동 · 드래그: 이동 · Shift+드래그: 구간 선택 · Alt+드래그: 시간 측정 · 더블클릭: 초기화",

@@ -217,6 +217,8 @@
     "zoomIn": "Zoom in horizontally",
     "zoomOut": "Zoom out horizontally",
     "resetZoom": "Reset zoom",
+    "detailLoading": "Loading detail data…",
+    "detailRefreshing": "Refreshing detail data…",
     "tooltip": "Tooltip",
     "tooltipToggle": "Show value popup on hover",
     "zoomHint": "Wheel/vertical scroll: zoom · Shift+wheel/horizontal scroll: pan · Drag: pan · Shift+drag: select region · Alt+drag: measure · Double-click: reset",

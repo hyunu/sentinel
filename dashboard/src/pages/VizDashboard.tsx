@@ -14,6 +14,7 @@ import {
   IconZoomIn,
   IconZoomOut,
   IconZoomReset,
+  IconDetailLoading,
   IconSearch,
   IconManual,
   IconTooltip,
@@ -46,7 +47,6 @@ import {
   computePanTimeRange,
   computeWheelZoomTimeRange,
   filterChartPointsByTimeRange,
-  filterVizRowsByTimeRange,
   fullChartTimeSpan,
   isFullChartTimeRange,
   minChartZoomSpanMs,
@@ -529,6 +529,8 @@ export default function VizDashboardPage() {
   const [detailRawVizData, setDetailRawVizData] = useState<VizDataRow[] | null>(null);
   const [detailQueryMeta, setDetailQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  /** startTs:endTs for the loaded detail series — must match zoomWindow to render detail. */
+  const [detailWindowKey, setDetailWindowKey] = useState<string | null>(null);
   const [sessionPresence, setSessionPresence] = useState<{
     start: string;
     end: string;
@@ -818,6 +820,7 @@ export default function VizDashboardPage() {
     setDetailRawVizData(null);
     setDetailQueryMeta(null);
     setDetailLoading(false);
+    setDetailWindowKey(null);
     detailFetchSeqRef.current += 1;
     refAreaLeftRef.current = null;
     refAreaRightRef.current = null;
@@ -1438,6 +1441,7 @@ export default function VizDashboardPage() {
     setDetailRawVizData(null);
     setDetailQueryMeta(null);
     setDetailLoading(false);
+    setDetailWindowKey(null);
     detailFetchSeqRef.current += 1;
     detailCacheRef.current.clear();
   }, []);
@@ -2033,29 +2037,14 @@ export default function VizDashboardPage() {
       setDetailRawVizData(null);
       setDetailQueryMeta(null);
       setDetailLoading(false);
+      setDetailWindowKey(null);
       return;
     }
 
     const { startTs, endTs } = zoomWindow;
+    const windowKey = `${startTs}:${endTs}`;
     const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
     const cached = detailCacheRef.current.get(cacheKey);
-    const overlapCached = !cached
-      ? detailCacheRef.current.findBestOverlap(selectedBoard, startTs, endTs, itemQueryKey)
-      : undefined;
-
-    const applyInterimDetail = (data: VizDataRow[], meta: VizQueryMeta | null) => {
-      const currentZoom = chartZoomRef.current;
-      if (
-        !currentZoom?.startTs
-        || !currentZoom.endTs
-        || currentZoom.startTs !== startTs
-        || currentZoom.endTs !== endTs
-      ) return;
-      const filtered = filterVizRowsByTimeRange(data, startTs, endTs);
-      if (filtered.length === 0) return;
-      setDetailRawVizData(filtered);
-      setDetailQueryMeta(meta);
-    };
 
     const zoomStartMs = Date.parse(startTs);
     const zoomEndMs = Date.parse(endTs);
@@ -2075,6 +2064,7 @@ export default function VizDashboardPage() {
       if (!currentZoom || chartDataLengthRef.current === 0) {
         setDetailRawVizData(null);
         setDetailQueryMeta(null);
+        setDetailWindowKey(null);
         return;
       }
       if (
@@ -2086,6 +2076,7 @@ export default function VizDashboardPage() {
 
       setDetailRawVizData(data);
       setDetailQueryMeta(meta);
+      setDetailWindowKey(windowKey);
       if (!fromCache) {
         detailCacheRef.current.set(cacheKey, data, meta);
       }
@@ -2097,8 +2088,6 @@ export default function VizDashboardPage() {
         setDetailLoading(false);
         return;
       }
-    } else if (overlapCached) {
-      applyInterimDetail(overlapCached.data, overlapCached.meta);
     }
 
     const seq = ++detailFetchSeqRef.current;
@@ -2125,6 +2114,7 @@ export default function VizDashboardPage() {
           if (!cached) {
             setDetailRawVizData(null);
             setDetailQueryMeta(null);
+            setDetailWindowKey(null);
           }
         } finally {
           if (detailAbortRef.current === controller) {
@@ -2142,7 +2132,7 @@ export default function VizDashboardPage() {
       return;
     }
 
-    detailDebounceRef.current = setTimeout(runFetch, 80);
+    detailDebounceRef.current = setTimeout(runFetch, 40);
 
     return () => {
       if (detailDebounceRef.current) {
@@ -2195,26 +2185,63 @@ export default function VizDashboardPage() {
     return map;
   }, [rawValuesSource]);
 
+  const detailReady = !!(
+    zoomWindow
+    && detailWindowKey === `${zoomWindow.startTs}:${zoomWindow.endTs}`
+    && detailChartData
+    && detailChartData.length > 0
+  );
+
+  const cachedDetailRowsForZoom = useMemo(() => {
+    if (!zoomWindow || !selectedBoard || inMemoryFull || liveMode) return null;
+    const { startTs, endTs } = zoomWindow;
+    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
+    return detailCacheRef.current.get(cacheKey)?.data ?? null;
+  }, [
+    zoomWindow?.startTs,
+    zoomWindow?.endTs,
+    zoomWindow?.timeKey,
+    selectedBoard,
+    itemQueryKey,
+    inMemoryFull,
+    liveMode,
+    detailWindowKey,
+    detailRawVizData,
+  ]);
+
   const canvasChartData = useMemo(() => {
     if (!chartData.length) return [];
-    if (inMemoryFull) return chartData;
-    if (!zoomWindow) return chartData;
+    if (inMemoryFull || !zoomWindow) return chartData;
 
-    const overviewSlice = chartData.slice(zoomWindow.start, zoomWindow.end + 1);
+    const { startTs, endTs } = zoomWindow;
 
-    if (detailChartData && detailChartData.length > 0) {
-      const inWindow = filterChartPointsByTimeRange(
-        detailChartData,
-        zoomWindow.startTs,
-        zoomWindow.endTs,
-      );
-      // Prefer high-res detail during pan/zoom; never fall back to coarse overview while detail exists.
-      if (inWindow.length > 0) return inWindow;
-      return detailChartData;
+    if (detailReady) {
+      return detailChartData!;
     }
 
-    return overviewSlice;
-  }, [chartData, inMemoryFull, zoomWindow, detailChartData]);
+    if (cachedDetailRowsForZoom?.length) {
+      return toChartPoints(cachedDetailRowsForZoom, items);
+    }
+
+    if (detailChartData?.length) {
+      const detailOverlap = filterChartPointsByTimeRange(detailChartData, startTs, endTs);
+      const overviewInWindow = filterChartPointsByTimeRange(chartData, startTs, endTs);
+      if (detailOverlap.length > overviewInWindow.length) {
+        return detailOverlap;
+      }
+    }
+
+    return chartData;
+  }, [
+    chartData,
+    inMemoryFull,
+    zoomWindow,
+    detailReady,
+    detailChartData,
+    cachedDetailRowsForZoom,
+    items,
+    itemTransformKey,
+  ]);
 
   /**
    * Session boundaries for overlay + line gaps — always from the full loaded overview
@@ -2307,6 +2334,15 @@ export default function VizDashboardPage() {
 
   const chartZoomActive = zoomWindow != null;
 
+  const showDetailLoadingIndicator = detailLoading
+    && chartZoomActive
+    && !inMemoryFull
+    && !liveMode;
+
+  const detailLoadingLabel = detailRawVizData?.length
+    ? t('viz.detailRefreshing')
+    : t('viz.detailLoading');
+
   const chartNavigatorWindow = useMemo(() => {
     if (chartData.length <= 1) return null;
     if (chartZoomActive && chartZoom) {
@@ -2335,20 +2371,18 @@ export default function VizDashboardPage() {
 
   const chartSummary = useMemo(() => {
     const parts: string[] = [];
-    parts.push(t('viz.summary.points', {
-      count: (zoomWindow && detailChartData?.length
-        ? detailChartData.length
-        : canvasChartData.length
-      ).toLocaleString(),
-    }));
+    const pointCount = detailReady && detailChartData
+      ? detailChartData.length
+      : canvasChartData.length;
+    parts.push(t('viz.summary.points', { count: pointCount.toLocaleString() }));
     if (inMemoryFull && rawVizData.length > 0) {
       parts.push(t('viz.summary.inMemory', { size: formatFullLoadBytes(estimateVizPayloadBytes(rawVizData)) }));
-    } else if (chartZoomActive && detailQueryMeta?.downsampled) {
+    } else if (chartZoomActive && detailReady && detailQueryMeta?.downsampled) {
       parts.push(t('viz.summary.detailRatio', {
         returned: detailQueryMeta.returned.toLocaleString(),
         total: detailQueryMeta.total_matched.toLocaleString(),
       }));
-    } else if (chartZoomActive && detailQueryMeta) {
+    } else if (chartZoomActive && detailReady && detailQueryMeta) {
       parts.push(t('viz.summary.detailPts', { count: detailQueryMeta.returned.toLocaleString() }));
     } else if (queryMeta?.downsampled) {
       parts.push(t('viz.summary.sampled', {
@@ -2362,10 +2396,10 @@ export default function VizDashboardPage() {
     if (inMemoryFull) {
       parts.push(t('viz.summary.canvas'));
     }
-    if (detailLoading && !detailRawVizData?.length) {
-      parts.push(t('viz.summary.loadingDetail'));
-    } else if (detailLoading) {
-      parts.push(t('viz.summary.refreshingDetail'));
+    if (detailLoading && !detailReady) {
+      parts.push(detailRawVizData?.length
+        ? t('viz.summary.refreshingDetail')
+        : t('viz.summary.loadingDetail'));
     }
     if (chartZoomActive) {
       parts.push(t('viz.summary.zoomed'));
@@ -2379,6 +2413,7 @@ export default function VizDashboardPage() {
     canvasChartData.length,
     zoomWindow,
     detailChartData,
+    detailReady,
     queryMeta,
     rawVizData,
     inMemoryFull,
@@ -3187,6 +3222,17 @@ export default function VizDashboardPage() {
               >
                 <IconZoomReset />
               </button>
+              {showDetailLoadingIndicator && (
+                <span
+                  className="viz-chart-detail-loading-indicator"
+                  role="status"
+                  aria-live="polite"
+                  title={detailLoadingLabel}
+                  aria-label={detailLoadingLabel}
+                >
+                  <IconDetailLoading />
+                </span>
+              )}
             </div>
             {items.length > 0 && (
               <>

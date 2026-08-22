@@ -43,6 +43,16 @@ export function IconZoomReset({ className }: IconProps) {
   );
 }
 
+/** Spinning arc — pair with CSS animation on the wrapper. */
+export function IconDetailLoading({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" strokeOpacity="0.22" />
+      <path d="M12 3a9 9 0 0 1 9 9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconTooltip({ className }: IconProps) {
   return (
     <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">

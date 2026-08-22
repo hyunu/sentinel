@@ -383,6 +383,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       const line = document.createElement('div');
       line.className = 'viz-chart-session-break';
       line.style.left = `${bb.left + plotLeft}px`;
+      line.style.top = `${bb.top}px`;
+      line.style.height = `${bb.height}px`;
       overlay.appendChild(line);
     }
   }, []);
@@ -529,6 +531,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           stroke: axisColor,
           grid: { show: false, stroke: gridColor, width: 1, dash: [4, 4] },
           ticks: { stroke: axisColor },
+          border: axisBorder,
           font: '11px system-ui, sans-serif',
           gap: 6,
           space: 80,
@@ -705,9 +708,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const u = plotRef.current;
     if (!u || points.length === 0) return;
     u.setData(buildAlignedData(points, chartItems));
-    syncXWindow();
     syncPlotAndBreaks(u);
-  }, [points, chartItems, seriesLayoutKey, syncPlotAndBreaks, syncXWindow]);
+  }, [points, chartItems, seriesLayoutKey, syncPlotAndBreaks]);
 
   const sessionBreakTimesKey = sessionBreakTimesSec.length > 0
     ? `${sessionBreakTimesSec.length}:${sessionBreakTimesSec[0]}:${sessionBreakTimesSec[sessionBreakTimesSec.length - 1]}`
@@ -724,7 +726,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const u = plotRef.current;
     if (!u) return;
     syncXWindow();
-  }, [windowIndicesKey, xWindowTimeKeysKey, syncXWindow]);
+    syncPlotAndBreaks(u);
+  }, [windowIndicesKey, xWindowTimeKeysKey, points.length, syncXWindow, syncPlotAndBreaks]);
 
   useEffect(() => {
     if (hideTooltip) hideTooltipEl();
