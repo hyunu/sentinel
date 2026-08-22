@@ -45,6 +45,8 @@ import {
   chartZoomRangeFromTimeMs,
   computePanTimeRange,
   computeWheelZoomTimeRange,
+  filterChartPointsByTimeRange,
+  filterVizRowsByTimeRange,
   fullChartTimeSpan,
   isFullChartTimeRange,
   minChartZoomSpanMs,
@@ -2037,6 +2039,23 @@ export default function VizDashboardPage() {
     const { startTs, endTs } = zoomWindow;
     const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
     const cached = detailCacheRef.current.get(cacheKey);
+    const overlapCached = !cached
+      ? detailCacheRef.current.findBestOverlap(selectedBoard, startTs, endTs, itemQueryKey)
+      : undefined;
+
+    const applyInterimDetail = (data: VizDataRow[], meta: VizQueryMeta | null) => {
+      const currentZoom = chartZoomRef.current;
+      if (
+        !currentZoom?.startTs
+        || !currentZoom.endTs
+        || currentZoom.startTs !== startTs
+        || currentZoom.endTs !== endTs
+      ) return;
+      const filtered = filterVizRowsByTimeRange(data, startTs, endTs);
+      if (filtered.length === 0) return;
+      setDetailRawVizData(filtered);
+      setDetailQueryMeta(meta);
+    };
 
     const zoomStartMs = Date.parse(startTs);
     const zoomEndMs = Date.parse(endTs);
@@ -2078,6 +2097,8 @@ export default function VizDashboardPage() {
         setDetailLoading(false);
         return;
       }
+    } else if (overlapCached) {
+      applyInterimDetail(overlapCached.data, overlapCached.meta);
     }
 
     const seq = ++detailFetchSeqRef.current;
@@ -2178,11 +2199,22 @@ export default function VizDashboardPage() {
     if (!chartData.length) return [];
     if (inMemoryFull) return chartData;
     if (!zoomWindow) return chartData;
-    if (detailChartData && detailChartData.length > 0 && !detailLoading && !isChartPanning) {
+
+    const overviewSlice = chartData.slice(zoomWindow.start, zoomWindow.end + 1);
+
+    if (detailChartData && detailChartData.length > 0) {
+      const inWindow = filterChartPointsByTimeRange(
+        detailChartData,
+        zoomWindow.startTs,
+        zoomWindow.endTs,
+      );
+      // Prefer high-res detail during pan/zoom; never fall back to coarse overview while detail exists.
+      if (inWindow.length > 0) return inWindow;
       return detailChartData;
     }
-    return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
-  }, [chartData, inMemoryFull, zoomWindow, detailChartData, detailLoading, isChartPanning]);
+
+    return overviewSlice;
+  }, [chartData, inMemoryFull, zoomWindow, detailChartData]);
 
   /**
    * Session boundaries for overlay + line gaps — always from the full loaded overview

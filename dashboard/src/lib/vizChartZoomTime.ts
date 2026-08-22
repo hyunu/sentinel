@@ -130,6 +130,38 @@ export function isFullChartTimeRange(
   return range.endMs - range.startMs >= fullSpanMs - 1;
 }
 
+export function filterChartPointsByTimeRange<T extends ChartTimePoint>(
+  points: readonly T[],
+  startTs: string,
+  endTs: string,
+): T[] {
+  const startMs = parseChartTimeMs(startTs);
+  const endMs = parseChartTimeMs(endTs);
+  if (startMs == null || endMs == null) return [...points];
+  const lo = Math.min(startMs, endMs);
+  const hi = Math.max(startMs, endMs);
+  return points.filter(p => {
+    const ms = parseChartTimeMs(p.timeKey);
+    return ms != null && ms >= lo && ms <= hi;
+  });
+}
+
+export function filterVizRowsByTimeRange<T extends { timestamp: string }>(
+  rows: readonly T[],
+  startTs: string,
+  endTs: string,
+): T[] {
+  const startMs = parseChartTimeMs(startTs);
+  const endMs = parseChartTimeMs(endTs);
+  if (startMs == null || endMs == null) return [...rows];
+  const lo = Math.min(startMs, endMs);
+  const hi = Math.max(startMs, endMs);
+  return rows.filter(r => {
+    const ms = parseChartTimeMs(r.timestamp);
+    return ms != null && ms >= lo && ms <= hi;
+  });
+}
+
 export function chartZoomRangeFromTimeMs(
   points: ChartTimePoint[],
   startMs: number,

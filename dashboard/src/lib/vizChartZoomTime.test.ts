@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computePanTimeRange,
   computeWheelZoomTimeRange,
+  filterChartPointsByTimeRange,
   isFullChartTimeRange,
   minChartZoomSpanMs,
 } from './vizChartZoomTime';
@@ -64,5 +65,21 @@ describe('minChartZoomSpanMs', () => {
   it('caps point-based minimum so 100ms-scale zoom remains reachable', () => {
     const fourHoursMs = 4 * 60 * 60 * 1000;
     expect(minChartZoomSpanMs(fourHoursMs, 8000, 10)).toBe(MIN_CHART_ZOOM_SPAN_MS);
+  });
+});
+
+describe('filterChartPointsByTimeRange', () => {
+  it('keeps points inside the zoom window only', () => {
+    const points = [
+      { timeKey: '2026-06-22T10:00:00.000Z', v: 1 },
+      { timeKey: '2026-06-22T10:05:00.000Z', v: 2 },
+      { timeKey: '2026-06-22T10:10:00.000Z', v: 3 },
+    ];
+    const filtered = filterChartPointsByTimeRange(
+      points,
+      '2026-06-22T10:04:00.000Z',
+      '2026-06-22T10:08:00.000Z',
+    );
+    expect(filtered.map(p => p.v)).toEqual([2]);
   });
 });
