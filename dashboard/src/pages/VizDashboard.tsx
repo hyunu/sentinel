@@ -83,6 +83,12 @@ import {
   isEditableKeyboardTarget,
   resolveChartKeyboardAction,
 } from '../lib/vizChartKeyboard';
+import { spectrumBinRangeToTimeRange } from '../lib/vizChartSpectrum';
+import {
+  findSessionBreakTimesFromSpectrum,
+  findSessionBreakTimesSec,
+  spectrumBinsForSessionGaps,
+} from '../lib/vizChartSessionBreaks';
 import { useTranslation, type TFunction } from '../i18n';
 
 type ChartPoint = VizChartPoint;
@@ -501,6 +507,8 @@ export default function VizDashboardPage() {
   const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  /** Exact chart query range from spectrum drag — preserved separately from date-only custom range. */
+  const [chartQueryTimeRange, setChartQueryTimeRange] = useState<{ start: string; end: string } | null>(null);
   const [spectrum, setSpectrum] = useState<{ present: boolean[]; start: string; end: string } | null>(null);
   const [spectrumLoading, setSpectrumLoading] = useState(false);
   const [spectrumSel, setSpectrumSel] = useState<{ start: number; end: number } | null>(null);
@@ -519,6 +527,11 @@ export default function VizDashboardPage() {
   const [detailRawVizData, setDetailRawVizData] = useState<VizDataRow[] | null>(null);
   const [detailQueryMeta, setDetailQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [sessionPresence, setSessionPresence] = useState<{
+    start: string;
+    end: string;
+    present: boolean[];
+  } | null>(null);
   const [inMemoryFull, setInMemoryFull] = useState(false);
   const [allRangeGuide, setAllRangeGuide] = useState<AllRangeLoadAssessment | null>(null);
   const detailFetchSeqRef = useRef(0);
@@ -1497,6 +1510,7 @@ export default function VizDashboardPage() {
   }, [selectedBoard]);
 
   const buildTimeRange = useCallback((): { start: string; end: string } | undefined => {
+    if (chartQueryTimeRange) return chartQueryTimeRange;
     if (timeRangePresetId !== TIME_PRESET_ALL) {
       const end = new Date();
       const start = presetRangeStart(end, timeRangePresetId);
@@ -1513,7 +1527,7 @@ export default function VizDashboardPage() {
       }
     }
     return undefined;
-  }, [timeRangePresetId, customStart, customEnd]);
+  }, [chartQueryTimeRange, timeRangePresetId, customStart, customEnd]);
 
   const buildSpectrumRange = useCallback((): { start: string; end: string } | undefined => {
     if (timeRangePresetId !== TIME_PRESET_ALL) {
@@ -1548,11 +1562,19 @@ export default function VizDashboardPage() {
   useEffect(() => {
     if (!selectedBoard) {
       setSpectrum(null);
+      setChartQueryTimeRange(null);
+      setSpectrumSel(null);
       return;
     }
     const range = spectrumRange;
     void fetchSpectrum(selectedBoard, range?.start, range?.end);
   }, [selectedBoard, spectrumRange, fetchSpectrum]);
+
+  const spectrumRangeKey = spectrum ? `${spectrum.start}:${spectrum.end}` : '';
+  useEffect(() => {
+    setSpectrumSel(null);
+    spectrumSelRef.current = null;
+  }, [spectrumRangeKey]);
 
   const isCustomTimeRange = isCustomTimeRangeSelection(timeRangePresetId, customStart, customEnd);
 
@@ -1562,6 +1584,9 @@ export default function VizDashboardPage() {
     setTimeRangePresetId(id);
     setCustomStart('');
     setCustomEnd('');
+    setChartQueryTimeRange(null);
+    setSpectrumSel(null);
+    spectrumSelRef.current = null;
     if (id !== TIME_PRESET_ALL) {
       setAllRangeGuide(null);
     }
@@ -1620,26 +1645,26 @@ export default function VizDashboardPage() {
 
   const applySpectrumSelection = useCallback((startIdx: number, endIdx: number) => {
     if (!spectrum || liveModeRef.current) return;
-    const lo = Math.min(startIdx, endIdx);
-    const hi = Math.max(startIdx, endIdx);
-    if (hi - lo < 1) return;
     const bins = spectrum.present.length;
     const startMs = Date.parse(spectrum.start);
     const endMs = Date.parse(spectrum.end);
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || bins <= 0) return;
-    const span = endMs - startMs;
-    const selStart = new Date(startMs + span * (lo / bins));
-    const selEnd = new Date(startMs + span * ((hi + 1) / bins));
+    const range = spectrumBinRangeToTimeRange(startIdx, endIdx, startMs, endMs, bins);
+    if (!range || range.endMs <= range.startMs) return;
+
+    const lo = Math.min(startIdx, endIdx);
+    const hi = Math.max(startIdx, endIdx);
+    const selStart = new Date(range.startMs);
+    const selEnd = new Date(range.endMs);
+    const queryRange = { start: selStart.toISOString(), end: selEnd.toISOString() };
+
     setSpectrumSel({ start: lo, end: hi });
     spectrumSelRef.current = { start: lo, end: hi };
-    setCustomStart(formatDateOnly(selStart));
-    setCustomEnd(formatDateOnly(selEnd));
-    setTimeRangePresetId(TIME_PRESET_ALL);
+    setChartQueryTimeRange(queryRange);
     setAllRangeGuide(null);
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
     chartCanvasRef.current?.resetWindow();
-    void runVizQuery({ start: selStart.toISOString(), end: selEnd.toISOString() }, false);
+    void runVizQuery(queryRange, false);
   }, [spectrum, runVizQuery]);
 
   useEffect(() => {
@@ -1685,9 +1710,10 @@ export default function VizDashboardPage() {
   }, [spectrum, applySpectrumSelection]);
 
   const fetchAll = useCallback(async () => {
-    const isAllRange = isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
+    const isAllRange = !chartQueryTimeRange
+      && isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
     await runVizQuery(buildTimeRange(), isAllRange);
-  }, [runVizQuery, buildTimeRange, timeRangePresetId, customStart, customEnd]);
+  }, [runVizQuery, buildTimeRange, chartQueryTimeRange, timeRangePresetId, customStart, customEnd]);
 
   const applyGuideTimePreset = useCallback(async (id: TimePresetId) => {
     applyTimePresetState(id);
@@ -1701,6 +1727,9 @@ export default function VizDashboardPage() {
   const clearCustomTimeRange = useCallback(() => {
     setCustomStart('');
     setCustomEnd('');
+    setChartQueryTimeRange(null);
+    setSpectrumSel(null);
+    spectrumSelRef.current = null;
     setTimeRangePresetId(TIME_PRESET_ALL);
   }, []);
 
@@ -2155,6 +2184,72 @@ export default function VizDashboardPage() {
     return chartData.slice(zoomWindow.start, zoomWindow.end + 1);
   }, [chartData, inMemoryFull, zoomWindow, detailChartData, detailLoading, isChartPanning]);
 
+  /**
+   * Session boundaries for overlay + line gaps — always from the full loaded overview
+   * timeline. Never recomputed from detail zoom (that made markers vanish on detail load).
+   */
+  const sessionBreakTimesSec = useMemo(() => {
+    if (rawVizData.length >= 2 && (inMemoryFull || !queryMeta?.downsampled)) {
+      return findSessionBreakTimesSec(rawVizData.map(r => r.timestamp));
+    }
+    if (sessionPresence?.present.length && sessionPresence.start && sessionPresence.end) {
+      return findSessionBreakTimesFromSpectrum(
+        sessionPresence.start,
+        sessionPresence.end,
+        sessionPresence.present,
+      );
+    }
+    return [];
+  }, [rawVizData, inMemoryFull, queryMeta?.downsampled, sessionPresence]);
+
+  const chartTimelineKey = chartData.length >= 2
+    ? `${chartData.length}:${chartData[0].timeKey}:${chartData[chartData.length - 1].timeKey}`
+    : '';
+
+  /** Spectrum presence for downsampled overview — fixed to full chart span, not zoom/detail. */
+  const sessionPresenceExtent = useMemo(() => {
+    if (!selectedBoard || inMemoryFull || !queryMeta?.downsampled) return null;
+    if (chartData.length < 2) return null;
+    return {
+      boardId: selectedBoard,
+      start: chartData[0].timeKey,
+      end: chartData[chartData.length - 1].timeKey,
+    };
+  }, [selectedBoard, inMemoryFull, queryMeta?.downsampled, chartTimelineKey]);
+
+  const sessionPresenceExtentKey = sessionPresenceExtent
+    ? `${sessionPresenceExtent.boardId}|${sessionPresenceExtent.start}|${sessionPresenceExtent.end}`
+    : '';
+
+  useEffect(() => {
+    if (!sessionPresenceExtent) {
+      setSessionPresence(null);
+      return;
+    }
+    const { boardId, start, end } = sessionPresenceExtent;
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      return;
+    }
+
+    let cancelled = false;
+    const bins = spectrumBinsForSessionGaps(endMs - startMs);
+    void api.viz.spectrum(
+      { board_id: boardId, start, end, bins },
+      { timeoutMs: 20000 },
+    ).then(res => {
+      if (cancelled || res.bins <= 0) return;
+      setSessionPresence({ start: res.start, end: res.end, present: res.present });
+    }).catch(() => {
+      /* keep previous sessionPresence on fetch failure */
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionPresenceExtentKey, sessionPresenceExtent]);
+
   renderChartDataLengthRef.current = chartData.length;
   renderChartPointsRef.current = chartData;
 
@@ -2549,6 +2644,9 @@ export default function VizDashboardPage() {
                     onChange={(s, e) => {
                       setCustomStart(s);
                       setCustomEnd(e);
+                      setChartQueryTimeRange(null);
+                      setSpectrumSel(null);
+                      spectrumSelRef.current = null;
                       setTimeRangePresetId(TIME_PRESET_ALL);
                       setAllRangeGuide(null);
                     }}
@@ -3132,6 +3230,7 @@ export default function VizDashboardPage() {
           <VizCanvasChart
             ref={chartCanvasRef}
             points={canvasChartData}
+            sessionBreakTimesSec={sessionBreakTimesSec}
             fullTimeline={inMemoryFull && chartData.length > 0 ? chartData : undefined}
             windowIndices={canvasWindowIndices}
             xWindowTimeKeys={canvasXWindowTimeKeys}

@@ -3,6 +3,7 @@ import {
   findChartIndexLowerBoundForTimeMs,
   findChartIndexUpperBoundForTimeMs,
 } from './vizChartInteraction';
+import { MIN_CHART_ZOOM_SPAN_MS } from './vizChartConstants';
 
 export interface ChartZoomTimeRange {
   startMs: number;
@@ -55,8 +56,9 @@ export function resolveChartZoomTimeRange(
 }
 
 export function minChartZoomSpanMs(fullSpanMs: number, pointCount: number, minPoints: number): number {
-  if (pointCount <= 0 || fullSpanMs <= 0) return 1;
-  return Math.max(1, (fullSpanMs * minPoints) / pointCount);
+  if (pointCount <= 0 || fullSpanMs <= 0) return MIN_CHART_ZOOM_SPAN_MS;
+  const pointBased = (fullSpanMs * minPoints) / pointCount;
+  return Math.min(pointBased, MIN_CHART_ZOOM_SPAN_MS);
 }
 
 export function clampTimeRangeToSpan(

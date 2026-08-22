@@ -16,7 +16,8 @@ export type VizChartPoint = { timeKey: string } & Record<string, string | number
 
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
-import { VIZ_SESSION_GAP_SECONDS } from '../lib/vizChartConstants';
+import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
+import { shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
 
 export interface VizCanvasChartHandle {
   setWindowByIndex(start: number, end: number): void;
@@ -37,8 +38,74 @@ function plotBBoxCss(u: uPlot): { left: number; top: number; width: number; heig
   };
 }
 
+type AxisLayout = uPlot.Axis & {
+  _show?: boolean;
+  _splits?: number[];
+  _found?: [number, number];
+};
+
+/** Draw x-axis vertical grid in drawClear so it sits behind series and overlays. */
+function drawXAxisGridBehind(u: uPlot, fallbackStroke: string): void {
+  const axisIdx = 0;
+  const axis = u.axes[axisIdx] as AxisLayout | undefined;
+  if (!axis?.show || axis._show === false) return;
+
+  const grid = axis.grid ?? {};
+
+  const scaleKey = axis.scale ?? 'x';
+  const scale = u.scales[scaleKey];
+  if (!scale) return;
+
+  const _splits = axis._splits;
+  const _found = axis._found;
+  if (!_splits?.length || !_found) return;
+
+  const pxRatio = uPlot.pxRatio;
+  const { top: plotTop, height: plotHgt } = u.bbox;
+  const [_incr, _space] = _found;
+  const data0 = u.data[0] as number[];
+  const splits = scale.distr === 2 ? _splits.map(i => data0[i]) : _splits;
+  const incr = scale.distr === 2
+    ? data0[_splits[1]] - data0[_splits[0]]
+    : _incr;
+
+  const canOffs = _splits.map(val => {
+    const v = scale.distr === 2 ? data0[val] : val;
+    return Math.round(u.valToPos(v, scaleKey, true));
+  });
+
+  const splitVisible = grid.filter
+    ? grid.filter(u, splits, axisIdx, _space, incr)
+    : splits;
+
+  const stroke = typeof grid.stroke === 'function'
+    ? grid.stroke(u, axisIdx)
+    : (grid.stroke ?? fallbackStroke);
+  const lineWidth = Math.max(1, (grid.width ?? 1) * pxRatio);
+  const dash = grid.dash ?? [4, 4];
+  const dashPx = Array.isArray(dash) ? dash.map(d => d * pxRatio) : [];
+
+  const ctx = u.ctx;
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  if (dashPx.length > 0) ctx.setLineDash(dashPx);
+
+  for (let i = 0; i < canOffs.length; i++) {
+    if (splitVisible[i] == null) continue;
+    const x = canOffs[i];
+    ctx.beginPath();
+    ctx.moveTo(x, plotTop);
+    ctx.lineTo(x, plotTop + plotHgt);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export interface VizCanvasChartProps {
   points: VizChartPoint[];
+  /** Session boundaries (sec) from full-resolution timestamps — stable while zooming. */
+  sessionBreakTimesSec?: readonly number[];
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
   xWindowTimeKeys?: { start: string; end: string } | null;
@@ -141,21 +208,23 @@ function buildSeriesConfig(
   chartLabel: (item: VizItem) => string,
   resolveYScale: (item: VizItem) => typeof PRIMARY_SCALE | typeof SECONDARY_SCALE,
   maxVisibleSeries: number,
+  getSessionBreakTimesSec: () => readonly number[],
 ): Series[] {
   let visibleRank = 0;
-  const gapsRefiner: Series['gaps'] = (u, _seriesIdx, idx0, idx1, nullGaps) => {
-    const gaps = nullGaps ? [...nullGaps] : [];
+  // spanGaps must stay false so uPlot invokes this refiner (spanGaps: true skips gaps entirely).
+  // nullGaps from uPlot are ignored so missing values stay connected within a session.
+  const gapsRefiner: Series['gaps'] = (u, _seriesIdx, idx0, idx1, _nullGaps) => {
+    const gaps: [number, number][] = [];
     const xs = u.data[0];
     if (!xs) return gaps;
+    const breakTimes = getSessionBreakTimesSec();
     const from = Math.min(idx0, idx1);
     const to = Math.max(idx0, idx1);
     for (let i = from; i < to; i++) {
-      const dx = xs[i + 1] - xs[i];
-      if (dx >= VIZ_SESSION_GAP_SECONDS) {
-        const fromPx = u.valToPos(xs[i], 'x', true);
-        const toPx = u.valToPos(xs[i + 1], 'x', true);
-        gaps.push([fromPx, toPx]);
-      }
+      if (!shouldGapLineSegment(xs[i], xs[i + 1], breakTimes)) continue;
+      const fromPx = u.valToPos(xs[i], 'x', true);
+      const toPx = u.valToPos(xs[i + 1], 'x', true);
+      gaps.push([fromPx, toPx]);
     }
     return gaps;
   };
@@ -187,14 +256,16 @@ function buildSeriesConfig(
           ...base,
           stroke: item.color,
           fill: colorWithAlpha(item.color, 0.28),
-          width: 1,
+          width: CHART_SERIES_LINE_WIDTH,
+          spanGaps: false,
           gaps: gapsRefiner,
         };
       }
       return {
         ...base,
         stroke: item.color,
-        width: 1,
+        width: CHART_SERIES_LINE_WIDTH,
+        spanGaps: false,
         gaps: gapsRefiner,
       };
     }),
@@ -225,6 +296,7 @@ function xScaleFromIndices(
 const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(function VizCanvasChart(
   {
     points,
+    sessionBreakTimesSec = [],
     fullTimeline,
     windowIndices,
     xWindowTimeKeys,
@@ -252,6 +324,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const sessionBreaksRef = useRef<HTMLDivElement | null>(null);
+  const sessionBreakTimesRef = useRef<number[]>([...sessionBreakTimesSec]);
+  sessionBreakTimesRef.current = [...sessionBreakTimesSec];
   const pointsRef = useRef(points);
   pointsRef.current = points;
   const fullTimelineRef = useRef(fullTimeline);
@@ -292,10 +366,36 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         left: rootRect.left - viewportRect.left + bb.left,
         width: bb.width,
       });
-      return;
+    } else {
+      onPlotBoundsChange?.({ left: bb.left, width: bb.width });
     }
-    onPlotBoundsChange?.({ left: bb.left, width: bb.width });
   }, [onPlotBoundsChange]);
+
+  const syncSessionBreaks = useCallback((u: uPlot) => {
+    const overlay = sessionBreaksRef.current;
+    if (!overlay) return;
+    const breaks = sessionBreakTimesRef.current;
+    const bb = plotBBoxCss(u);
+    overlay.replaceChildren();
+    for (const t of breaks) {
+      const plotLeft = u.valToPos(t, 'x', false);
+      if (!Number.isFinite(plotLeft)) continue;
+      const line = document.createElement('div');
+      line.className = 'viz-chart-session-break';
+      line.style.left = `${bb.left + plotLeft}px`;
+      overlay.appendChild(line);
+    }
+  }, []);
+
+  const syncPlotAndBreaks = useCallback((u: uPlot) => {
+    syncPlotBounds(u);
+    syncSessionBreaks(u);
+  }, [syncPlotBounds, syncSessionBreaks]);
+
+  const getSessionBreakTimesSec = useCallback(
+    () => sessionBreakTimesRef.current,
+    [],
+  );
 
   const applyWindowIndices = useCallback((start: number, end: number) => {
     const u = plotRef.current;
@@ -427,12 +527,19 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       axes: [
         {
           stroke: axisColor,
-          grid: { stroke: gridColor, width: 1 },
+          grid: { show: false, stroke: gridColor, width: 1, dash: [4, 4] },
           ticks: { stroke: axisColor },
           font: '11px system-ui, sans-serif',
           gap: 6,
           space: 80,
-          values: (_u, splits) => splits.map(v => formatChartAxisTime(new Date(v * 1000).toISOString())),
+          incrs: [...CHART_X_AXIS_INCRS_SECONDS],
+          values: (_u, splits) => {
+            const showMs = splits.length >= 2 && (splits[1] - splits[0]) < 1;
+            return splits.map(v => formatChartAxisTime(
+              new Date(v * 1000).toISOString(),
+              { showMilliseconds: showMs },
+            ));
+          },
         },
         {
           scale: PRIMARY_SCALE,
@@ -469,11 +576,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         item => chartLabelRef.current(item),
         item => resolveYScaleRef.current(item),
         maxVisibleSeries,
+        getSessionBreakTimesSec,
       ),
       hooks: {
-        ready: [syncPlotBounds],
-        setSize: [syncPlotBounds],
-        setScale: [syncPlotBounds],
+        drawAxes: [(u) => drawXAxisGridBehind(u, gridColor)],
+        ready: [syncPlotAndBreaks],
+        setSize: [syncPlotAndBreaks],
+        setScale: [syncPlotAndBreaks],
         setCursor: [(u) => {
           const idx = u.cursor.idx;
           if (idx == null) {
@@ -539,7 +648,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       const u = plotRef.current;
       if (u) {
         u.setSize({ width: nextWidth, height });
-        syncPlotBounds(u);
+        syncPlotAndBreaks(u);
       }
     });
     ro.observe(container);
@@ -552,7 +661,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     );
     plot.root.classList.add('viz-canvas-chart');
     plotRef.current = plot;
-    syncPlotBounds(plot);
+    syncPlotAndBreaks(plot);
 
     if (windowIndices) {
       applyWindowIndices(windowIndices.start, windowIndices.end);
@@ -568,7 +677,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, maxVisibleSeries, applyWindowIndices, resetWindow]);
+  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, maxVisibleSeries, applyWindowIndices, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec]);
 
   useEffect(() => {
     const u = plotRef.current;
@@ -597,8 +706,19 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     if (!u || points.length === 0) return;
     u.setData(buildAlignedData(points, chartItems));
     syncXWindow();
-    syncPlotBounds(u);
-  }, [points, chartItems, seriesLayoutKey, syncPlotBounds, syncXWindow]);
+    syncPlotAndBreaks(u);
+  }, [points, chartItems, seriesLayoutKey, syncPlotAndBreaks, syncXWindow]);
+
+  const sessionBreakTimesKey = sessionBreakTimesSec.length > 0
+    ? `${sessionBreakTimesSec.length}:${sessionBreakTimesSec[0]}:${sessionBreakTimesSec[sessionBreakTimesSec.length - 1]}`
+    : '';
+
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    syncSessionBreaks(u);
+    u.redraw();
+  }, [sessionBreakTimesKey, syncSessionBreaks]);
 
   useEffect(() => {
     const u = plotRef.current;
@@ -609,32 +729,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   useEffect(() => {
     if (hideTooltip) hideTooltipEl();
   }, [hideTooltip, hideTooltipEl]);
-
-  useEffect(() => {
-    const u = plotRef.current;
-    const overlay = sessionBreaksRef.current;
-    if (!u || !overlay) return;
-    const xs = u.data[0];
-    if (!xs || xs.length < 2) {
-      overlay.replaceChildren();
-      return;
-    }
-    const breaks: number[] = [];
-    for (let i = 0; i < xs.length - 1; i++) {
-      if (xs[i + 1] - xs[i] >= VIZ_SESSION_GAP_SECONDS) {
-        breaks.push(xs[i + 1]);
-      }
-    }
-    overlay.replaceChildren();
-    for (const t of breaks) {
-      const px = u.valToPos(t, 'x', true);
-      const left = px / uPlot.pxRatio;
-      const line = document.createElement('div');
-      line.className = 'viz-chart-session-break';
-      line.style.left = `${left}px`;
-      overlay.appendChild(line);
-    }
-  }, [points, windowIndicesKey, xWindowTimeKeysKey]);
 
   if (points.length === 0 || chartItems.length === 0) {
     return null;

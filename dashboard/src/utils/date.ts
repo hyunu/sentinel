@@ -12,11 +12,13 @@ export function formatDateTimeFromDate(d: Date): string {
 }
 
 /** Format as mm/dd HH:mm:ss (local time) for chart axes and tooltips. */
-export function formatChartAxisTime(iso: string): string {
+export function formatChartAxisTime(iso: string, options?: { showMilliseconds?: boolean }): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const base = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (!options?.showMilliseconds) return base;
+  return `${base}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
 /** Format elapsed milliseconds for chart time-range measurement. */

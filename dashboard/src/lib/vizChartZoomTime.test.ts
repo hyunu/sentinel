@@ -3,7 +3,9 @@ import {
   computePanTimeRange,
   computeWheelZoomTimeRange,
   isFullChartTimeRange,
+  minChartZoomSpanMs,
 } from './vizChartZoomTime';
+import { MIN_CHART_ZOOM_SPAN_MS } from './vizChartConstants';
 
 describe('computeWheelZoomTimeRange', () => {
   const full = { startMs: 0, endMs: 4 * 60 * 60 * 1000 };
@@ -55,5 +57,12 @@ describe('isFullChartTimeRange', () => {
   it('detects full-range windows by elapsed time', () => {
     expect(isFullChartTimeRange({ startMs: 0, endMs: 10_000 }, 0, 10_000)).toBe(true);
     expect(isFullChartTimeRange({ startMs: 0, endMs: 5_000 }, 0, 10_000)).toBe(false);
+  });
+});
+
+describe('minChartZoomSpanMs', () => {
+  it('caps point-based minimum so 100ms-scale zoom remains reachable', () => {
+    const fourHoursMs = 4 * 60 * 60 * 1000;
+    expect(minChartZoomSpanMs(fourHoursMs, 8000, 10)).toBe(MIN_CHART_ZOOM_SPAN_MS);
   });
 });

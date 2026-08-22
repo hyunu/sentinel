@@ -33,6 +33,7 @@
   --swatch-border: rgba(255, 255, 255, 0.12);
   --chart-axis: #888aa0;
   --chart-grid: #2e3040;
+  --chart-session-break: #e040fb;
   --main-glow: rgba(124, 131, 255, 0.06);
   --overlay-backdrop: rgba(0, 0, 0, 0.55);
   --chat-user-border: rgba(124, 131, 255, 0.2);
@@ -83,6 +84,7 @@
   --swatch-border: rgba(31, 35, 40, 0.12);
   --chart-axis: #818b98;
   --chart-grid: #e1e4e8;
+  --chart-session-break: #c026d3;
   --main-glow: rgba(82, 89, 235, 0.04);
   --overlay-backdrop: rgba(31, 35, 40, 0.4);
   --chat-user-border: rgba(82, 89, 235, 0.22);
@@ -1265,6 +1267,7 @@ tbody tr:last-child td {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 2;
   pointer-events: none;
   overflow: hidden;
 }
@@ -1274,8 +1277,8 @@ tbody tr:last-child td {
   top: 0;
   bottom: 0;
   width: 0;
-  border-left: 1px dashed var(--text-muted, #6b7280);
-  opacity: 0.6;
+  border-left: 2px solid var(--chart-session-break, #e040fb);
+  opacity: 1;
 }
 
 .viz-time-preset-group,
@@ -2080,6 +2083,8 @@ tbody tr:last-child td {
 }
 
 .viz-chart-viewport .viz-canvas-chart-host {
+  position: relative;
+  z-index: 1;
   width: 100%;
 }
 
