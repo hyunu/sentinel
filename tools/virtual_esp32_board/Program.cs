@@ -82,13 +82,20 @@ internal static class Program
             Console.WriteLine("[INFO] Cancellation requested...");
         };
 
+        var timestampOrigin = opt.StartTime ?? DateTime.UtcNow;
+        var scaledLoopSpan = TimeSpan.FromMilliseconds(
+            (packets[^1].Time - packets[0].Time).TotalMilliseconds / Math.Max(opt.Speed, 0.0001));
+        if (opt.StartTime is { } start)
+            Console.WriteLine($"[INFO] Timestamp origin {start.ToLocalTime():yyyy-MM-dd HH:mm:ss} local");
+
         int sentTotal = 0;
         int loop = 0;
         while (!cancel.IsCancellationRequested)
         {
             loop++;
-            Console.WriteLine($"[INFO] Replay loop #{loop} starting");
-            var sent = await ReplayToServerAsync(http, apiBase, board, packets, boardRole, opt, cancel.Token)
+            var timestampBase = timestampOrigin + TimeSpan.FromTicks(scaledLoopSpan.Ticks * (loop - 1));
+            Console.WriteLine($"[INFO] Replay loop #{loop} starting first ts={timestampBase.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+            var sent = await ReplayToServerAsync(http, apiBase, board, packets, boardRole, opt, timestampBase, cancel.Token)
                 .ConfigureAwait(false);
             sentTotal += sent;
             Console.WriteLine($"[INFO] Replay loop #{loop} done. sent={sent}, sentTotal={sentTotal}");
@@ -164,10 +171,11 @@ internal static class Program
         IReadOnlyList<CsvPacket> packets,
         string boardRole,
         CliOptions opt,
+        DateTime timestampBase,
         CancellationToken ct)
     {
         var first = packets[0].Time;
-        var sessionBase = DateTime.UtcNow;
+        var sendOrigin = DateTime.UtcNow;
         var sessionStart = DateTime.UtcNow;
 
         int sent = 0;
@@ -182,11 +190,12 @@ internal static class Program
             var packet = packets[i];
             var offset = packet.Time - first;
             var scaledOffset = TimeSpan.FromMilliseconds(offset.TotalMilliseconds / opt.Speed);
-            var targetUtc = sessionBase + scaledOffset;
+            var sendAt = sendOrigin + scaledOffset;
+            var targetUtc = timestampBase + scaledOffset;
 
             var now = DateTime.UtcNow;
-            if (targetUtc > now)
-                await Task.Delay(targetUtc - now, ct).ConfigureAwait(false);
+            if (sendAt > now)
+                await Task.Delay(sendAt - now, ct).ConfigureAwait(false);
 
             var direction = string.Equals(packet.Sender, boardRole, StringComparison.OrdinalIgnoreCase)
                 ? "TX"
@@ -261,6 +270,7 @@ internal sealed class CliOptions
     public int LogEvery { get; private set; } = 50;
     public int HeartbeatSeconds { get; private set; } = 10;
     public int MaxPackets { get; private set; }
+    public DateTime? StartTime { get; private set; }
     public bool ShowHelp { get; private set; }
 
     public static CliOptions Parse(string[] args)
@@ -331,6 +341,9 @@ internal sealed class CliOptions
                 case "--max-packets":
                     opt.MaxPackets = Math.Max(0, int.Parse(NextValue(), CultureInfo.InvariantCulture));
                     break;
+                case "--start-time":
+                    opt.StartTime = ParseStartTime(NextValue());
+                    break;
                 default:
                     throw new ArgumentException($"Unknown argument: {key}");
             }
@@ -362,6 +375,33 @@ internal sealed class CliOptions
         Console.WriteLine("  --log-every <n>            Progress log interval (default: 50)");
         Console.WriteLine("  --heartbeat-seconds <n>    Heartbeat interval (default: 10)");
         Console.WriteLine("  --max-packets <n>          Send at most n packets per replay loop");
+        Console.WriteLine("  --start-time <local>       Timestamp origin, local time (empty/omit = now)");
         Console.WriteLine("  -h, --help                 Show help");
+    }
+
+    private static DateTime ParseStartTime(string raw)
+    {
+        var trimmed = raw.Trim();
+        string[] formats =
+        [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+        ];
+        if (DateTime.TryParseExact(
+                trimmed,
+                formats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal | DateTimeStyles.AllowWhiteSpaces,
+                out var local))
+        {
+            return DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+        }
+
+        if (DateTime.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out local))
+            return DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+
+        throw new ArgumentException("Invalid --start-time. Example: 2026-08-23 16:00:00");
     }
 }

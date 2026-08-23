@@ -86,13 +86,19 @@ import {
 } from '../lib/vizTimePresets';
 import {
   CHART_KEYBOARD_PAN_PX,
-  isChartNavigationAction,
   resolveChartKeyboardAction,
   resolveVizPageKeyboardAction,
   shouldIgnoreVizKeyboardShortcut,
   type ChartKeyboardAction,
 } from '../lib/vizChartKeyboard';
 import { spectrumBinRangeToTimeRange } from '../lib/vizChartSpectrum';
+import {
+  liveFollowWindow,
+  liveZoomSpanMs,
+  mergeLiveRows,
+  shouldFollowLiveTail,
+  trimLiveRows,
+} from '../lib/vizLiveTail';
 import {
   findSessionBreakTimesFromSpectrum,
   findSessionBreakTimesSec,
@@ -451,6 +457,13 @@ export default function VizDashboardPage() {
     () => items.map(i => `${i.id}:${i.field_ref.protocol_id}:${i.field_ref.field_name}:${i.visible}`).join('|'),
     [items],
   );
+  const liveFieldsKey = useMemo(
+    () => items
+      .map(i => `${i.field_ref.protocol_id}\0${i.field_ref.field_name}`)
+      .sort()
+      .join('|'),
+    [items],
+  );
   const itemTransformKey = useMemo(
     () => items.map(i => `${i.id}:${i.label}:${i.visible}:${i.offset}:${i.weight}`).join('|'),
     [items],
@@ -524,6 +537,9 @@ export default function VizDashboardPage() {
   const [chartManualOpen, setChartManualOpen] = useState(false);
   const [chartViewportHeight, setChartViewportHeight] = useState(600);
   const lastTimestampRef = useRef<string | null>(null);
+  const liveFollowRef = useRef(true);
+  const liveSpanMsRef = useRef<number | null>(null);
+  const reloadLiveTailRef = useRef<() => Promise<void>>(async () => {});
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
   const chartCanvasRef = useRef<VizCanvasChartHandle | null>(null);
@@ -596,6 +612,24 @@ export default function VizDashboardPage() {
     setChartZoom(next);
   }, []);
 
+  const updateLiveFollowFromZoom = useCallback((range: ChartZoomRange | null) => {
+    if (!liveModeRef.current) return;
+    const data = chartDataRef.current;
+    const full = fullChartTimeSpan(data);
+    if (!full) {
+      liveFollowRef.current = true;
+      return;
+    }
+    const current = resolveChartZoomTimeRange(data, range, data.length);
+    if (!current || isFullChartTimeRange(current, full.startMs, full.endMs)) {
+      liveFollowRef.current = true;
+      liveSpanMsRef.current = null;
+      return;
+    }
+    liveSpanMsRef.current = liveZoomSpanMs(current);
+    liveFollowRef.current = shouldFollowLiveTail(current, full.endMs);
+  }, []);
+
   const applyChartZoomRange = useCallback((range: ChartZoomRange) => {
     const len = chartDataLengthRef.current || chartData.length;
     const data = chartDataRef.current;
@@ -603,6 +637,7 @@ export default function VizDashboardPage() {
       syncChartZoomRef(chartZoomRef, null);
       setChartZoom(null);
       chartCanvasRef.current?.resetWindow();
+      updateLiveFollowFromZoom(null);
       return;
     }
 
@@ -618,6 +653,7 @@ export default function VizDashboardPage() {
         syncChartZoomRef(chartZoomRef, null);
         setChartZoom(null);
         chartCanvasRef.current?.resetWindow();
+        updateLiveFollowFromZoom(null);
         return;
       }
     } else {
@@ -626,6 +662,7 @@ export default function VizDashboardPage() {
         syncChartZoomRef(chartZoomRef, null);
         setChartZoom(null);
         chartCanvasRef.current?.resetWindow();
+        updateLiveFollowFromZoom(null);
         return;
       }
     }
@@ -639,13 +676,14 @@ export default function VizDashboardPage() {
     };
     syncChartZoomRef(chartZoomRef, nextRange);
     setChartZoom(nextRange);
+    updateLiveFollowFromZoom(nextRange);
 
     if (inMemoryFullRef.current) {
       chartCanvasRef.current?.setWindowByIndex(nextRange.start, nextRange.end);
     } else if (nextRange.startTs && nextRange.endTs) {
       chartCanvasRef.current?.setWindowByTimeKeys(nextRange.startTs, nextRange.endTs);
     }
-  }, [chartData.length]);
+  }, [chartData.length, updateLiveFollowFromZoom]);
 
   const applyChartZoomRangeImmediate = useCallback((range: ChartZoomRange) => {
     const len = chartDataLengthRef.current;
@@ -673,18 +711,20 @@ export default function VizDashboardPage() {
     ) {
       chartZoomRef.current = null;
       chartCanvasRef.current?.resetWindow();
+      updateLiveFollowFromZoom(null);
       syncReactChartZoomFromRef();
       return;
     }
 
     chartZoomRef.current = nextRange;
+    updateLiveFollowFromZoom(nextRange);
     if (inMemoryFullRef.current) {
       chartCanvasRef.current?.setWindowByIndex(nextRange.start, nextRange.end);
     } else if (nextRange.startTs && nextRange.endTs) {
       chartCanvasRef.current?.setWindowByTimeKeys(nextRange.startTs, nextRange.endTs);
     }
     syncReactChartZoomFromRef();
-  }, [syncReactChartZoomFromRef]);
+  }, [syncReactChartZoomFromRef, updateLiveFollowFromZoom]);
 
   const applyChartZoomFromTimeMs = useCallback((startMs: number, endMs: number) => {
     const data = chartDataRef.current;
@@ -792,6 +832,8 @@ export default function VizDashboardPage() {
   }, [applyChartZoomRange]);
 
   const resetChartZoom = useCallback(() => {
+    liveFollowRef.current = true;
+    liveSpanMsRef.current = null;
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
     chartCanvasRef.current?.resetWindow();
@@ -880,8 +922,6 @@ export default function VizDashboardPage() {
   }, [isChartSelecting, isChartMeasuring, selectionOverlay.hide, timeMeasureOverlay.hide]);
 
   const executeChartKeyboardAction = useCallback((action: ChartKeyboardAction): boolean => {
-    if (liveMode && isChartNavigationAction(action)) return false;
-
     switch (action.type) {
       case 'zoom-in':
         zoomChartByFactor(0.8, 0.5);
@@ -943,7 +983,6 @@ export default function VizDashboardPage() {
         return false;
     }
   }, [
-    liveMode,
     chartZoom,
     chartData,
     chartFullscreen,
@@ -1770,7 +1809,9 @@ export default function VizDashboardPage() {
         e.stopPropagation();
         switch (pageAction.type) {
           case 'refresh':
-            if (!loading) void fetchAll();
+            if (loading) break;
+            if (liveModeRef.current) void reloadLiveTailRef.current();
+            else void fetchAll();
             break;
           case 'toggle-live':
             setLiveMode(v => !v);
@@ -1810,6 +1851,58 @@ export default function VizDashboardPage() {
     setTimeRangePresetId(TIME_PRESET_ALL);
   }, []);
 
+  const applyLiveTailResult = useCallback((rows: VizDataRow[], meta: VizQueryMeta | null) => {
+    applyOverviewResult(rows, meta ?? {
+      total_matched: rows.length,
+      returned: rows.length,
+      downsampled: false,
+    }, true);
+    lastTimestampRef.current = rows.length > 0 ? rows[rows.length - 1].timestamp : null;
+  }, [applyOverviewResult]);
+
+  const reloadLiveTail = useCallback(async (opts?: { keepFollow?: boolean }) => {
+    if (!selectedBoard || !itemsRef.current.length) return;
+    const existingZoom = resolveChartZoomTimeRange(
+      chartDataRef.current,
+      chartZoomRef.current,
+      chartDataLengthRef.current,
+    );
+    if (!opts?.keepFollow) {
+      liveFollowRef.current = true;
+    }
+    if (existingZoom) {
+      liveSpanMsRef.current = liveZoomSpanMs(existingZoom);
+    }
+    lastTimestampRef.current = null;
+    overviewAbortRef.current?.abort();
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    overviewAbortRef.current = controller;
+    setLoading(true);
+    setQueryError(null);
+    setAllRangeGuide(null);
+    try {
+      const result = await api.viz.queryItems({
+        board_id: selectedBoard,
+        items: itemsForDataQuery(itemsRef.current),
+        mode: 'live',
+        limit: MAX_POINTS,
+      }, { signal: controller.signal, timeoutMs: 45000 });
+      if (controller.signal.aborted) return;
+      applyLiveTailResult(result.data, result.meta ?? null);
+      setLivePollError(null);
+    } catch (e) {
+      if (isRequestAborted(e)) return;
+      setQueryError(vizErrorMessage(e, t('viz.queryError')));
+    } finally {
+      if (overviewAbortRef.current === controller) {
+        overviewAbortRef.current = null;
+        setLoading(false);
+      }
+    }
+  }, [selectedBoard, applyLiveTailResult, t]);
+  reloadLiveTailRef.current = reloadLiveTail;
+
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
     const since = lastTimestampRef.current;
@@ -1820,17 +1913,25 @@ export default function VizDashboardPage() {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
         items: itemsForDataQuery(itemsRef.current),
+        mode: 'live',
         since: since || undefined,
         limit: MAX_POINTS,
       }, { signal: controller.signal, timeoutMs: 20000 });
       if (controller.signal.aborted) return;
       if (!result.data.length) return;
-      lastTimestampRef.current = result.data[result.data.length - 1].timestamp;
       setRawVizData(prev => {
-        const existing = since ? prev : [];
-        const merged = [...existing, ...result.data];
-        return merged.length > MAX_POINTS ? merged.slice(-MAX_POINTS) : merged;
+        const merged = trimLiveRows(mergeLiveRows(since ? prev : [], result.data), MAX_POINTS);
+        if (merged.length > 0) {
+          lastTimestampRef.current = merged[merged.length - 1].timestamp;
+        }
+        return merged;
       });
+      setQueryMeta({
+        total_matched: result.meta?.total_matched ?? result.data.length,
+        returned: result.data.length,
+        downsampled: false,
+      });
+      setInMemoryFull(true);
       setLivePollError(null);
     } catch (e) {
       if (isRequestAborted(e)) return;
@@ -1853,10 +1954,9 @@ export default function VizDashboardPage() {
 
   const startLive = useCallback(async () => {
     stopLive();
-    lastTimestampRef.current = null;
-    await fetchAll();
+    await reloadLiveTail();
     pollTimerRef.current = setInterval(() => { appendLive(); }, POLL_INTERVAL);
-  }, [fetchAll, appendLive, stopLive]);
+  }, [reloadLiveTail, appendLive, stopLive]);
 
   useEffect(() => {
     if (liveMode) {
@@ -1867,6 +1967,32 @@ export default function VizDashboardPage() {
     }
     return stopLive;
   }, [liveMode, startLive, stopLive]);
+
+  const liveFieldsKeyRef = useRef(liveFieldsKey);
+  useEffect(() => {
+    const prev = liveFieldsKeyRef.current;
+    liveFieldsKeyRef.current = liveFieldsKey;
+    if (!liveMode || !selectedBoard || !items.length) return;
+    if (prev === liveFieldsKey) return;
+    void reloadLiveTail({ keepFollow: true });
+  }, [liveFieldsKey, liveMode, selectedBoard, items.length, reloadLiveTail]);
+
+  useEffect(() => {
+    if (!liveMode || !liveFollowRef.current) return;
+    const data = chartDataRef.current;
+    if (data.length === 0) return;
+    const full = fullChartTimeSpan(data);
+    if (!full) return;
+    const next = liveFollowWindow(full.startMs, full.endMs, liveSpanMsRef.current);
+    if (!next) return;
+    if (isFullChartTimeRange(next, full.startMs, full.endMs)) {
+      if (chartZoomRef.current != null) {
+        resetChartZoom();
+      }
+      return;
+    }
+    applyChartZoomFromTimeMs(next.startMs, next.endMs);
+  }, [rawVizDataKey, liveMode, applyChartZoomFromTimeMs, resetChartZoom]);
 
   useEffect(() => {
     if (!liveMode || !selectedBoard) return;
@@ -2455,6 +2581,8 @@ export default function VizDashboardPage() {
       }));
     } else if (chartZoomActive && detailReady && detailQueryMeta) {
       parts.push(t('viz.summary.detailPts', { count: detailQueryMeta.returned.toLocaleString() }));
+    } else if (liveMode) {
+      parts.push(t('viz.summary.liveRaw'));
     } else if (queryMeta?.downsampled) {
       parts.push(t('viz.summary.sampled', {
         returned: queryMeta.returned.toLocaleString(),
@@ -2697,7 +2825,7 @@ export default function VizDashboardPage() {
           </div>
           {configOpen && (
             <div className="btn-group viz-config-actions">
-              <button type="button" onClick={fetchAll} className="btn-primary btn-sm" disabled={loading} title={t('viz.refreshShortcut')}>
+              <button type="button" onClick={() => { if (liveMode) void reloadLiveTail(); else void fetchAll(); }} className="btn-primary btn-sm" disabled={loading} title={t('viz.refreshShortcut')}>
                 {loading ? t('common.loading') : t('common.refresh')}
               </button>
               {chartData.length > 0 && (

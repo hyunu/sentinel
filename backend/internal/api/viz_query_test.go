@@ -86,9 +86,8 @@ func TestBuildVizProjection(t *testing.T) {
 
 	got := buildVizProjection(items)
 	want := bson.M{
-		"timestamp":            1,
-		"parsed_fields.rpm":    1,
-		"parsed_fields.temp.c": 1,
+		"timestamp":     1,
+		"parsed_fields": 1,
 	}
 
 	if len(got) != len(want) {
@@ -110,6 +109,30 @@ func TestRollupBucketStart(t *testing.T) {
 	}
 	if got := rollupBucketStart(ts, 60); !got.Equal(time.Date(2026, 8, 19, 10, 33, 0, 0, time.UTC)) {
 		t.Fatalf("rollupBucketStart(60s) = %s", got)
+	}
+}
+
+func TestIsVizLiveMode(t *testing.T) {
+	t.Parallel()
+	if !isVizLiveMode("live") {
+		t.Fatal("expected live mode")
+	}
+	if isVizLiveMode("") || isVizLiveMode("overview") {
+		t.Fatal("empty/overview must stay on history path")
+	}
+}
+
+func TestReverseVizPoints(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 8, 23, 6, 0, 0, 0, time.UTC)
+	points := []vizDataPoint{
+		{Timestamp: base.Add(2 * time.Second)},
+		{Timestamp: base.Add(time.Second)},
+		{Timestamp: base},
+	}
+	reverseVizPoints(points)
+	if !points[0].Timestamp.Equal(base) || !points[2].Timestamp.Equal(base.Add(2*time.Second)) {
+		t.Fatalf("reverse order wrong: %+v", points)
 	}
 }
 

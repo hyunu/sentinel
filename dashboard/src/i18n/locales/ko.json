@@ -299,6 +299,7 @@
       "detailRatio": "detail {{returned}} / {{total}}",
       "detailPts": "detail {{count}} pts",
       "sampled": "sampled {{returned}} / {{total}}",
+      "liveRaw": "raw live samples",
       "series": "showing {{shown}} / {{total}} series",
       "canvas": "canvas",
       "loadingDetail": "loading detail",

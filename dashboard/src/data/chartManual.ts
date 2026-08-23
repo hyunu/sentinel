@@ -5,8 +5,8 @@ export const CHART_MANUAL_UI = {
   title: l('Chart Guide', '차트 가이드'),
   tipLabel: l('Tip', '팁'),
   footnote: l(
-    'Shortcuts use physical keys (KeyboardEvent.code), so they work in Korean and English layouts. Live mode disables zoom/pan keys.',
-    '단축키는 물리 키(code) 기준이라 한글·영문 자판 모두에서 동작합니다. Live 모드에서는 줌·이동 키가 비활성화됩니다.',
+    'Shortcuts use physical keys (KeyboardEvent.code), so they work in Korean and English layouts.',
+    '단축키는 물리 키(code) 기준이라 한글·영문 자판 모두에서 동작합니다.',
   ),
   overview: l('Overview', '개요'),
   interactions: l('Zoom & pan', '줌 · 이동'),
@@ -111,15 +111,15 @@ export const CHART_MANUAL_LIVE: ManualBlock[] = [
   {
     kind: 'p',
     text: l(
-      'Live mode polls the server every few seconds and appends new points. Zoom, pan, and the minimap are disabled while Live is on.',
-      'Live 모드는 몇 초마다 서버에서 새 포인트를 가져옵니다. Live가 켜져 있으면 줌·이동·미니맵은 비활성화됩니다.',
+      'Live mode loads the latest raw parsed samples and appends new packets as they arrive. Your zoom span stays the same and the window follows the newest point. Pan away from the live edge to pause follow.',
+      'Live 모드는 방금 파싱된 원본 샘플을 불러오고, 새 패킷이 오면 그대로 이어 그립니다. 줌 폭은 유지한 채 최신 시점으로 따라갑니다. 최신 끝에서 벗어나 이동하면 따라가기를 멈춥니다.',
     ),
   },
   {
     kind: 'tip',
     text: l(
-      'Turn off Live before inspecting a historical window in detail.',
-      '과거 구간을 자세히 보려면 Live를 끈 뒤 Time Range를 조정하세요.',
+      'History All-range overview still uses downsampled min/max. Live is a separate raw tail.',
+      '전체 기간 개요는 여전히 min/max 샘플입니다. Live는 그와 다른 원본 꼬리 보기입니다.',
     ),
   },
 ];

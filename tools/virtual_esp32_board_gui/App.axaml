@@ -84,6 +84,14 @@
       <Setter Property="CornerRadius" Value="10" />
     </Style>
 
+    <Style Selector="Button.pause">
+      <Setter Property="Background" Value="#D97706" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="22,0" />
+      <Setter Property="CornerRadius" Value="10" />
+    </Style>
+
     <Style Selector="TextBox">
       <Setter Property="Background" Value="#0F1722" />
       <Setter Property="BorderBrush" Value="#253347" />

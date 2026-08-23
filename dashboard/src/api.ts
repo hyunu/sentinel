@@ -280,6 +280,7 @@ export const api = {
       time_range?: { start: string; end: string };
       since?: string;
       limit?: number;
+      mode?: 'live';
     }, options?: { signal?: AbortSignal; timeoutMs?: number }) =>
       request<{
         data: Array<{ timestamp: string; values: Record<string, number> }>;

@@ -58,6 +58,10 @@ func extractVizValue(v interface{}) (float64, bool) {
 	}
 }
 
+func isVizLiveMode(mode string) bool {
+	return mode == "live"
+}
+
 func normalizeVizPointLimit(limit int) int {
 	if limit <= 0 {
 		return vizDefaultPointLimit
@@ -231,6 +235,90 @@ func vizMaxBucketsForLimit(limit int) int {
 		return 1
 	}
 	return buckets
+}
+
+func reverseVizPoints(points []vizDataPoint) {
+	for i, j := 0, len(points)-1; i < j; i, j = i+1, j-1 {
+		points[i], points[j] = points[j], points[i]
+	}
+}
+
+func (h *Handler) scanVizPoints(
+	ctx context.Context,
+	filter bson.M,
+	items []models.VizItem,
+	limit int,
+	newestFirst bool,
+) ([]vizDataPoint, error) {
+	sortDir := 1
+	if newestFirst {
+		sortDir = -1
+	}
+	findOpts := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: sortDir}, {Key: "_id", Value: sortDir}}).
+		SetLimit(int64(limit)).
+		SetProjection(buildVizProjection(items)).
+		SetBatchSize(500)
+
+	cursor, err := h.db.UartData().Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	results := make([]vizDataPoint, 0, limit)
+	for cursor.Next(ctx) {
+		var doc vizSampleDoc
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		vals := vizValuesFromDoc(&doc, items)
+		if len(vals) == 0 {
+			continue
+		}
+		results = append(results, vizDataPoint{Timestamp: doc.Timestamp, Values: vals})
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	if newestFirst {
+		reverseVizPoints(results)
+	}
+	return results, nil
+}
+
+// queryVizSeriesRaw returns actual parsed samples. Used by live tail so the
+// chart never substitutes 60s min/avg/max rollups for incoming packets.
+func (h *Handler) queryVizSeriesRaw(
+	ctx context.Context,
+	filter bson.M,
+	items []models.VizItem,
+	limit int,
+) ([]vizDataPoint, vizQueryMeta, error) {
+	effectiveLimit := normalizeVizPointLimit(limit)
+	if len(items) == 0 {
+		return []vizDataPoint{}, vizQueryMeta{}, nil
+	}
+
+	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	if total == 0 {
+		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
+	}
+
+	newestFirst := total > int64(effectiveLimit)
+	results, err := h.scanVizPoints(ctx, filter, items, effectiveLimit, newestFirst)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+
+	return results, vizQueryMeta{
+		TotalMatched: total,
+		Returned:     len(results),
+		Downsampled:  total > int64(len(results)),
+	}, nil
 }
 
 func (h *Handler) queryVizSeries(

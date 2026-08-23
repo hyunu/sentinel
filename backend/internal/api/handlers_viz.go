@@ -193,6 +193,8 @@ type VizQueryItemsRequest struct {
 	TimeRange *models.TimeRange `json:"time_range,omitempty"`
 	Since     string            `json:"since,omitempty"`
 	Limit     *int              `json:"limit,omitempty"`
+	// Mode "live" returns raw parsed samples (never min/avg/max rollups).
+	Mode string `json:"mode,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -202,10 +204,15 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		return
 	}
 
+	live := isVizLiveMode(req.Mode)
 	filter := bson.M{"board_id": req.BoardID}
 	if req.Since != "" {
 		if st, err := time.Parse(time.RFC3339, req.Since); err == nil {
-			filter["timestamp"] = bson.M{"$gte": st}
+			if live {
+				filter["timestamp"] = bson.M{"$gt": st}
+			} else {
+				filter["timestamp"] = bson.M{"$gte": st}
+			}
 		}
 	} else if req.TimeRange != nil && !req.TimeRange.Start.IsZero() {
 		tsFilter := bson.M{"$gte": req.TimeRange.Start}
@@ -223,7 +230,16 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), queryTimeoutForVizLimit(limit))
 	defer cancel()
 
-	results, meta, err := h.queryVizSeries(ctx, filter, req.Items, limit)
+	var (
+		results []vizDataPoint
+		meta    vizQueryMeta
+		err     error
+	)
+	if live {
+		results, meta, err = h.queryVizSeriesRaw(ctx, filter, req.Items, limit)
+	} else {
+		results, meta, err = h.queryVizSeries(ctx, filter, req.Items, limit)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
 		return
