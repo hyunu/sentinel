@@ -4,6 +4,7 @@ import {
   computeWheelZoomTimeRange,
   filterChartPointsByTimeRange,
   isFullChartTimeRange,
+  isEffectivelyFullChartViewport,
   minChartZoomSpanMs,
 } from './vizChartZoomTime';
 import { MIN_CHART_ZOOM_SPAN_MS } from './vizChartConstants';
@@ -58,6 +59,33 @@ describe('isFullChartTimeRange', () => {
   it('detects full-range windows by elapsed time', () => {
     expect(isFullChartTimeRange({ startMs: 0, endMs: 10_000 }, 0, 10_000)).toBe(true);
     expect(isFullChartTimeRange({ startMs: 0, endMs: 5_000 }, 0, 10_000)).toBe(false);
+  });
+
+  it('allows small padding against uPlot axis bounds', () => {
+    expect(isFullChartTimeRange({ startMs: 200, endMs: 9_900 }, 0, 10_000)).toBe(true);
+  });
+});
+
+describe('isEffectivelyFullChartViewport', () => {
+  it('treats near-full spans as full for wheel stop', () => {
+    expect(isEffectivelyFullChartViewport({ startMs: 0, endMs: 9_960 }, 0, 10_000)).toBe(true);
+    expect(isEffectivelyFullChartViewport({ startMs: 0, endMs: 8_000 }, 0, 10_000)).toBe(false);
+  });
+});
+
+describe('computeWheelZoomTimeRange zoom-out cap', () => {
+  it('snaps to exact full bounds when zoom-out exceeds data span', () => {
+    const full = { startMs: 0, endMs: 10_000 };
+    const current = { startMs: 2_000, endMs: 8_000 };
+    const next = computeWheelZoomTimeRange(current, 5_000, 2, 0, 10_000, 100);
+    expect(next).toEqual(full);
+  });
+
+  it('zoom-in from full range produces a narrower window', () => {
+    const full = { startMs: 0, endMs: 10_000 };
+    const next = computeWheelZoomTimeRange(full, 5_000, 0.8, 0, 10_000, 100);
+    expect(next.endMs - next.startMs).toBeLessThan(10_000);
+    expect(isFullChartTimeRange(next, 0, 10_000)).toBe(false);
   });
 });
 

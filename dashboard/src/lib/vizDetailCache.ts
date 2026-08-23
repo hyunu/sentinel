@@ -35,6 +35,10 @@ export class VizDetailCache {
     return hit;
   }
 
+  peek(key: string): DetailCacheEntry | undefined {
+    return this.store.get(key);
+  }
+
   set(key: string, data: VizDetailCacheRow[], meta: VizDetailCacheMeta | null): void {
     this.store.set(key, { data, meta, fetchedAt: Date.now() });
     while (this.store.size > DETAIL_CACHE_MAX) {

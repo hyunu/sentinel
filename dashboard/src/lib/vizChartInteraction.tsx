@@ -348,20 +348,39 @@ export function computeWheelZoomWindow(
 
 export function normalizeWheelDeltaY(e: WheelEvent): number {
   let delta = e.deltaY;
-  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
-  else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= 400;
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    // Mouse wheels use line mode (often ±1–3 per detent); scale to pixel-like magnitude.
+    delta *= 33;
+  } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    delta *= 400;
+  }
   return delta;
 }
 
-const WHEEL_ZOOM_SENSITIVITY = 0.002;
+/** exp scale: negative deltaY = zoom in (factor < 1). */
+const WHEEL_ZOOM_EXP_SCALE = 0.004;
 const WHEEL_DELTA_DEAD_ZONE = 0.5;
-const WHEEL_DELTA_CLAMP = 120;
+const WHEEL_DELTA_CLAMP = 400;
+const WHEEL_FACTOR_MIN = 0.3;
+const WHEEL_FACTOR_MAX = 3.0;
 const WHEEL_REVERSAL_IGNORE = 8;
+const WHEEL_PAN_AXIS_RATIO = 2.5;
+const WHEEL_PAN_MIN_DELTA = 4;
 
 export function wheelDeltaToZoomFactor(deltaY: number): number | null {
   if (Math.abs(deltaY) < WHEEL_DELTA_DEAD_ZONE) return null;
   const clamped = Math.max(-WHEEL_DELTA_CLAMP, Math.min(WHEEL_DELTA_CLAMP, deltaY));
-  return Math.exp(clamped * WHEEL_ZOOM_SENSITIVITY);
+  const factor = Math.exp(clamped * WHEEL_ZOOM_EXP_SCALE);
+  return Math.max(WHEEL_FACTOR_MIN, Math.min(WHEEL_FACTOR_MAX, factor));
+}
+
+/** True when the gesture is clearly horizontal pan (not vertical zoom / pinch). */
+export function isWheelHorizontalPan(e: WheelEvent): boolean {
+  const absX = Math.abs(e.deltaX);
+  const absY = Math.abs(e.deltaY);
+  if (e.ctrlKey) return false;
+  if (e.shiftKey && absY > WHEEL_DELTA_DEAD_ZONE) return true;
+  return absX >= WHEEL_PAN_MIN_DELTA && absX > absY * WHEEL_PAN_AXIS_RATIO;
 }
 
 export interface WheelZoomEvent {

@@ -94,8 +94,19 @@ export function computeWheelZoomTimeRange(
   fullEndMs: number,
   minSpanMs: number,
 ): ChartZoomTimeRange {
+  const fullSpanMs = Math.max(1, fullEndMs - fullStartMs);
   const currentSpanMs = Math.max(1, current.endMs - current.startMs);
-  const spanMs = Math.max(minSpanMs, currentSpanMs * factor);
+  let spanMs = Math.max(minSpanMs, currentSpanMs * factor);
+
+  if (factor >= 1) {
+    spanMs = Math.min(fullSpanMs, spanMs);
+    if (spanMs >= fullSpanMs - fullChartRangeToleranceMs(fullSpanMs)) {
+      return { startMs: fullStartMs, endMs: fullEndMs };
+    }
+  } else {
+    spanMs = Math.min(currentSpanMs, spanMs);
+  }
+
   const focusRatio = (focusMs - current.startMs) / currentSpanMs;
   let newStartMs = focusMs - focusRatio * spanMs;
   let newEndMs = newStartMs + spanMs;
@@ -120,6 +131,11 @@ export function computePanTimeRange(
   );
 }
 
+export function fullChartRangeToleranceMs(fullSpanMs: number): number {
+  if (fullSpanMs <= 0) return 0;
+  return Math.max(500, fullSpanMs * 0.002);
+}
+
 export function isFullChartTimeRange(
   range: ChartZoomTimeRange,
   fullStartMs: number,
@@ -127,7 +143,22 @@ export function isFullChartTimeRange(
 ): boolean {
   const fullSpanMs = fullEndMs - fullStartMs;
   if (fullSpanMs <= 0) return true;
-  return range.endMs - range.startMs >= fullSpanMs - 1;
+  const tolerance = fullChartRangeToleranceMs(fullSpanMs);
+  const spanMs = range.endMs - range.startMs;
+  return spanMs >= fullSpanMs - tolerance;
+}
+
+/** Looser full check for wheel/pan stop — avoids sub-ms viewport vs data span mismatch. */
+export function isEffectivelyFullChartViewport(
+  range: ChartZoomTimeRange,
+  fullStartMs: number,
+  fullEndMs: number,
+): boolean {
+  const fullSpanMs = fullEndMs - fullStartMs;
+  if (fullSpanMs <= 0) return true;
+  const spanMs = range.endMs - range.startMs;
+  const tolerance = Math.max(1000, fullSpanMs * 0.005);
+  return spanMs >= fullSpanMs - tolerance;
 }
 
 export function filterChartPointsByTimeRange<T extends ChartTimePoint>(
@@ -160,6 +191,35 @@ export function filterVizRowsByTimeRange<T extends { timestamp: string }>(
     const ms = parseChartTimeMs(r.timestamp);
     return ms != null && ms >= lo && ms <= hi;
   });
+}
+
+/** Pick the in-window slice with the most points — keeps detail density during zoom. */
+export function pickDensestChartPointsInWindow<T extends ChartTimePoint>(
+  startTs: string,
+  endTs: string,
+  candidates: readonly (readonly T[])[],
+): T[] {
+  let best: T[] = [];
+  for (const series of candidates) {
+    if (!series.length) continue;
+    const inWindow = filterChartPointsByTimeRange(series, startTs, endTs);
+    if (inWindow.length > best.length) best = inWindow;
+  }
+  return best;
+}
+
+export function pickDensestVizRowsInWindow<T extends { timestamp: string }>(
+  startTs: string,
+  endTs: string,
+  candidates: readonly (readonly T[])[],
+): T[] {
+  let best: T[] = [];
+  for (const series of candidates) {
+    if (!series.length) continue;
+    const inWindow = filterVizRowsByTimeRange(series, startTs, endTs);
+    if (inWindow.length > best.length) best = inWindow;
+  }
+  return best;
 }
 
 export function chartZoomRangeFromTimeMs(

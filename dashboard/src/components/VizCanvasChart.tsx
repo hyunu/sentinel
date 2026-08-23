@@ -4,6 +4,7 @@ import {
   useImperativeHandle,
   useRef,
   useCallback,
+  useMemo,
 } from 'react';
 import uPlot, { type AlignedData, type Options, type Series } from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -18,10 +19,22 @@ const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
 import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
 import { shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
+import { filterChartPointsByTimeRange } from '../lib/vizChartZoomTime';
+import { computeYAxisDomain } from '../lib/vizDashboardUtils';
+
+export interface VizViewportSyncOptions {
+  /** Recompute Y from points visible in the new x window (default true). */
+  syncY?: boolean;
+  /** Skip bounds/session-break DOM work — use during pan/wheel frames. */
+  lightweight?: boolean;
+}
 
 export interface VizCanvasChartHandle {
-  setWindowByIndex(start: number, end: number): void;
-  setWindowByTimeKeys(startTimeKey: string, endTimeKey: string): void;
+  setWindowByIndex(start: number, end: number, opts?: VizViewportSyncOptions): void;
+  setWindowByTimeKeys(startTimeKey: string, endTimeKey: string, opts?: VizViewportSyncOptions): void;
+  setWindowByTimeMs(startMs: number, endMs: number, opts?: VizViewportSyncOptions): void;
+  getXScaleMs(): { startMs: number; endMs: number } | null;
+  syncViewportFinish(): void;
   resetWindow(): void;
   refreshPlotBounds(): { left: number; width: number };
   getPlotClientMetrics(): { plotLeft: number; plotWidth: number } | null;
@@ -109,6 +122,10 @@ export interface VizCanvasChartProps {
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
   xWindowTimeKeys?: { start: string; end: string } | null;
+  /** When false, uPlot x-scale clips full detail — avoids per-zoom point filtering. */
+  filterPointsToXWindow?: boolean;
+  /** During pan/wheel, recompute Y from the visible x range on the canvas (no React). */
+  autoSyncYToXWindow?: boolean;
   chartItems: VizItem[];
   maxVisibleSeries: number;
   yAxisDomains: Record<string, [number, number] | undefined>;
@@ -300,6 +317,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     fullTimeline,
     windowIndices,
     xWindowTimeKeys,
+    filterPointsToXWindow = true,
+    autoSyncYToXWindow = false,
     chartItems,
     maxVisibleSeries,
     yAxisDomains,
@@ -327,14 +346,31 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const sessionBreakTimesRef = useRef<number[]>([...sessionBreakTimesSec]);
   sessionBreakTimesRef.current = [...sessionBreakTimesSec];
   const pointsRef = useRef(points);
-  pointsRef.current = points;
+  const plotPoints = useMemo(() => {
+    if (
+      filterPointsToXWindow
+      && xWindowTimeKeys
+      && !fullTimeline
+      && points.length > 0
+    ) {
+      return filterChartPointsByTimeRange(points, xWindowTimeKeys.start, xWindowTimeKeys.end);
+    }
+    return points;
+  }, [points, xWindowTimeKeys, fullTimeline, filterPointsToXWindow]);
+  pointsRef.current = plotPoints;
   const fullTimelineRef = useRef(fullTimeline);
   fullTimelineRef.current = fullTimeline;
   const chartItemsRef = useRef(chartItems);
   chartItemsRef.current = chartItems;
+  const maxVisibleSeriesRef = useRef(maxVisibleSeries);
+  maxVisibleSeriesRef.current = maxVisibleSeries;
+  const autoSyncYToXWindowRef = useRef(autoSyncYToXWindow);
+  autoSyncYToXWindowRef.current = autoSyncYToXWindow;
   const windowIndicesRef = useRef<{ start: number; end: number } | null>(
     windowIndices ? { start: windowIndices.start, end: windowIndices.end } : null,
   );
+  /** Preserved x viewport (seconds) — survives setData and plot option rebuilds. */
+  const imperativeXRangeRef = useRef<{ min: number; max: number } | null>(null);
   const chartLabelRef = useRef(chartLabel);
   chartLabelRef.current = chartLabel;
   const resolveYScaleRef = useRef(resolveYScale);
@@ -399,31 +435,122 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     [],
   );
 
-  const applyWindowIndices = useCallback((start: number, end: number) => {
+  const syncYScalesToVisibleWindow = useCallback((u: uPlot, startSec: number, endSec: number) => {
+    const points = pointsRef.current;
+    const items = chartItemsRef.current;
+    if (points.length === 0 || items.length === 0) return;
+
+    const startKey = new Date(Math.min(startSec, endSec) * 1000).toISOString();
+    const endKey = new Date(Math.max(startSec, endSec) * 1000).toISOString();
+    const visible = filterChartPointsByTimeRange(points, startKey, endKey);
+    if (visible.length === 0) return;
+
+    let visibleRank = 0;
+    const plottedItems: VizItem[] = [];
+    for (const item of items) {
+      if (!item.visible) continue;
+      if (visibleRank >= maxVisibleSeriesRef.current) break;
+      plottedItems.push(item);
+      visibleRank++;
+    }
+
+    const leftItems = plottedItems.filter(i => resolveYScaleRef.current(i) === PRIMARY_SCALE);
+    const rightItems = plottedItems.filter(i => resolveYScaleRef.current(i) === SECONDARY_SCALE);
+    const leftDomain = computeYAxisDomain(visible, leftItems);
+    const rightDomain = computeYAxisDomain(visible, rightItems);
+    if (leftDomain) u.setScale('y', { min: leftDomain[0], max: leftDomain[1] });
+    if (rightDomain) u.setScale('y2', { min: rightDomain[0], max: rightDomain[1] });
+  }, []);
+
+  const applyXRangeToPlot = useCallback((
+    u: uPlot,
+    range: { min: number; max: number },
+    opts?: VizViewportSyncOptions,
+  ) => {
+    imperativeXRangeRef.current = range;
+    u.setScale('x', range);
+    if (opts?.syncY !== false && autoSyncYToXWindowRef.current) {
+      syncYScalesToVisibleWindow(u, range.min, range.max);
+    }
+    if (opts?.lightweight) {
+      u.redraw();
+    } else {
+      syncPlotAndBreaks(u);
+    }
+  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow]);
+
+  const applyWindowIndices = useCallback((start: number, end: number, opts?: VizViewportSyncOptions) => {
     const u = plotRef.current;
     const timeline = fullTimelineRef.current;
     if (!u || !timeline || timeline.length === 0) return;
     const range = xScaleFromIndices(timeline, start, end);
-    if (range) u.setScale('x', range);
+    if (!range) return;
+    applyXRangeToPlot(u, range, opts);
     windowIndicesRef.current = { start, end };
-  }, []);
+  }, [applyXRangeToPlot]);
 
-  const applyXWindowTimeKeys = useCallback((startTimeKey: string, endTimeKey: string) => {
+  const applyXWindowTimeKeys = useCallback((
+    startTimeKey: string,
+    endTimeKey: string,
+    opts?: VizViewportSyncOptions,
+  ) => {
     const u = plotRef.current;
     if (!u) return;
     const range = xScaleFromTimeKeys(startTimeKey, endTimeKey);
-    if (range) u.setScale('x', range);
+    if (!range) return;
+    applyXRangeToPlot(u, range, opts);
     windowIndicesRef.current = null;
+  }, [applyXRangeToPlot]);
+
+  const applyXWindowTimeMs = useCallback((
+    startMs: number,
+    endMs: number,
+    opts?: VizViewportSyncOptions,
+  ) => {
+    applyXWindowTimeKeys(
+      new Date(startMs).toISOString(),
+      new Date(endMs).toISOString(),
+      opts,
+    );
+  }, [applyXWindowTimeKeys]);
+
+  const getXScaleMs = useCallback((): { startMs: number; endMs: number } | null => {
+    const u = plotRef.current;
+    if (!u) return null;
+    const min = u.scales.x.min;
+    const max = u.scales.x.max;
+    if (typeof min !== 'number' || typeof max !== 'number') return null;
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    return { startMs: min * 1000, endMs: max * 1000 };
   }, []);
 
-  const resetWindow = useCallback(() => {
+  const syncViewportFinish = useCallback(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    const min = u.scales.x.min;
+    const max = u.scales.x.max;
+    if (typeof min === 'number' && typeof max === 'number' && autoSyncYToXWindowRef.current) {
+      syncYScalesToVisibleWindow(u, min, max);
+    }
+    syncPlotAndBreaks(u);
+  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow]);
+
+  const resetWindow = useCallback((opts?: VizViewportSyncOptions) => {
     const u = plotRef.current;
     const timeline = fullTimelineRef.current ?? pointsRef.current;
     if (!u || timeline.length === 0) return;
     const range = xScaleFromIndices(timeline, 0, timeline.length - 1);
-    if (range) u.setScale('x', range);
+    if (!range) return;
+    imperativeXRangeRef.current = range;
+    u.setScale('x', range);
+    if (opts?.syncY !== false && autoSyncYToXWindowRef.current) {
+      syncYScalesToVisibleWindow(u, range.min, range.max);
+    } else if (fullTimeline) {
+      syncYScalesToVisibleWindow(u, range.min, range.max);
+    }
+    syncPlotAndBreaks(u);
     windowIndicesRef.current = null;
-  }, []);
+  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow, fullTimeline]);
 
   const syncXWindow = useCallback(() => {
     if (xWindowTimeKeys) {
@@ -434,12 +561,15 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       applyWindowIndices(windowIndices.start, windowIndices.end);
       return;
     }
-    resetWindow();
-  }, [xWindowTimeKeys, windowIndices, fullTimeline, applyXWindowTimeKeys, applyWindowIndices, resetWindow]);
+    // No React window — keep imperative viewport from pan/wheel; reset via resetWindow() only.
+  }, [xWindowTimeKeys, windowIndices, fullTimeline, applyXWindowTimeKeys, applyWindowIndices]);
 
   useImperativeHandle(ref, () => ({
     setWindowByIndex: applyWindowIndices,
     setWindowByTimeKeys: applyXWindowTimeKeys,
+    setWindowByTimeMs: applyXWindowTimeMs,
+    getXScaleMs,
+    syncViewportFinish,
     resetWindow,
     refreshPlotBounds: () => {
       const u = plotRef.current;
@@ -484,16 +614,22 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     yAxisDomains.y?.join(','),
     yAxisDomains.y2?.join(','),
   ].join('|');
+  const xWindowKey = xWindowTimeKeys
+    ? `${xWindowTimeKeys.start}:${xWindowTimeKeys.end}`
+    : 'full';
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || points.length === 0 || chartItems.length === 0) return;
+    if (!container || plotPoints.length === 0 || chartItems.length === 0) return;
 
     const usesRight = yAxes.some(axis => axis.id === SECONDARY_SCALE);
     const leftDomain = yAxisDomains[PRIMARY_SCALE];
     const rightDomain = yAxisDomains[SECONDARY_SCALE];
     const leftAxis = yAxes.find(a => a.id === PRIMARY_SCALE);
     const rightAxis = yAxes.find(a => a.id === SECONDARY_SCALE);
+    const xRange = xWindowTimeKeys
+      ? xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end)
+      : imperativeXRangeRef.current;
 
     const axisColor = readCssVar('--chart-axis', '#888aa0');
     const gridColor = readCssVar('--chart-grid', '#2e3040');
@@ -512,7 +648,21 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       },
       legend: { show: false },
       scales: {
-        x: { time: true },
+        x: {
+          time: true,
+          auto: false,
+          range: (u, dataMin, dataMax) => {
+            const saved = imperativeXRangeRef.current;
+            if (saved) return [saved.min, saved.max];
+            const min = u.scales.x.min;
+            const max = u.scales.x.max;
+            if (typeof min === 'number' && typeof max === 'number' && Number.isFinite(min) && Number.isFinite(max)) {
+              return [min, max];
+            }
+            if (xRange) return [xRange.min, xRange.max];
+            return [dataMin, dataMax];
+          },
+        },
         y: {
           auto: false,
           range: leftDomain
@@ -659,19 +809,27 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const initialWidth = Math.floor(container.clientWidth);
     const plot = new uPlot(
       makeOptions(initialWidth > 0 ? initialWidth : 640),
-      buildAlignedData(points, chartItems),
+      buildAlignedData(plotPoints, chartItems),
       container,
     );
     plot.root.classList.add('viz-canvas-chart');
     plotRef.current = plot;
     syncPlotAndBreaks(plot);
 
-    if (windowIndices) {
+    if (imperativeXRangeRef.current) {
+      plot.setScale('x', imperativeXRangeRef.current);
+    } else if (windowIndices) {
       applyWindowIndices(windowIndices.start, windowIndices.end);
     } else if (xWindowTimeKeys) {
       applyXWindowTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
     } else if (fullTimeline && fullTimeline.length > 0) {
       resetWindow();
+    } else if (plotPoints.length > 0) {
+      const range = xScaleFromIndices(plotPoints, 0, plotPoints.length - 1);
+      if (range) {
+        imperativeXRangeRef.current = range;
+        plot.setScale('x', range);
+      }
     }
 
     return () => {
@@ -680,7 +838,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [seriesLayoutKey, yAxisLayoutKey, yDomainKey, height, theme, maxVisibleSeries, applyWindowIndices, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec]);
+  }, [seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec]);
 
   useEffect(() => {
     const u = plotRef.current;
@@ -696,20 +854,50 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     });
   }, [visibilityKey, chartItems, maxVisibleSeries]);
 
-  const windowIndicesKey = windowIndices
-    ? `${windowIndices.start}:${windowIndices.end}`
-    : 'full';
-
-  const xWindowTimeKeysKey = xWindowTimeKeys
-    ? `${xWindowTimeKeys.start}:${xWindowTimeKeys.end}`
-    : 'none';
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u || plotPoints.length === 0) return;
+    const savedX = imperativeXRangeRef.current;
+    u.setData(buildAlignedData(plotPoints, chartItems));
+    if (savedX) {
+      u.setScale('x', savedX);
+    } else if (xWindowTimeKeys) {
+      const range = xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
+      if (range) {
+        imperativeXRangeRef.current = range;
+        u.setScale('x', range);
+      }
+    }
+    syncPlotAndBreaks(u);
+  }, [plotPoints, chartItems, seriesLayoutKey, syncPlotAndBreaks, xWindowTimeKeys]);
 
   useEffect(() => {
     const u = plotRef.current;
-    if (!u || points.length === 0) return;
-    u.setData(buildAlignedData(points, chartItems));
+    if (!u || plotPoints.length === 0) return;
+    const leftDomain = yAxisDomains[PRIMARY_SCALE];
+    const rightDomain = yAxisDomains[SECONDARY_SCALE];
+    if (leftDomain) u.setScale('y', { min: leftDomain[0], max: leftDomain[1] });
+    if (rightDomain) u.setScale('y2', { min: rightDomain[0], max: rightDomain[1] });
+    u.redraw();
     syncPlotAndBreaks(u);
-  }, [points, chartItems, seriesLayoutKey, syncPlotAndBreaks]);
+  }, [plotPoints.length, yDomainKey, syncPlotAndBreaks, yAxisDomains]);
+
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u || plotPoints.length === 0) return;
+    if (!xWindowTimeKeys && !(fullTimeline && windowIndices)) return;
+
+    if (xWindowTimeKeys && imperativeXRangeRef.current) {
+      const propRange = xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
+      const saved = imperativeXRangeRef.current;
+      if (propRange && (saved.max - saved.min) >= (propRange.max - propRange.min) - 1e-9) {
+        return;
+      }
+    }
+
+    syncXWindow();
+    syncPlotAndBreaks(u);
+  }, [plotPoints.length, xWindowKey, syncXWindow, syncPlotAndBreaks, xWindowTimeKeys, fullTimeline, windowIndices]);
 
   const sessionBreakTimesKey = sessionBreakTimesSec.length > 0
     ? `${sessionBreakTimesSec.length}:${sessionBreakTimesSec[0]}:${sessionBreakTimesSec[sessionBreakTimesSec.length - 1]}`
@@ -723,17 +911,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   }, [sessionBreakTimesKey, syncSessionBreaks]);
 
   useEffect(() => {
-    const u = plotRef.current;
-    if (!u) return;
-    syncXWindow();
-    syncPlotAndBreaks(u);
-  }, [windowIndicesKey, xWindowTimeKeysKey, points.length, syncXWindow, syncPlotAndBreaks]);
-
-  useEffect(() => {
     if (hideTooltip) hideTooltipEl();
   }, [hideTooltip, hideTooltipEl]);
 
-  if (points.length === 0 || chartItems.length === 0) {
+  if (plotPoints.length === 0 || chartItems.length === 0) {
     return null;
   }
   let visibleRank = 0;
