@@ -1559,8 +1559,10 @@ export default function VizDashboardPage() {
         flushChartZoomCommitRef.current();
       } else if (inMemoryFullRef.current) {
         applyChartZoomFromTimeMsImmediateRef.current(next.startMs, next.endMs);
+        liveFollowRef.current = false;
       } else {
         applyViewportTimeMsImmediateRef.current(next.startMs, next.endMs);
+        liveFollowRef.current = false;
       }
     };
 
@@ -1620,6 +1622,9 @@ export default function VizDashboardPage() {
       } else {
         applyViewportTimeMsImmediateRef.current(next.startMs, next.endMs);
       }
+      // Manual wheel zoom always takes over the viewport — prevent the follow
+      // effect from re-centering on the live tail on the next poll.
+      liveFollowRef.current = false;
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -2025,15 +2030,6 @@ export default function VizDashboardPage() {
     setTimeRangePresetId(TIME_PRESET_ALL);
   }, []);
 
-  const applyLiveTailResult = useCallback((rows: VizDataRow[], meta: VizQueryMeta | null) => {
-    applyOverviewResult(rows, meta ?? {
-      total_matched: rows.length,
-      returned: rows.length,
-      downsampled: false,
-    }, true);
-    lastTimestampRef.current = rows.length > 0 ? rows[rows.length - 1].timestamp : null;
-  }, [applyOverviewResult]);
-
   const reloadLiveTail = useCallback(async (opts?: { keepFollow?: boolean }) => {
     if (!selectedBoard || !itemsRef.current.length) return;
     const existingZoom = resolveChartZoomTimeRange(
@@ -2047,34 +2043,18 @@ export default function VizDashboardPage() {
     if (existingZoom) {
       liveSpanMsRef.current = liveZoomSpanMs(existingZoom);
     }
-    lastTimestampRef.current = null;
     overviewAbortRef.current?.abort();
     liveAbortRef.current?.abort();
-    const controller = new AbortController();
-    overviewAbortRef.current = controller;
-    setLoading(true);
     setQueryError(null);
     setAllRangeGuide(null);
-    try {
-      const result = await api.viz.queryItems({
-        board_id: selectedBoard,
-        items: itemsForDataQuery(itemsRef.current),
-        mode: 'live',
-        limit: MAX_POINTS,
-      }, { signal: controller.signal, timeoutMs: 45000 });
-      if (controller.signal.aborted) return;
-      applyLiveTailResult(result.data, result.meta ?? null);
-      setLivePollError(null);
-    } catch (e) {
-      if (isRequestAborted(e)) return;
-      setQueryError(vizErrorMessage(e, t('viz.queryError')));
-    } finally {
-      if (overviewAbortRef.current === controller) {
-        overviewAbortRef.current = null;
-        setLoading(false);
-      }
-    }
-  }, [selectedBoard, applyLiveTailResult, t]);
+    // Live tail starts fresh from "now" — do not pre-fill the chart with history.
+    lastTimestampRef.current = new Date().toISOString();
+    setRawVizData([]);
+    setQueryMeta(null);
+    setInMemoryFull(true);
+    setLoading(false);
+    setLivePollError(null);
+  }, [selectedBoard, t]);
   reloadLiveTailRef.current = reloadLiveTail;
 
   const appendLive = useCallback(async () => {
@@ -2162,6 +2142,8 @@ export default function VizDashboardPage() {
     if (isFullChartTimeRange(next, full.startMs, full.endMs)) {
       if (chartZoomRef.current != null) {
         resetChartZoom();
+      } else {
+        chartCanvasRef.current?.resetWindow();
       }
       return;
     }
