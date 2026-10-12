@@ -23,9 +23,9 @@ func DefaultLCPProtocolSpec(id string) models.ProtocolSpec {
 	rules := DefaultLCPParseRules()
 	return models.ProtocolSpec{
 		ID:          id,
-		Name:        "LCP Protocol",
-		Version:     "1.0",
-		Description: "LCP↔OSP UART: AA [LEN] FID SEQ ATTR PAYLOAD CRC16 BB — CF(207) / CD(205)",
+		Name:        "LCP/OSP RPC Protocol",
+		Version:     "2.0",
+		Description: "LCP↔OSP UART: AA [LEN:2] FID SEQ:2 ATTR PAYLOAD CRC16 BB — FID C7/C8/C9/CA/CC/CD/CE/CF 전체",
 		ParseRules:  &rules,
 	}
 }

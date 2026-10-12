@@ -1,14 +1,33 @@
 {
   "_meta": {
-    "name": "LCP/OSP 함수 실행 프로토콜",
-    "description": "시리얼 통신 패킷 파싱 규칙 - 함수 실행(0xCF) 및 함수 ACK(0xCD)",
-    "version": "1.0",
-    "frame": "AA [LEN:2] [FID] [SEQ:2] [ATTR] [PAYLOAD...] [CRC16:2] BB",
+    "name": "LCP/OSP RPC 프로토콜",
+    "description": "OSP↔LCP RPC 패킷 파싱 규칙 - 전체 FID (C7/C8/C9/CA/CC/CD/CE/CF)",
+    "version": "2.0",
+    "frame": "AA [LEN:2 BE] [FID] [SEQ:2 BE] [ATTR] [PAYLOAD...] [CRC16:2] BB",
     "notes": {
-      "endian": "big-endian (MSB first)",
+      "endian": "envelope(header/tail)은 big-endian, payload 내부 multi-byte 값은 little-endian",
       "seq_no": "OSP요청/LCP응답: 0~32767, LCP요청/OSP응답: 32768~65535",
-      "tlv_len": "len 필드는 flag+len 자신을 포함한 전체 TLV 길이 (content = len - 2)",
-      "crc16": "CRC-16/XMODEM (poly 0x1021, init 0). 범위: STX(AA) ~ payload 마지막 바이트"
+      "block_len": "TLV len 필드는 flag+len 자신을 포함한 전체 block 길이 (content = len - 2)",
+      "crc16": "CRC-16/XMODEM (poly 0x1021, init 0). 범위: AA ~ payload 마지막 바이트. 백엔드에서 검증",
+      "payload_len": "payload 길이 = LEN - 10 (AA1 + LEN2 + FID1 + SEQ2 + ATTR1 + CRC2 + BB1)",
+      "fids": {
+        "0xC7": "instant monitor 요청 (payload 없음)",
+        "0xC8": "INIT, 모듈 초기화 (payload 없음)",
+        "0xC9": "event code + event data",
+        "0xCA": "data dump (binary data)",
+        "0xCC": "packet ACK (recv_fid + error_code)",
+        "0xCD": "function result/error block (+ 선택적 F9 monitor block)",
+        "0xCE": "HEARTBEAT (payload 없음)",
+        "0xCF": "function call block (flag FC/FC-set-and-get FB)"
+      },
+      "flags": {
+        "0xFC": "function call block",
+        "0xFB": "set-and-get-monitor function call block",
+        "0xFA": "argument block",
+        "0xFD": "function result block",
+        "0xFE": "function error block",
+        "0xF9": "set-and-get-monitor monitor block"
+      }
     }
   },
   "fields": [
@@ -45,6 +64,93 @@
       "type": "Switch",
       "key_from": "fid",
       "cases": {
+        "199": [],
+        "200": [],
+        "201": [
+          {
+            "name": "event_code",
+            "type": "U8"
+          },
+          {
+            "name": "event_data",
+            "type": "VarBytes",
+            "length_from": {"expr": "length > 11 ? length - 11 : 0"}
+          }
+        ],
+        "202": [
+          {
+            "name": "dump",
+            "type": "VarBytes",
+            "length_from": {"expr": "length > 10 ? length - 10 : 0"}
+          }
+        ],
+        "204": [
+          {
+            "name": "recv_fid",
+            "type": "U8"
+          },
+          {
+            "name": "error_code",
+            "type": "U8"
+          }
+        ],
+        "205": [
+          {
+            "name": "result_count",
+            "type": "U8"
+          },
+          {
+            "name": "results",
+            "type": "RepeatCount",
+            "count_from": "result_count",
+            "item_rules": [
+              {
+                "name": "flag",
+                "type": "U8"
+              },
+              {
+                "name": "len",
+                "type": "U8"
+              },
+              {
+                "name": "result",
+                "type": "Optional",
+                "predicate": {"expr": "flag == 0xFD"},
+                "rules": [
+                  {"name": "function_id", "type": "U8"},
+                  {
+                    "name": "result_data",
+                    "type": "VarBytes",
+                    "length_from": {"expr": "len - 3"}
+                  }
+                ]
+              },
+              {
+                "name": "error",
+                "type": "Optional",
+                "predicate": {"expr": "flag == 0xFE"},
+                "rules": [
+                  {"name": "function_id", "type": "U8"},
+                  {"name": "error_code", "type": "U8"}
+                ]
+              },
+              {
+                "name": "monitor",
+                "type": "Optional",
+                "predicate": {"expr": "flag == 0xF9"},
+                "rules": [
+                  {"name": "dms_result", "type": "U8"},
+                  {
+                    "name": "monitor_data",
+                    "type": "VarBytes",
+                    "length_from": {"expr": "len > 3 ? len - 3 : 0"}
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "206": [],
         "207": [
           {
             "name": "function_count",
@@ -59,7 +165,7 @@
                 "name": "flag",
                 "type": "Validate",
                 "inner": {"type": "U8"},
-                "validate_expr": "value == 0xFC"
+                "validate_expr": "value == 0xFC || value == 0xFB"
               },
               {
                 "name": "len",
@@ -97,41 +203,15 @@
               }
             ]
           }
-        ],
-        "205": [
-          {
-            "name": "function_count",
-            "type": "U8"
-          },
-          {
-            "name": "functions",
-            "type": "RepeatCount",
-            "count_from": "function_count",
-            "item_rules": [
-              {
-                "name": "flag",
-                "type": "U8"
-              },
-              {
-                "name": "len",
-                "type": "U8"
-              },
-              {
-                "name": "function_id",
-                "type": "U8"
-              },
-              {
-                "name": "error",
-                "type": "Optional",
-                "predicate": {"expr": "flag == 0xFE"},
-                "rules": [
-                  {"name": "err_code", "type": "U8"}
-                ]
-              }
-            ]
-          }
         ]
-      }
+      },
+      "default": [
+        {
+          "name": "raw_payload",
+          "type": "VarBytes",
+          "length_from": {"expr": "length > 10 ? length - 10 : 0"}
+        }
+      ]
     },
     {
       "name": "crc16",
