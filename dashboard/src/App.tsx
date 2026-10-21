@@ -6,9 +6,10 @@ import ProtocolEditPage from './pages/ProtocolEdit';
 import ProtocolTemplatesPage from './pages/ProtocolTemplates';
 import TemplateEditPage from './pages/TemplateEdit';
 import DataViewerPage from './pages/DataViewer';
+import SessionsPage from './pages/Sessions';
 import VizDashboardPage from './pages/VizDashboard';
 import AIQueryPage from './pages/AIQuery';
-import { IconBoards, IconProtocols, IconData, IconChart, IconAI } from './components/NavIcons';
+import { IconBoards, IconProtocols, IconData, IconSessions, IconChart, IconAI } from './components/NavIcons';
 import IconSettings from './components/IconSettings';
 import IconSidebarToggle from './components/IconSidebarToggle';
 import SettingsModal from './components/SettingsModal';
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/boards', key: 'nav.boards', Icon: IconBoards },
   { to: '/protocols', key: 'nav.protocols', Icon: IconProtocols },
   { to: '/data', key: 'nav.dataViewer', Icon: IconData },
+  { to: '/sessions', key: 'nav.sessions', Icon: IconSessions },
   { to: '/viz', key: 'nav.visualization', Icon: IconChart },
   { to: '/ai', key: 'nav.aiQuery', Icon: IconAI },
 ] as const;
@@ -131,6 +133,7 @@ function AppShell() {
           <Route path="/protocols/new" element={<ProtocolEditPage />} />
           <Route path="/protocols/:id/edit" element={<ProtocolEditPage />} />
           <Route path="/data" element={<DataViewerPage />} />
+          <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/viz" element={<VizDashboardPage />} />
           <Route path="/ai" element={<AIQueryPage />} />
         </Routes>

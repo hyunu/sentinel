@@ -4627,3 +4627,71 @@ pre {
 @keyframes ai-cursor-blink {
   50% { opacity: 0; }
 }
+
+/* Sessions page */
+.sessions-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.sessions-error {
+  margin: 0 0 12px;
+  color: var(--danger);
+}
+
+.sessions-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sessions-panel-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sessions-panel-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sessions-panel-controls input {
+  width: 110px;
+}
+
+.sessions-create-form {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.sessions-form-hint {
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.sessions-form-hint + .btn-group {
+  justify-content: flex-end;
+}
+
+.sessions-empty {
+  padding: 24px 16px;
+}
+
+.sessions-range {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sessions-table td {
+  vertical-align: middle;
+}

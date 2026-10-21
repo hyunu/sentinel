@@ -39,9 +39,9 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Request timeout or cancelled');
+      throw new Error('Request timeout or cancelled', { cause: error });
     }
-    throw error;
+    throw new Error(error instanceof Error ? error.message : 'Request failed', { cause: error });
   } finally {
     clearTimeout(timeout);
   }
@@ -310,7 +310,7 @@ export const api = {
       const qs = board_id ? `?board_id=${board_id}` : '';
       return request<Session[]>(`/sessions${qs}`);
     },
-    create: (data: { board_id: string; name: string; description?: string }) =>
+    create: (data: { board_id: string; name: string; description?: string; start_time?: string; end_time?: string; tags?: string[] }) =>
       request<Session>('/sessions', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: Partial<Session>) =>
       request<void>(`/sessions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

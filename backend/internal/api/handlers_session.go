@@ -47,13 +47,32 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
 	if _, err := h.db.Sessions().InsertOne(ctx, session); err != nil {
 		h.logger.Error("failed to create session", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
+	}
+
+	if !session.StartTime.IsZero() && !session.EndTime.IsZero() {
+		result, err := h.db.UartData().UpdateMany(ctx,
+			bson.M{
+				"board_id":  session.BoardID,
+				"timestamp": bson.M{"$gte": session.StartTime, "$lte": session.EndTime},
+				"session_id": bson.M{"$exists": false},
+			},
+			bson.M{"$set": bson.M{"session_id": session.ID}},
+		)
+		if err != nil {
+			h.logger.Warn("failed to assign UART data to session", zap.Error(err))
+		} else if result.ModifiedCount > 0 {
+			h.logger.Info("assigned UART data to session",
+				zap.String("session_id", session.ID),
+				zap.Int64("count", result.ModifiedCount),
+			)
+		}
 	}
 
 	c.JSON(http.StatusCreated, session)

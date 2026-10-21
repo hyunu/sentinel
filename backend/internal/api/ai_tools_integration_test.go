@@ -16,6 +16,7 @@ import (
 	"github.com/hyunu/sentinel/internal/config"
 	"github.com/hyunu/sentinel/internal/db"
 	"github.com/hyunu/sentinel/internal/models"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.uber.org/zap"
 )
 
@@ -230,6 +231,34 @@ func TestAIToolsIntegration(t *testing.T) {
 		}
 		if *comparisons[1].DeltaPercent >= 0 {
 			t.Fatalf("expected negative delta: %#v", comparisons[1])
+		}
+	})
+
+	t.Run("create session assigns data", func(t *testing.T) {
+		router := SetupRouter(database, zap.NewNop(), nil)
+		body := fmt.Sprintf(
+			`{"board_id":%q,"name":"Manual Session","start_time":%q,"end_time":%q}`,
+			board.ID,
+			base.Add(-time.Minute).Format(time.RFC3339),
+			base.Add(time.Minute).Format(time.RFC3339),
+		)
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var session models.Session
+		if err := json.Unmarshal(recorder.Body.Bytes(), &session); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		count, err := database.UartData().CountDocuments(ctx, bson.M{"session_id": session.ID})
+		if err != nil {
+			t.Fatalf("count assigned: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("assigned frames = %d, want 2", count)
 		}
 	})
 

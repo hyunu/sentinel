@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import type { UartData, Board, UartCursor } from '../api';
+import type { UartData, Board, UartCursor, Session } from '../api';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
 
 type TimeRange = 'all' | '1h' | '24h' | '7d';
@@ -80,6 +81,8 @@ export default function DataViewerPage() {
   const [selectedBoard, setSelectedBoard] = useState('');
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
   const [direction, setDirection] = useState<DirectionFilter>('');
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [selectedSession, setSelectedSession] = useState('');
   const [pageSize, setPageSize] = useState<number>(100);
   const [data, setData] = useState<UartData[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -117,6 +120,7 @@ export default function DataViewerPage() {
     try {
       const result = await api.uart.list({
         board_id: selectedBoard,
+        session_id: selectedSession || undefined,
         direction: direction || undefined,
         since: sinceForRange(timeRange),
         limit: pageSize,
@@ -144,18 +148,29 @@ export default function DataViewerPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [selectedBoard, timeRange, direction, pageSize, t]);
+  }, [selectedBoard, selectedSession, timeRange, direction, pageSize, t]);
 
   useEffect(() => {
-    if (!selectedBoard) {
-      setData([]);
-      setTotal(null);
-      setHasMore(false);
-      setNextBefore(null);
-      return;
-    }
+    if (!selectedBoard) return;
+    let cancelled = false;
+    api.sessions.list(selectedBoard)
+      .then(list => {
+        if (!cancelled) setSessions(list);
+      })
+      .catch(error => {
+        console.error(error);
+        if (!cancelled) setSessions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBoard]);
+
+  useEffect(() => {
+    if (!selectedBoard) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchPage sets loading state before the async request
     fetchPage();
-  }, [selectedBoard, timeRange, direction, pageSize, t]);
+  }, [selectedBoard, selectedSession, timeRange, direction, pageSize, t, fetchPage]);
 
   const statLabel = total !== null
     ? t('dataViewer.showingOf', { shown: formatCount(data.length), total: formatCount(total) })
@@ -174,7 +189,18 @@ export default function DataViewerPage() {
         <div className="form-row">
           <div className="form-field">
             <label>{t('common.board')}</label>
-            <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
+            <select
+              value={selectedBoard}
+              onChange={e => {
+                setSelectedBoard(e.target.value);
+                setSelectedSession('');
+                setSessions([]);
+                setData([]);
+                setTotal(null);
+                setHasMore(false);
+                setNextBefore(null);
+              }}
+            >
               <option value="">{t('dataViewer.selectBoard')}</option>
               {boards.map(b => (
                 <option key={b.id} value={b.id}>{b.name}</option>
@@ -200,6 +226,24 @@ export default function DataViewerPage() {
               <option value="">{t('common.all')}</option>
               <option value="TX">TX</option>
               <option value="RX">RX</option>
+            </select>
+          </div>
+          <div className="form-field">
+            <label>{t('dataViewer.session')}</label>
+            <select
+              value={selectedSession}
+              onChange={e => {
+                const value = e.target.value;
+                setSelectedSession(value);
+                if (value) setTimeRange('all');
+              }}
+            >
+              <option value="">{t('dataViewer.allSessions')}</option>
+              {sessions.map(session => (
+                <option key={session.id} value={session.id}>
+                  {session.name} · {formatDateTime(session.start_time)}
+                </option>
+              ))}
             </select>
           </div>
           <div className="form-field">
