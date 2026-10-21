@@ -3,11 +3,14 @@ package db
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/hyunu/sentinel/internal/config"
 	"github.com/hyunu/sentinel/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsoncodec"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -19,11 +22,21 @@ type MongoDB struct {
 	logger *zap.Logger
 }
 
+// mongoRegistry decodes embedded BSON documents into bson.M instead of bson.D.
+// Parse rules store nested, schemaless values (for example {"expr": "length - 10"})
+// inside interface{} fields; the rule engine matches them with map lookups, so
+// bson.D would silence expressions and break parsing for specs loaded from MongoDB.
+func mongoRegistry() *bsoncodec.Registry {
+	return bson.NewRegistryBuilder().
+		RegisterTypeMapEntry(bsontype.EmbeddedDocument, reflect.TypeOf(bson.M{})).
+		Build()
+}
+
 func New(cfg *config.MongoDBConfig, logger *zap.Logger) (*MongoDB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI).SetRegistry(mongoRegistry()))
 	if err != nil {
 		return nil, err
 	}
