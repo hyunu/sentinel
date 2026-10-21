@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyunu/sentinel/internal/ai"
 	"github.com/hyunu/sentinel/internal/api"
 	"github.com/hyunu/sentinel/internal/config"
 	"github.com/hyunu/sentinel/internal/db"
@@ -43,7 +44,7 @@ func main() {
 		logger.Warn("Failed to backfill temperature uart data", zap.Error(err))
 	}
 
-	router := api.SetupRouter(database, logger)
+	router := api.SetupRouter(database, logger, buildAIAgent(cfg, logger))
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
@@ -72,4 +73,35 @@ func main() {
 	}
 
 	logger.Info("Server exited")
+}
+
+func buildAIAgent(cfg *config.Config, logger *zap.Logger) *ai.Agent {
+	providerCfg := ai.ProviderConfig{
+		Provider: cfg.AI.Provider,
+		BaseURL:  cfg.AI.BaseURL,
+		APIKey:   cfg.AI.APIKey,
+		Model:    cfg.AI.Model,
+		Timeout:  cfg.AI.Timeout,
+	}
+	if !providerCfg.Configured() {
+		logger.Info("AI is not configured; /api/v1/ai/query will return 503")
+		return nil
+	}
+	provider, err := ai.NewProvider(providerCfg)
+	if err != nil {
+		logger.Warn("AI provider configuration is invalid; AI is disabled", zap.Error(err))
+		return nil
+	}
+	temp := cfg.AI.Temperature
+	agent := ai.NewAgent(provider, ai.Options{
+		MaxRounds:   cfg.AI.MaxToolRounds,
+		MaxTokens:   cfg.AI.MaxTokens,
+		Temperature: &temp,
+	}, logger)
+	logger.Info("AI configured",
+		zap.String("provider", agent.ProviderName()),
+		zap.String("model", agent.Model()),
+		zap.Int("max_tool_rounds", agent.MaxRounds()),
+	)
+	return agent
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/hyunu/sentinel/internal/ai"
 	"github.com/hyunu/sentinel/internal/db"
 	"github.com/hyunu/sentinel/internal/models"
 	"github.com/hyunu/sentinel/internal/protocol"
@@ -22,10 +23,11 @@ import (
 type Handler struct {
 	db     *db.MongoDB
 	logger *zap.Logger
+	agent  *ai.Agent
 }
 
-func NewHandler(database *db.MongoDB, logger *zap.Logger) *Handler {
-	return &Handler{db: database, logger: logger}
+func NewHandler(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent) *Handler {
+	return &Handler{db: database, logger: logger, agent: agent}
 }
 
 func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (string, error) {

@@ -2,81 +2,123 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hyunu/sentinel/internal/ai"
 	"github.com/hyunu/sentinel/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.uber.org/zap"
 )
 
-func (h *Handler) AIQuery(c *gin.Context) {
-	var req struct {
-		BoardID string `json:"board_id" binding:"required"`
-		Query   string `json:"query" binding:"required"`
+const aiRequestTimeout = 120 * time.Second
+
+type aiQueryRequest struct {
+	BoardID    string       `json:"board_id" binding:"required"`
+	ProtocolID string       `json:"protocol_id,omitempty"`
+	Query      string       `json:"query" binding:"required"`
+	History    []ai.Message `json:"history,omitempty"`
+}
+
+// AIStatus reports whether the server has a usable AI provider without
+// exposing credentials.
+func (h *Handler) AIStatus(c *gin.Context) {
+	if h.agent == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"configured": false,
+			"tools":      aiToolCount,
+		})
+		return
 	}
+	c.JSON(http.StatusOK, gin.H{
+		"configured": true,
+		"provider":   h.agent.ProviderName(),
+		"model":      h.agent.Model(),
+		"max_rounds": h.agent.MaxRounds(),
+		"tools":      aiToolCount,
+	})
+}
+
+func (h *Handler) AIQuery(c *gin.Context) {
+	if h.agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",
+			"code":  "ai_not_configured",
+		})
+		return
+	}
+
+	var req aiQueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Query = strings.TrimSpace(req.Query)
+	if req.Query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
+		return
+	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), aiRequestTimeout)
 	defer cancel()
 
+	resolvedBoardID, err := h.resolveBoardID(ctx, req.BoardID, "")
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
+		return
+	}
 	var board models.Board
-	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": req.BoardID}).Decode(&board); err != nil {
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": resolvedBoardID}).Decode(&board); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
 		return
 	}
 
-	cursor, err := h.db.UartData().Find(ctx,
-		bson.M{"board_id": req.BoardID},
-		options.Find().SetSort(bson.M{"timestamp": -1}).SetLimit(100),
-	)
+	systemContext, proto, err := h.buildAIContext(ctx, board, req.ProtocolID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "data query failed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	protocolID := ""
+	if proto != nil {
+		protocolID = proto.ID
+	}
+
+	registry := h.buildAIToolRegistry(board.ID, protocolID)
+	result, err := h.agent.Run(ctx, ai.Request{
+		Query:         req.Query,
+		History:       req.History,
+		SystemContext: systemContext,
+		BoardID:       board.ID,
+		ProtocolID:    protocolID,
+	}, registry)
+	if err != nil {
+		h.logger.Error("ai query failed",
+			zap.String("board_id", board.ID),
+			zap.String("protocol_id", protocolID),
+			zap.Error(err),
+		)
+		status := http.StatusBadGateway
+		if ctx.Err() == context.DeadlineExceeded {
+			status = http.StatusGatewayTimeout
+		}
+		c.JSON(status, gin.H{
+			"error": "AI request failed. Check the provider configuration and backend logs.",
+			"code":  "ai_request_failed",
+		})
 		return
 	}
 
-	var recentData []models.UartData
-	if err := cursor.All(ctx, &recentData); err != nil {
-		recentData = []models.UartData{}
-	}
-
-	dataSummary := ""
-	for _, d := range recentData {
-		parsed := ""
-		if d.ParsedFields != nil {
-			for k, v := range d.ParsedFields {
-				parsed += k + ":" + interfaceToString(v) + " "
-			}
-		}
-		dataSummary += d.Timestamp.Format(time.RFC3339) + " " + d.Direction + " " + d.RawHex + " [" + parsed + "]\n"
-	}
-
-	_ = board
-
 	c.JSON(http.StatusOK, gin.H{
-		"query":  req.Query,
-		"answer": "AI query received. Data context: " + strconv.Itoa(len(recentData)) + " recent records. Query: " + req.Query,
-		"context": gin.H{
-			"board_id":         req.BoardID,
-			"recent_data_size": len(recentData),
-			"data_summary":     dataSummary,
-		},
+		"answer":      result.Answer,
+		"provider":    result.Provider,
+		"model":       result.Model,
+		"board_id":    board.ID,
+		"protocol_id": protocolID,
+		"tool_calls":  result.ToolCalls,
+		"chart":       result.Chart,
+		"usage":       result.Usage,
+		"rounds":      result.Rounds,
 	})
-}
-
-func interfaceToString(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case float64:
-		return fmt.Sprintf("%v", val)
-	default:
-		return fmt.Sprintf("%v", val)
-	}
 }

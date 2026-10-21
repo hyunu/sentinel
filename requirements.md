@@ -90,7 +90,7 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
 - **데이터 파싱**: 명세 기반 raw bytes → 필드 변환
 - **파싱 DSL (v2 목표)**: [`docs/parsing-dsl.md`](docs/parsing-dsl.md) — 가변 길이·중첩 반복·len 위치 자유
 - **시각화 프로필**: 멀티 Y축, Offset, Weight, Visibility 관리
-- **AI 분석**: 자연어 질의 → 데이터 탐색 및 추론
+- **AI 분석**: 자연어 질의 → 도구 호출 기반 데이터 탐색 및 추론 ([`docs/ai.md`](docs/ai.md))
 
 ### 3.4 웹 대시보드
 - 보드 목록 및 활성 상태 모니터링
@@ -417,7 +417,8 @@ graph LR
 ### AI
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/ai/query` | 자연어 질의 |
+| GET | `/api/v1/ai/status` | AI provider 설정 상태 (키 노출 없음) |
+| POST | `/api/v1/ai/query` | 자연어 질의 (도구 호출 기반) |
 
 ## 9. 시각화 핵심 기능
 

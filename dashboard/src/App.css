@@ -4492,3 +4492,127 @@ pre {
   }
   .page-header { flex-direction: column; }
 }
+
+/* AI query page */
+.ai-status-card {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.ai-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ai-status-pill strong,
+.ai-status-pill code {
+  color: var(--text);
+}
+
+.ai-status-disabled {
+  border-color: var(--warning, #b7791f);
+}
+
+.ai-status-disabled strong {
+  color: var(--warning, #b7791f);
+}
+
+.ai-env-hint {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.ai-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 0;
+}
+
+.ai-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ai-message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ai-tool-calls {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.ai-tool-calls summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.ai-tool-calls ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-tool-calls li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ai-tool-args {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ai-tool-error {
+  color: var(--danger);
+}
+
+.ai-chart-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ai-chart-card p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.ai-usage {
+  margin-top: 8px;
+  font-size: 11px;
+}

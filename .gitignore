@@ -16,6 +16,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Local env / secrets
+.env
+.env.local
+
 # Go
 backend/server
 

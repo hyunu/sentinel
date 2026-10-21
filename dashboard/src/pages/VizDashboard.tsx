@@ -124,6 +124,16 @@ const VIEWPORT_FINISH_DEBOUNCE_MS = 48;
 
 type FieldValuesLayout = 'bottom' | 'left';
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
+const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
+
+interface AIChartLink {
+  board_id: string;
+  protocol_id?: string;
+  fields: string[];
+  start: string;
+  end: string;
+  title?: string;
+}
 
 function readFieldValuesLayout(): FieldValuesLayout {
   try {
@@ -457,6 +467,9 @@ export default function VizDashboardPage() {
   );
   const [boards, setBoards] = useState<Board[]>([]);
   const [selectedBoard, setSelectedBoard] = useState('');
+  const [aiChartLink, setAiChartLink] = useState<AIChartLink | null>(null);
+  const aiChartLinkConsumedRef = useRef(false);
+  const aiChartLinkAppliedRef = useRef(false);
   const [boardProtocol, setBoardProtocol] = useState<ProtocolSpec | null>(null);
   const [items, setItems] = useState<VizItem[]>([]);
   const itemQueryKey = useMemo(
@@ -1673,10 +1686,44 @@ export default function VizDashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (aiChartLinkConsumedRef.current) return;
+    aiChartLinkConsumedRef.current = true;
+    try {
+      const raw = sessionStorage.getItem(AI_CHART_STORAGE_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(AI_CHART_STORAGE_KEY);
+      const parsed = JSON.parse(raw) as AIChartLink;
+      if (!parsed?.board_id || !Array.isArray(parsed.fields) || parsed.fields.length === 0) return;
+      setAiChartLink(parsed);
+      setSelectedBoard(parsed.board_id);
+      if (parsed.start && parsed.end) {
+        setChartQueryTimeRange({ start: parsed.start, end: parsed.end });
+      }
+    } catch {
+      /* ignore malformed handoff */
+    }
+  }, []);
+
+  useEffect(() => {
     if (selectedBoard || boards.length === 0) return;
     const preferred = boards.find(b => b.name === 'STN-001') ?? boards[0];
     setSelectedBoard(preferred.id);
   }, [boards, selectedBoard]);
+
+  useEffect(() => {
+    if (!aiChartLink || aiChartLinkAppliedRef.current) return;
+    const protocolID = aiChartLink.protocol_id || boardProtocol?.id;
+    if (!protocolID) return;
+    aiChartLinkAppliedRef.current = true;
+    setItems(prev => {
+      const existing = new Set(prev.map(item => item.field_ref.field_name));
+      const usedShortLabels = new Set(prev.map(item => chartLabel(item)));
+      const additions = aiChartLink.fields
+        .filter(field => field && !existing.has(field))
+        .map((field, index) => makeItem(protocolID, field, prev.length + index, usedShortLabels));
+      return additions.length ? [...prev, ...additions] : prev;
+    });
+  }, [aiChartLink, boardProtocol]);
 
 
 

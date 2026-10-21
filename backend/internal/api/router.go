@@ -2,13 +2,14 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/hyunu/sentinel/internal/ai"
 	"github.com/hyunu/sentinel/internal/db"
 	"go.uber.org/zap"
 )
 
-func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
+func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(database, logger)
+	h := NewHandler(database, logger, agent)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -76,6 +77,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger) *gin.Engine {
 			viz.POST("/spectrum", h.VizSpectrum)
 		}
 
+		v1.GET("/ai/status", h.AIStatus)
 		v1.POST("/ai/query", h.AIQuery)
 	}
 

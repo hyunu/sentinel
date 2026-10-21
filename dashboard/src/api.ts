@@ -162,6 +162,52 @@ export interface Temperature {
   value_celsius: number;
 }
 
+export interface AIToolCall {
+  name: string;
+  arguments: unknown;
+  duration_ms: number;
+  error?: string;
+}
+
+export interface AIChartSpec {
+  board_id: string;
+  protocol_id?: string;
+  fields: string[];
+  start: string;
+  end: string;
+  aggregation?: string;
+  title?: string;
+}
+
+export interface AIStatus {
+  configured: boolean;
+  provider?: string;
+  model?: string;
+  max_rounds?: number;
+  tools?: number;
+}
+
+export interface AIMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AIQueryResult {
+  answer: string;
+  provider: string;
+  model: string;
+  board_id: string;
+  protocol_id?: string;
+  tool_calls?: AIToolCall[];
+  chart?: AIChartSpec | null;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  } | null;
+  rounds: number;
+}
+
 export const api = {
   boards: {
     list: () => request<Board[]>('/boards'),
@@ -315,10 +361,17 @@ export const api = {
   },
 
   ai: {
-    query: (board_id: string, query: string) =>
-      request<{ query: string; answer: string; context: unknown }>('/ai/query', {
+    status: () => request<AIStatus>('/ai/status'),
+    query: (data: {
+      board_id: string;
+      query: string;
+      protocol_id?: string;
+      history?: AIMessage[];
+    }) =>
+      request<AIQueryResult>('/ai/query', {
         method: 'POST',
-        body: JSON.stringify({ board_id, query }),
+        body: JSON.stringify(data),
+        timeoutMs: 120000,
       }),
   },
 };

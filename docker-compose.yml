@@ -25,6 +25,17 @@ services:
       SERVER_PORT: "5050"
       MONGODB_URI: "mongodb://mongodb:27017"
       MONGODB_DATABASE: "sentinel"
+      # AI is optional. Configure these in .env or the shell before
+      # `docker compose up`. Any OpenAI-compatible endpoint works
+      # (vLLM, Ollama, FriendliAI, OpenAI, Gemini compat, etc.).
+      AI_PROVIDER: "${AI_PROVIDER:-}"
+      AI_BASE_URL: "${AI_BASE_URL:-}"
+      AI_API_KEY: "${AI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-}"
+      AI_MAX_TOKENS: "${AI_MAX_TOKENS:-1024}"
+      AI_TEMPERATURE: "${AI_TEMPERATURE:-0.2}"
+      AI_TIMEOUT_SECONDS: "${AI_TIMEOUT_SECONDS:-60}"
+      AI_MAX_TOOL_ROUNDS: "${AI_MAX_TOOL_ROUNDS:-6}"
     depends_on:
       - mongodb
 
