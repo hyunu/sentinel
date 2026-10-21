@@ -5,6 +5,7 @@ package ruleparser
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -534,7 +535,7 @@ func (e *exprEvaluator) parsePrimary() (interface{}, error) {
 				e.pos++
 			}
 			field := e.src[start:e.pos]
-			if m, ok := val.(map[string]interface{}); ok {
+			if m, ok := asStringMap(val); ok {
 				val = m[field]
 			} else {
 				return nil, fmt.Errorf("'%s'에서 '%s' 접근 불가", name, field)
@@ -591,11 +592,11 @@ func toIntSafe(val interface{}) (int, bool) {
 // ============================================================================
 
 func resolveLengthFromJSON(ref interface{}) LengthRef {
-	switch v := ref.(type) {
-	case string:
-		return FromField(v)
-	case map[string]interface{}:
-		if exprStr, ok := v["expr"].(string); ok {
+	if s, ok := ref.(string); ok {
+		return FromField(s)
+	}
+	if expr, ok := asStringMap(ref); ok {
+		if exprStr, ok := expr["expr"].(string); ok {
 			return FromFunc(func(ctx *ParseContext) int {
 				result, err := evalSimpleExpr(exprStr, ctx.ExprVars())
 				if err != nil {
@@ -607,6 +608,25 @@ func resolveLengthFromJSON(ref interface{}) LengthRef {
 		}
 	}
 	return FromField(fmt.Sprintf("%v", ref))
+}
+
+// asStringMap accepts any map with string keys. Rules decoded from BSON carry
+// map types such as primitive.M, which a plain map[string]interface{} assertion
+// misses; without this the engine silently degrades {"expr": "..."} into a field
+// reference and drops the field at parse time.
+func asStringMap(v interface{}) (map[string]interface{}, bool) {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m, true
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+	out := make(map[string]interface{}, rv.Len())
+	for _, key := range rv.MapKeys() {
+		out[key.String()] = rv.MapIndex(key).Interface()
+	}
+	return out, true
 }
 
 // ============================================================================
