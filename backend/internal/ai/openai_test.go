@@ -268,3 +268,29 @@ func TestProviderConfigConfigured(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIProviderChatStreamFallsBackToJSONResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"fallback"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+
+	provider, err := NewProvider(testProviderConfig(srv.URL + "/v1"))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	var tokens []string
+	resp, err := provider.(StreamingProvider).ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(token string) error {
+		tokens = append(tokens, token)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if resp.Content != "fallback" || strings.Join(tokens, "") != "fallback" {
+		t.Fatalf("content=%q tokens=%#v", resp.Content, tokens)
+	}
+}

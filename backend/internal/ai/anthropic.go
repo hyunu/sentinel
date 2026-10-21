@@ -166,7 +166,7 @@ func (p *anthropicProvider) chat(ctx context.Context, req ChatRequest, onToken f
 		respBody, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		return ChatResponse{}, fmt.Errorf("ai provider returned status %d: %s", res.StatusCode, strings.TrimSpace(truncateText(string(respBody), maxProviderErrorBody)))
 	}
-	if onToken != nil {
+	if onToken != nil && strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
 		return p.readAnthropicStream(res.Body, onToken)
 	}
 
@@ -206,6 +206,11 @@ func (p *anthropicProvider) chat(ctx context.Context, req ChatRequest, onToken f
 			PromptTokens:     decoded.Usage.InputTokens,
 			CompletionTokens: decoded.Usage.OutputTokens,
 			TotalTokens:      decoded.Usage.InputTokens + decoded.Usage.OutputTokens,
+		}
+	}
+	if onToken != nil && result.Content != "" {
+		if err := onToken(result.Content); err != nil {
+			return result, err
 		}
 	}
 	return result, nil

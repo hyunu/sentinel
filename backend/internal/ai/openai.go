@@ -168,7 +168,7 @@ func (p *openAIProvider) chat(ctx context.Context, req ChatRequest, onToken func
 		respBody, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		return ChatResponse{}, fmt.Errorf("ai provider returned status %d: %s", res.StatusCode, strings.TrimSpace(truncateText(string(respBody), maxProviderErrorBody)))
 	}
-	if onToken != nil {
+	if onToken != nil && strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
 		return p.readOpenAIStream(res.Body, onToken)
 	}
 
@@ -206,6 +206,11 @@ func (p *openAIProvider) chat(ctx context.Context, req ChatRequest, onToken func
 			PromptTokens:     decoded.Usage.PromptTokens,
 			CompletionTokens: decoded.Usage.CompletionTokens,
 			TotalTokens:      decoded.Usage.TotalTokens,
+		}
+	}
+	if onToken != nil && result.Content != "" {
+		if err := onToken(result.Content); err != nil {
+			return result, err
 		}
 	}
 	return result, nil

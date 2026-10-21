@@ -234,3 +234,35 @@ func TestAnthropicProviderUsesDefaultEndpoint(t *testing.T) {
 		t.Fatalf("url = %q", got)
 	}
 }
+
+func TestAnthropicProviderChatStreamFallsBackToJSONResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"fallback"}],"stop_reason":"end_turn"}`)
+	}))
+	defer srv.Close()
+
+	provider, err := NewProvider(ProviderConfig{
+		Provider: "anthropic",
+		BaseURL:  srv.URL,
+		APIKey:   "key",
+		Model:    "claude-test",
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	var tokens []string
+	resp, err := provider.(StreamingProvider).ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(token string) error {
+		tokens = append(tokens, token)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if resp.Content != "fallback" || strings.Join(tokens, "") != "fallback" {
+		t.Fatalf("content=%q tokens=%#v", resp.Content, tokens)
+	}
+}
