@@ -10,14 +10,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// EnsureSchemaPresets inserts built-in schema presets when missing.
+// EnsureSchemaPresets inserts built-in schema presets when missing and keeps
+// their parse rules in sync with the embedded defaults.
 func (m *MongoDB) EnsureSchemaPresets(ctx context.Context) error {
 	for _, preset := range protocol.DefaultSchemaPresets(time.Now()) {
-		count, err := m.SchemaPresets().CountDocuments(ctx, bson.M{"_id": preset.ID})
+		result, err := m.SchemaPresets().UpdateOne(ctx, bson.M{"_id": preset.ID}, bson.M{"$set": bson.M{
+			"description":      preset.Description,
+			"protocol_version": preset.ProtocolVersion,
+			"parse_rules":      preset.ParseRules,
+			"updated_at":       preset.UpdatedAt,
+		}})
 		if err != nil {
 			return err
 		}
-		if count > 0 {
+		if result.MatchedCount > 0 {
+			m.logger.Info("synced schema preset parse_rules", zap.String("id", preset.ID))
 			continue
 		}
 		if _, err := m.SchemaPresets().InsertOne(ctx, preset); err != nil {

@@ -19,8 +19,8 @@ func DefaultSchemaPresets(now time.Time) []models.SchemaPreset {
 		{
 			ID:              PresetLCPProtocolID,
 			Name:            "LCP/OSP Function Protocol",
-			Description:     "Serial Parser rules: full frame + CF(207) + CD(205), self-inclusive FA/FC TLV",
-			ProtocolVersion: "1.0",
+			Description:     "Serial Parser rules: full frame + FID C7/C8/C9/CA/CC/CD/CE/CF, FA/FC/F9 blocks",
+			ProtocolVersion: "2.0",
 			ParseRules:      &lcpRules,
 			CreatedAt:       now,
 			UpdatedAt:       now,
