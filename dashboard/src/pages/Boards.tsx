@@ -27,6 +27,7 @@ export default function BoardsPage() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(0);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [registerForm, setRegisterForm] = useState(emptyRegisterForm);
   const [registering, setRegistering] = useState(false);
@@ -37,7 +38,10 @@ export default function BoardsPage() {
       if (document.activeElement?.classList.contains('table-inline-select')) return;
       if (showLoading) setLoading(true);
       api.boards.list()
-        .then(setBoards)
+        .then(list => {
+          setBoards(list);
+          setNow(Date.now());
+        })
         .catch(console.error)
         .finally(() => { if (showLoading) setLoading(false); });
     };
@@ -117,7 +121,6 @@ export default function BoardsPage() {
     }
   };
 
-  const now = Date.now();
   const onlineCount = boards.filter(b => isBoardOnline(b, now)).length;
   const canRegister = Boolean(registerForm.name && registerForm.bleId);
 

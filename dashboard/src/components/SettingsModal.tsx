@@ -1,6 +1,17 @@
+import { useState } from 'react';
 import Modal from './Modal';
 import { useTranslation, type Locale } from '../i18n';
 import { useTheme, type Theme } from '../theme';
+
+const AI_TOKEN_STORAGE_KEY = 'sentinel-ai-token';
+
+function readStoredAIToken(): string {
+  try {
+    return localStorage.getItem(AI_TOKEN_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 type SettingsModalProps = {
   open: boolean;
@@ -20,6 +31,18 @@ const THEMES: Array<{ id: Theme; labelKey: 'settings.themeDark' | 'settings.them
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { t, locale, setLocale } = useTranslation();
   const { theme, setTheme } = useTheme();
+  const [aiToken, setAiToken] = useState(readStoredAIToken);
+
+  const saveAiToken = (value: string) => {
+    setAiToken(value);
+    try {
+      const trimmed = value.trim();
+      if (trimmed) localStorage.setItem(AI_TOKEN_STORAGE_KEY, trimmed);
+      else localStorage.removeItem(AI_TOKEN_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
 
   return (
     <Modal open={open} onClose={onClose} title={t('settings.title')}>
@@ -57,6 +80,18 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             </button>
           ))}
         </div>
+      </div>
+      <div className="settings-section">
+        <h3 className="settings-section-title">{t('settings.aiToken')}</h3>
+        <p className="muted settings-section-desc">{t('settings.aiTokenDesc')}</p>
+        <input
+          type="password"
+          value={aiToken}
+          placeholder={t('settings.aiTokenPlaceholder')}
+          onChange={e => saveAiToken(e.target.value)}
+          autoComplete="off"
+        />
+        <p className="muted settings-section-desc">{t('settings.aiTokenHint')}</p>
       </div>
     </Modal>
   );

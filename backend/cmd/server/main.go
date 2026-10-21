@@ -44,7 +44,10 @@ func main() {
 		logger.Warn("Failed to backfill temperature uart data", zap.Error(err))
 	}
 
-	router := api.SetupRouter(database, logger, buildAIAgent(cfg, logger))
+	router := api.SetupRouter(database, logger, buildAIAgent(cfg, logger), api.HandlerOptions{
+		AIToken:   cfg.AI.APIToken,
+		RateLimit: cfg.AI.RateLimit,
+	})
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),

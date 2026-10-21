@@ -4,6 +4,7 @@
 
 #include "ble_service.h"
 #include "config.h"
+#include "uart_sniffer.h"
 #include "wifi_manager.h"
 
 static NimBLEServer *pServer = nullptr;
@@ -52,6 +53,24 @@ static String _extract_json_field(const String &json, const char *key) {
     return json.substring(idx, end);
 }
 
+// Numeric JSON field extractor (for baudRate and similar values).
+static long _extract_json_number(const String &json, const char *key, long fallback) {
+    String pattern = String("\"") + String(key) + String("\":");
+    int idx = json.indexOf(pattern);
+    if (idx < 0) return fallback;
+    idx += pattern.length();
+    while (idx < (int)json.length() && (json[idx] == ' ' || json[idx] == '\t')) {
+        idx++;
+    }
+    int end = idx;
+    if (end < (int)json.length() && json[end] == '-') end++;
+    while (end < (int)json.length() && json[end] >= '0' && json[end] <= '9') {
+        end++;
+    }
+    if (end == idx) return fallback;
+    return json.substring(idx, end).toInt();
+}
+
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         (void)pServer; (void)connInfo;
@@ -81,12 +100,17 @@ class UartWriteCallback : public NimBLECharacteristicCallbacks {
             serverUrl = _extract_json_field(value, "url");
         }
         String uniqueId = _extract_json_field(value, "uniqueId");
+        long baudRate = _extract_json_number(value, "baudRate", 0);
 
         if (serverUrl.length() > 0) {
             wifi_set_server_url(serverUrl);
         }
         if (uniqueId.length() > 0) {
             wifi_set_uid(uniqueId);
+        }
+        if (baudRate > 0) {
+            uart_sniffer_set_baud((uint32_t)baudRate);
+            ble_send_uart_data(String("EVENT:BAUD_SET"));
         }
 
         if (ssid.length() > 0 && password.length() > 0) {

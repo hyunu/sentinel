@@ -52,7 +52,11 @@
     "theme": "Theme",
     "themeDesc": "Choose the color theme for the dashboard.",
     "themeDark": "Dark",
-    "themeLight": "Light"
+    "themeLight": "Light",
+    "aiToken": "AI Access Token",
+    "aiTokenDesc": "Optional token for /api/v1/ai/* when AI_API_TOKEN is set on the backend.",
+    "aiTokenPlaceholder": "Paste AI access token",
+    "aiTokenHint": "Stored only in this browser's localStorage. Leave empty if the backend has no AI token."
   },
   "boards": {
     "title": "Boards",

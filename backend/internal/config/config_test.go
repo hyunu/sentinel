@@ -10,6 +10,8 @@ func TestLoadAIConfigFromEnv(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "http://localhost:8000/v1")
 	t.Setenv("AI_MODEL", "LGAI-EXAONE/EXAONE-4.0-32B")
 	t.Setenv("AI_API_KEY", "local")
+	t.Setenv("AI_API_TOKEN", "secret-token")
+	t.Setenv("AI_RATE_LIMIT_PER_MINUTE", "12")
 	t.Setenv("AI_MAX_TOKENS", "2048")
 	t.Setenv("AI_TEMPERATURE", "0.3")
 	t.Setenv("AI_TIMEOUT_SECONDS", "45")
@@ -25,6 +27,9 @@ func TestLoadAIConfigFromEnv(t *testing.T) {
 	if cfg.AI.MaxTokens != 2048 || cfg.AI.Temperature != 0.3 {
 		t.Fatalf("ai limits = %#v", cfg.AI)
 	}
+	if cfg.AI.APIToken != "secret-token" || cfg.AI.RateLimit != 12 {
+		t.Fatalf("ai auth = %#v", cfg.AI)
+	}
 	if cfg.AI.Timeout != 45*time.Second || cfg.AI.MaxToolRounds != 4 {
 		t.Fatalf("ai timing = %#v", cfg.AI)
 	}
@@ -32,8 +37,9 @@ func TestLoadAIConfigFromEnv(t *testing.T) {
 
 func TestLoadAIConfigDefaults(t *testing.T) {
 	for _, key := range []string{
-		"AI_PROVIDER", "AI_BASE_URL", "AI_MODEL", "AI_API_KEY",
+		"AI_PROVIDER", "AI_BASE_URL", "AI_MODEL", "AI_API_KEY", "AI_API_TOKEN",
 		"AI_MAX_TOKENS", "AI_TEMPERATURE", "AI_TIMEOUT_SECONDS", "AI_MAX_TOOL_ROUNDS",
+		"AI_RATE_LIMIT_PER_MINUTE",
 	} {
 		t.Setenv(key, "")
 	}

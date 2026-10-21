@@ -296,7 +296,7 @@ export function computePanWindow(
     newStartMs -= overflow;
   }
 
-  let newStart = findChartIndexLowerBoundForTimeMs(points, newStartMs);
+  const newStart = findChartIndexLowerBoundForTimeMs(points, newStartMs);
   let newEnd = findChartIndexUpperBoundForTimeMs(points, newEndMs);
   if (newEnd < newStart) newEnd = newStart;
 

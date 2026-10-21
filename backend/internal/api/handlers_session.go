@@ -59,8 +59,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	if !session.StartTime.IsZero() && !session.EndTime.IsZero() {
 		result, err := h.db.UartData().UpdateMany(ctx,
 			bson.M{
-				"board_id":  session.BoardID,
-				"timestamp": bson.M{"$gte": session.StartTime, "$lte": session.EndTime},
+				"board_id":   session.BoardID,
+				"timestamp":  bson.M{"$gte": session.StartTime, "$lte": session.EndTime},
 				"session_id": bson.M{"$exists": false},
 			},
 			bson.M{"$set": bson.M{"session_id": session.ID}},

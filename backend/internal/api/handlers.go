@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,14 +21,31 @@ import (
 	"go.uber.org/zap"
 )
 
-type Handler struct {
-	db     *db.MongoDB
-	logger *zap.Logger
-	agent  *ai.Agent
+type HandlerOptions struct {
+	AIToken   string
+	RateLimit int
 }
 
-func NewHandler(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent) *Handler {
-	return &Handler{db: database, logger: logger, agent: agent}
+type Handler struct {
+	db        *db.MongoDB
+	logger    *zap.Logger
+	agent     *ai.Agent
+	aiToken   string
+	aiLimiter *aiRateLimiter
+}
+
+func NewHandler(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts ...HandlerOptions) *Handler {
+	options := HandlerOptions{}
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	return &Handler{
+		db:        database,
+		logger:    logger,
+		agent:     agent,
+		aiToken:   strings.TrimSpace(options.AIToken),
+		aiLimiter: newAIRateLimiter(options.RateLimit, 1),
+	}
 }
 
 func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (string, error) {

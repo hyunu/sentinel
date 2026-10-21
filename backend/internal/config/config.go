@@ -34,10 +34,12 @@ type AIConfig struct {
 	BaseURL       string
 	APIKey        string
 	Model         string
+	APIToken      string
 	MaxTokens     int
 	Temperature   float64
 	Timeout       time.Duration
 	MaxToolRounds int
+	RateLimit     int
 }
 
 func Load() *Config {
@@ -60,10 +62,12 @@ func Load() *Config {
 			BaseURL:       getEnv("AI_BASE_URL", ""),
 			APIKey:        getEnv("AI_API_KEY", ""),
 			Model:         getEnv("AI_MODEL", ""),
+			APIToken:      getEnv("AI_API_TOKEN", ""),
 			MaxTokens:     clampInt(getEnvInt("AI_MAX_TOKENS", 1024), 128, 8192),
 			Temperature:   clampFloat(getEnvFloat("AI_TEMPERATURE", 0.2), 0, 2),
 			Timeout:       time.Duration(clampInt(getEnvInt("AI_TIMEOUT_SECONDS", 60), 5, 600)) * time.Second,
 			MaxToolRounds: clampInt(getEnvInt("AI_MAX_TOOL_ROUNDS", 6), 1, 12),
+			RateLimit:     clampInt(getEnvInt("AI_RATE_LIMIT_PER_MINUTE", 30), 1, 600),
 		},
 	}
 }

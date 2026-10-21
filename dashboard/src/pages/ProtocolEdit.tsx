@@ -55,6 +55,7 @@ export default function ProtocolEditPage() {
 
   useEffect(() => {
     if (isNew || !id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
     setLoading(true);
     api.protocols.get(id)
       .then(p => {

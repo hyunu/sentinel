@@ -18,6 +18,7 @@ export default function SchemaPresetsPanel() {
     }
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
   useEffect(() => { reload().catch(console.error); }, [reload]);
 
   const remove = async (preset: SchemaPreset) => {

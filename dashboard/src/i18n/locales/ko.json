@@ -52,7 +52,11 @@
     "theme": "테마",
     "themeDesc": "대시보드 색상 테마를 선택합니다.",
     "themeDark": "다크",
-    "themeLight": "라이트"
+    "themeLight": "라이트",
+    "aiToken": "AI 접근 토큰",
+    "aiTokenDesc": "백엔드에 AI_API_TOKEN이 설정된 경우 /api/v1/ai/* 요청에 사용할 토큰입니다.",
+    "aiTokenPlaceholder": "AI 접근 토큰 입력",
+    "aiTokenHint": "이 브라우저의 localStorage에만 저장됩니다. 백엔드에 토큰이 없으면 비워두세요."
   },
   "boards": {
     "title": "보드",

@@ -108,8 +108,8 @@ export function computeWheelZoomTimeRange(
   }
 
   const focusRatio = (focusMs - current.startMs) / currentSpanMs;
-  let newStartMs = focusMs - focusRatio * spanMs;
-  let newEndMs = newStartMs + spanMs;
+  const newStartMs = focusMs - focusRatio * spanMs;
+  const newEndMs = newStartMs + spanMs;
   return clampTimeRangeToSpan(newStartMs, newEndMs, fullStartMs, fullEndMs);
 }
 
@@ -233,7 +233,7 @@ export function chartZoomRangeFromTimeMs(
     const ts = chartTimeMsToKey(startMs);
     return { start: 0, end: 0, startTs: ts, endTs: chartTimeMsToKey(endMs) };
   }
-  let start = findChartIndexLowerBoundForTimeMs(points, startMs);
+  const start = findChartIndexLowerBoundForTimeMs(points, startMs);
   let end = findChartIndexUpperBoundForTimeMs(points, endMs);
   if (end < start) end = start;
   return {
@@ -264,7 +264,7 @@ export function centerChartZoomTimeRange(
   fullStartMs: number,
   fullEndMs: number,
 ): ChartZoomTimeRange {
-  let startMs = focusMs - spanMs / 2;
-  let endMs = startMs + spanMs;
+  const startMs = focusMs - spanMs / 2;
+  const endMs = startMs + spanMs;
   return clampTimeRangeToSpan(startMs, endMs, fullStartMs, fullEndMs);
 }

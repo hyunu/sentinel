@@ -24,6 +24,8 @@ AI는 선택 사항입니다. `AI_MODEL`이 비어 있으면 서버는 정상 �
 | `AI_TEMPERATURE` | `0.2` | 0~2 |
 | `AI_TIMEOUT_SECONDS` | `60` | provider 요청 1회 타임아웃 |
 | `AI_MAX_TOOL_ROUNDS` | `6` | 도구 호출 라운드 상한 (1~12) |
+| `AI_API_TOKEN` | (없음) | 선택. 설정 시 AI 질의/스트리밍 요청에 `X-AI-Token` 또는 `Bearer` 토큰 필요 |
+| `AI_RATE_LIMIT_PER_MINUTE` | `30` | 클라이언트 IP별 AI 요청 한도 (1~600) |
 
 `.env.example`을 복사해 `.env`로 사용할 수 있습니다. Docker Compose는 `.env`를 자동으로 읽습니다.
 
@@ -132,6 +134,8 @@ Linux에서는 `extra_hosts` 또는 같은 Compose 네트워크에 모델 서버
 - 도구 결과는 16KB로 잘리고, 시스템 프롬프트는 원본 UART/ASCII를 **신뢰하지 않는 데이터**로 취급하도록 지시합니다.
 - 도구 호출은 `AI_MAX_TOOL_ROUNDS`와 총 25회로 제한됩니다.
 - API 키는 응답이나 로그에 노출되지 않습니다.
+- `AI_API_TOKEN`을 설정하면 AI 질의/스트리밍 엔드포인트에 토큰 인증이 적용됩니다. 대시보드는 **설정 → AI 접근 토큰**에 값을 저장하며, 토큰은 브라우저 localStorage에만 보관됩니다.
+- AI 요청은 클라이언트 IP별 분당 호출 수로 제한되며, 초과 시 `429 ai_rate_limited`를 반환합니다.
 
 ## 4. API
 

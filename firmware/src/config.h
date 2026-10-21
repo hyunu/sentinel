@@ -2,6 +2,8 @@
 #define CONFIG_H
 
 #define UART_BAUD_RATE      19200
+#define UART_BAUD_MIN       300
+#define UART_BAUD_MAX       2000000
 #define UART_MONITOR_RX     20   // ESP32-C3 GPIO20 (sniffer RX = target TX)
 #define UART_MONITOR_TX     21   // ESP32-C3 GPIO21 (sniffer TX = target RX)
 

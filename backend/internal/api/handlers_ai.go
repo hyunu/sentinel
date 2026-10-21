@@ -58,6 +58,9 @@ func (h *Handler) AIStatus(c *gin.Context) {
 }
 
 func (h *Handler) AIQuery(c *gin.Context) {
+	if !h.authorizeAI(c) {
+		return
+	}
 	if h.agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",
@@ -100,6 +103,9 @@ func (h *Handler) AIQuery(c *gin.Context) {
 
 // AIQueryStream streams progress events and token deltas as Server-Sent Events.
 func (h *Handler) AIQueryStream(c *gin.Context) {
+	if !h.authorizeAI(c) {
+		return
+	}
 	if h.agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",

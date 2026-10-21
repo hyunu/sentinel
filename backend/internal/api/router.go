@@ -7,9 +7,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent) *gin.Engine {
+func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts ...HandlerOptions) *gin.Engine {
 	r := gin.Default()
-	h := NewHandler(database, logger, agent)
+	h := NewHandler(database, logger, agent, opts...)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -38,6 +38,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent) *gin
 		{
 			protocols.POST("", h.CreateProtocol)
 			protocols.POST("/parse", h.ParseProtocolHex)
+			protocols.POST("/parse/batch", h.ParseProtocolHexBatch)
 			protocols.GET("", h.ListProtocols)
 			protocols.GET("/:id", h.GetProtocol)
 			protocols.PUT("/:id", h.UpdateProtocol)

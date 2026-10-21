@@ -36,6 +36,8 @@ services:
       AI_TEMPERATURE: "${AI_TEMPERATURE:-0.2}"
       AI_TIMEOUT_SECONDS: "${AI_TIMEOUT_SECONDS:-60}"
       AI_MAX_TOOL_ROUNDS: "${AI_MAX_TOOL_ROUNDS:-6}"
+      AI_API_TOKEN: "${AI_API_TOKEN:-}"
+      AI_RATE_LIMIT_PER_MINUTE: "${AI_RATE_LIMIT_PER_MINUTE:-30}"
     depends_on:
       - mongodb
 

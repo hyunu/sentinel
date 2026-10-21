@@ -231,6 +231,7 @@ function buildSeriesConfig(
   // spanGaps must stay false so uPlot invokes this refiner (spanGaps: true skips gaps entirely).
   // nullGaps from uPlot are ignored so missing values stay connected within a session.
   const gapsRefiner: Series['gaps'] = (u, _seriesIdx, idx0, idx1, _nullGaps) => {
+    void _nullGaps;
     const gaps: [number, number][] = [];
     const xs = u.data[0];
     if (!xs) return gaps;

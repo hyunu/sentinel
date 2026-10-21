@@ -57,3 +57,49 @@ func TestAIQueryWithoutProviderReturns503(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 }
+
+func TestAIQueryRequiresToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, zap.NewNop(), nil, HandlerOptions{AIToken: "secret", RateLimit: 100})
+	router := gin.New()
+	router.POST("/ai/query", handler.AIQuery)
+
+	body := `{"board_id":"x","query":"hello"}`
+	request := httptest.NewRequest(http.MethodPost, "/ai/query", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/ai/query", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer secret")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("valid token status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAIQueryRateLimited(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, zap.NewNop(), nil, HandlerOptions{RateLimit: 1})
+	router := gin.New()
+	router.POST("/ai/query", handler.AIQuery)
+
+	body := `{"board_id":"x","query":"hello"}`
+	for i := 0; i < 2; i++ {
+		request := httptest.NewRequest(http.MethodPost, "/ai/query", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if i == 0 && recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("first status = %d", recorder.Code)
+		}
+		if i == 1 && recorder.Code != http.StatusTooManyRequests {
+			t.Fatalf("second status = %d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+}

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- helper exports are colocated with the component */
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { MouseEvent } from 'react';
 import type { VizItem } from '../api';

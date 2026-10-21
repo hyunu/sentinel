@@ -22,6 +22,7 @@ export default function ProtocolsListPage() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
   useEffect(() => { reload(); }, []);
 
   const remove = async (id: string, name: string) => {

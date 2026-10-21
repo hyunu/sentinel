@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- helper exports are colocated with the component */
 import {
   createContext,
   useContext,

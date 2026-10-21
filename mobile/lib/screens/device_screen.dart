@@ -35,7 +35,13 @@ class _Protocol {
   final String name;
   final String version;
   final List<_ProtocolField> fields;
-  _Protocol(this.id, this.name, this.version, this.fields);
+  final Map<String, dynamic>? parseRules;
+  _Protocol(this.id, this.name, this.version, this.fields, this.parseRules);
+
+  bool get hasParseRules {
+    final rules = parseRules;
+    return rules != null && rules['fields'] is List && (rules['fields'] as List).isNotEmpty;
+  }
 
   factory _Protocol.fromJson(Map<String, dynamic> j) {
     final fieldsRaw = j['fields'];
@@ -44,11 +50,16 @@ class _Protocol {
             .map((f) => _ProtocolField.fromJson(f as Map<String, dynamic>))
             .toList()
         : <_ProtocolField>[];
+    final rulesRaw = j['parse_rules'];
+    final parseRules = rulesRaw is Map
+        ? Map<String, dynamic>.from(rulesRaw)
+        : null;
     return _Protocol(
       j['id']?.toString() ?? '',
       j['name']?.toString() ?? '',
       j['version']?.toString() ?? '',
       fields,
+      parseRules,
     );
   }
 }
@@ -83,6 +94,11 @@ class _DeviceScreenState extends State<DeviceScreen>
   List<String> _uartLogs = [];
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
+  final List<String> _pendingParse = [];
+  final Set<String> _pendingParseSet = {};
+  final Map<String, Map<String, String>> _parsedFrames = {};
+  Timer? _parseTimer;
+  bool _parsingBatch = false;
   StreamSubscription? _uartSub;
   StreamSubscription? _connSub;
   bool _scanningUart = false;
@@ -101,6 +117,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
     _loadSaved();
     _connect();
+    _parseTimer = Timer.periodic(const Duration(milliseconds: 700), (_) => _flushParseBatch());
   }
 
   void _onFieldChanged() {
@@ -117,6 +134,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
       c.removeListener(_onFieldChanged);
     }
+    _parseTimer?.cancel();
     _uartSub?.cancel();
     _connSub?.cancel();
     _ssidCtrl.dispose();
@@ -392,8 +410,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (raw['mac_address']?.toString() != bleMac) continue;
         final protocolId = raw['protocol_id']?.toString();
         setState(() {
-          if (protocolId != null && protocolId.isNotEmpty) {
+          if (protocolId != null && protocolId.isNotEmpty && protocolId != _selectedProtoId) {
             _selectedProtoId = protocolId;
+            _resetParsedFrames();
           }
         });
         break;
@@ -681,6 +700,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           _uartLogs.add(hex);
           if (_uartLogs.length > 500) _uartLogs = _uartLogs.sublist(-500);
         });
+        _enqueueParse(hex);
       });
     } catch (e) {
       if (mounted) _showError('Failed to start the UART stream.');
@@ -711,7 +731,121 @@ class _DeviceScreenState extends State<DeviceScreen>
     AppToast.error(context, message);
   }
 
+  void _onProtocolChanged(String? id) {
+    setState(() {
+      _selectedProtoId = id;
+      _resetParsedFrames();
+    });
+  }
+
+  _Protocol? get _selectedProtocol {
+    if (_selectedProtoId == null) return null;
+    for (final protocol in _protocols) {
+      if (protocol.id == _selectedProtoId) return protocol;
+    }
+    return null;
+  }
+
+  String get _baseUrl {
+    final raw = _urlCtrl.text.trim().isNotEmpty
+        ? _urlCtrl.text.trim()
+        : 'http://192.168.0.9:5050';
+    return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
+  }
+
+  void _resetParsedFrames() {
+    _pendingParse.clear();
+    _pendingParseSet.clear();
+    _parsedFrames.clear();
+  }
+
+  void _enqueueParse(String hex) {
+    final protocol = _selectedProtocol;
+    if (protocol == null || !protocol.hasParseRules) return;
+    if (_parsedFrames.containsKey(hex) || _pendingParseSet.contains(hex)) return;
+    if (_pendingParse.length >= 200) return;
+    _pendingParse.add(hex);
+    _pendingParseSet.add(hex);
+  }
+
+  Future<void> _flushParseBatch() async {
+    if (_parsingBatch || _pendingParse.isEmpty) return;
+    final protocol = _selectedProtocol;
+    if (protocol == null || !protocol.hasParseRules) {
+      _pendingParse.clear();
+      _pendingParseSet.clear();
+      return;
+    }
+
+    final batch = _pendingParse.take(100).toList();
+    _pendingParse.removeRange(0, batch.length);
+    _pendingParseSet.removeAll(batch);
+    _parsingBatch = true;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/v1/protocols/parse/batch'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'protocol_id': protocol.id,
+          'frames': batch,
+        }),
+      ).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode != 200) return;
+      final decoded = json.decode(response.body);
+      final results = decoded is Map ? decoded['results'] : null;
+      if (results is! List) return;
+
+      final parsedBatch = <String, Map<String, String>>{};
+      for (final raw in results) {
+        if (raw is! Map) continue;
+        final hex = raw['raw_hex']?.toString() ?? '';
+        final fields = raw['parsed_fields'];
+        if (hex.isEmpty || fields is! Map) continue;
+        parsedBatch[hex] = {
+          for (final entry in fields.entries)
+            entry.key.toString(): _formatParsedValue(entry.value),
+        };
+      }
+
+      if (!mounted || parsedBatch.isEmpty) return;
+      setState(() {
+        for (final entry in parsedBatch.entries) {
+          _parsedFrames[entry.key] = entry.value;
+        }
+        while (_parsedFrames.length > 500) {
+          _parsedFrames.remove(_parsedFrames.keys.first);
+        }
+      });
+    } catch (_) {
+      // Keep raw data visible when the server is unreachable.
+    } finally {
+      _parsingBatch = false;
+    }
+  }
+
+  String _formatParsedValue(dynamic value) {
+    if (value == null) return 'null';
+    if (value is double) {
+      if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+      return value.toString();
+    }
+    if (value is num || value is bool) return value.toString();
+    if (value is List) return value.map(_formatParsedValue).join(', ');
+    if (value is Map) {
+      return value.entries
+          .map((entry) => '${entry.key}=${_formatParsedValue(entry.value)}')
+          .join(', ');
+    }
+    return value.toString();
+  }
+
   Map<String, String> _parseHex(String hex, _Protocol proto) {
+    if (proto.hasParseRules) {
+      if (proto.id != _selectedProtoId) return <String, String>{};
+      return _parsedFrames[hex] ?? <String, String>{};
+    }
     final bytes = <int>[];
     final clean = hex.replaceAll(' ', '');
     for (var i = 0; i < clean.length - 1; i += 2) {
@@ -937,7 +1071,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                           child: Text('${p.name} v${p.version}', overflow: TextOverflow.ellipsis),
                         ))
                     .toList(),
-                onChanged: (v) => setState(() => _selectedProtoId = v),
+                onChanged: _onProtocolChanged,
               ),
             if (_protocols.isEmpty) ...[
               const SizedBox(height: 8),
@@ -1579,7 +1713,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           ? _protocols.first
           : _Protocol.fromJson({'id': '', 'name': '', 'version': '', 'fields': []}),
     );
-    final showParsed = selectedProto.fields.isNotEmpty;
+    final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
     if (_protocols.isEmpty && !_scanningUart) {
       return Center(
@@ -1640,7 +1774,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                   ),
                 )).toList(),
-                onChanged: (v) => setState(() => _selectedProtoId = v),
+                onChanged: _onProtocolChanged,
               ),
               if (showParsed) ...[
                 const SizedBox(height: 12),
@@ -1739,7 +1873,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           ? _protocols.first
           : _Protocol.fromJson({'id': '', 'name': '', 'version': '', 'fields': []}),
     );
-    final showParsed = selectedProto.fields.isNotEmpty;
+    final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
     if (_uartLogs.isEmpty) {
       return Center(

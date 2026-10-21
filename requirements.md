@@ -30,7 +30,7 @@ ESP32-C3 기반 UART 스니퍼 시스템. 두 디바이스 간 19200bps UART 통
 - **WiFi 통신**: 백엔드로 UART 데이터, 온도, Heartbeat 전송 (HTTP)
 - **Heartbeat**: 주기적 전송으로 활성 상태 알림 (`firmware_version`, `wifi_rssi` 포함)
 - **재온보딩**: 동일 SSID로 이미 연결된 경우 재연결 없이 Heartbeat 재시도
-- **NVS 영구 저장**: UID·WiFi·서버 URL을 Preferences(`sentinel`)에 저장 → 재부팅 후 `Sentinel-XXXX` 광고명·자동 WiFi 연결 유지
+- **NVS 영구 저장**: UID·WiFi·서버 URL·baud rate를 Preferences(`sentinel`)에 저장 → 재부팅 후 `Sentinel-XXXX` 광고명·자동 WiFi 연결·UART 속도 유지
 
 ### 3.2 모바일 앱
 
@@ -404,7 +404,8 @@ graph LR
 | Method | Path | Description |
 |---|---|---|
 | CRUD | `/api/v1/protocols` | 프로토콜 명세 관리 |
-| POST | `/api/v1/protocols/:id/parse` | 명세 기반 파싱 |
+| POST | `/api/v1/protocols/parse` | 명세 기반 파싱 |
+| POST | `/api/v1/protocols/parse/batch` | 여러 프레임 일괄 파싱 (모바일 v2) |
 
 ### 시각화
 | Method | Path | Description |

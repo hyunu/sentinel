@@ -1,4 +1,14 @@
 const BASE = '/api/v1';
+const AI_TOKEN_STORAGE_KEY = 'sentinel-ai-token';
+
+function aiAuthHeaders(): Record<string, string> {
+  try {
+    const token = localStorage.getItem(AI_TOKEN_STORAGE_KEY)?.trim();
+    return token ? { 'X-AI-Token': token } : {};
+  } catch {
+    return {};
+  }
+}
 
 import { extractSSEEvents } from './lib/aiSse';
 import type { JsonRuleDocument, ParseResult } from './types/ruleparser';
@@ -379,10 +389,11 @@ export const api = {
   },
 
   ai: {
-    status: () => request<AIStatus>('/ai/status'),
+    status: () => request<AIStatus>('/ai/status', { headers: aiAuthHeaders() }),
     query: (data: AIQueryRequest) =>
       request<AIQueryResult>('/ai/query', {
         method: 'POST',
+        headers: aiAuthHeaders(),
         body: JSON.stringify(data),
         timeoutMs: 120000,
       }),
@@ -395,7 +406,7 @@ export const api = {
     ) => {
       const res = await fetch(`${BASE}/ai/query/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...aiAuthHeaders() },
         body: JSON.stringify(data),
         signal: handlers.signal,
       });
