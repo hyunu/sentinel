@@ -25,7 +25,6 @@ import {
 } from '../components/ChartControlIcons';
 import { formatDateOnly, formatChartAxisTime, formatTimeInterval, parseDateOnly } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
-import { aggregateVizRows } from '../lib/vizAiAggregation';
 import {
   cancelChartZoomRaf,
   chartZoomEquals,
@@ -301,6 +300,8 @@ type VizQueryParams = {
   items: VizItem[];
   time_range?: { start: string; end: string };
   since?: string;
+  aggregation?: 'avg' | 'min' | 'max';
+  bucket_seconds?: number;
 };
 
 async function queryVizDataset(
@@ -491,14 +492,17 @@ export default function VizDashboardPage() {
     () => items.map(i => `${i.id}:${i.label}:${i.visible}:${i.offset}:${i.weight}`).join('|'),
     [items],
   );
+  const aiAggregationParams = useMemo<{ aggregation?: 'avg' | 'min' | 'max'; bucket_seconds?: number }>(() => {
+    const aggregation = aiChartLink?.aggregation;
+    if (aggregation === 'avg' || aggregation === 'min' || aggregation === 'max') {
+      return { aggregation, bucket_seconds: aiChartLink?.bucket_seconds };
+    }
+    return {};
+  }, [aiChartLink]);
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
-  const aggregatedRawVizData = useMemo(
-    () => aggregateVizRows(rawVizData, aiChartLink?.aggregation, aiChartLink?.bucket_seconds),
-    [rawVizData, aiChartLink],
-  );
   const chartData = useMemo(
-    () => toChartPoints(aggregatedRawVizData, items),
-    [aggregatedRawVizData, itemTransformKey],
+    () => toChartPoints(rawVizData, items),
+    [rawVizData, itemTransformKey],
   );
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
   const refAreaLeftRef = useRef<number | null>(null);
@@ -1922,6 +1926,7 @@ export default function VizDashboardPage() {
         board_id: selectedBoard,
         items: itemsForDataQuery(itemsRef.current),
         time_range: timeRange,
+        ...aiAggregationParams,
       }, {
         assessAllRange,
         signal: controller.signal,
@@ -1941,7 +1946,7 @@ export default function VizDashboardPage() {
         setLoading(false);
       }
     }
-  }, [selectedBoard, applyQueryResult, t, scheduleSpectrumViewportFit]);
+  }, [selectedBoard, applyQueryResult, t, scheduleSpectrumViewportFit, aiAggregationParams]);
 
   const applyTimePresetQuery = useCallback(async (id: TimePresetId) => {
     if (liveModeRef.current || !selectedBoard || !itemsRef.current.length) return;
@@ -2435,13 +2440,8 @@ export default function VizDashboardPage() {
   }, [chartZoom, chartData]);
 
   const detailChartData = useMemo(
-    () => (detailRawVizData
-      ? toChartPoints(
-        aggregateVizRows(detailRawVizData, aiChartLink?.aggregation, aiChartLink?.bucket_seconds),
-        items,
-      )
-      : null),
-    [detailRawVizData, items, itemTransformKey, aiChartLink],
+    () => (detailRawVizData ? toChartPoints(detailRawVizData, items) : null),
+    [detailRawVizData, items, itemTransformKey],
   );
 
   useEffect(() => {
@@ -2537,6 +2537,7 @@ export default function VizDashboardPage() {
             items: itemsForDataQuery(itemsRef.current),
             time_range: { start: startTs, end: endTs },
             limit: detailLimit,
+            ...aiAggregationParams,
           }, { signal: controller.signal, timeoutMs: 30000 });
           if (controller.signal.aborted) return;
           if (detailFetchSeqRef.current !== seq) return;
@@ -2575,7 +2576,7 @@ export default function VizDashboardPage() {
       detailAbortRef.current?.abort();
       detailAbortRef.current = null;
     };
-  }, [zoomWindow, liveMode, selectedBoard, itemQueryKey, inMemoryFull]);
+  }, [zoomWindow, liveMode, selectedBoard, itemQueryKey, inMemoryFull, aiAggregationParams]);
 
   const displayChartData = useMemo(() => {
     if (!chartData.length) return [];
@@ -2615,7 +2616,7 @@ export default function VizDashboardPage() {
         rows = filterVizRowsByTimeRange(rawVizData, startTs, endTs);
       }
     }
-    return aggregateVizRows(rows, aiChartLink?.aggregation, aiChartLink?.bucket_seconds);
+    return rows;
   }, [
     rawVizData,
     zoomWindow,
@@ -2623,7 +2624,6 @@ export default function VizDashboardPage() {
     detailLoading,
     inMemoryFull,
     queryMeta?.downsampled,
-    aiChartLink,
   ]);
 
   const rawValuesSource = useMemo(() => displayRawVizData, [displayRawVizData]);

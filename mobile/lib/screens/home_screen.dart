@@ -27,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isScanning = false;
   StreamSubscription? _scanSub;
   Timer? _boardRefreshTimer;
+  Timer? _scanTickTimer;
   int _scanElapsed = 0;
 
   late AnimationController _pulseCtrl;
@@ -53,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _scanSub?.cancel();
     _boardRefreshTimer?.cancel();
+    _scanTickTimer?.cancel();
     _scanner.stopScan();
     _pulseCtrl.dispose();
     super.dispose();
@@ -96,7 +98,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _tickScan() {
-    Future.delayed(const Duration(seconds: 1), () {
+    _scanTickTimer?.cancel();
+    _scanTickTimer = Timer(const Duration(seconds: 1), () {
       if (!_isScanning || !mounted) return;
       setState(() => _scanElapsed++);
       _tickScan();

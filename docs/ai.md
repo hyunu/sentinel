@@ -182,7 +182,7 @@ Linux에서는 `extra_hosts` 또는 같은 Compose 네트워크에 모델 서버
 }
 ```
 
-대시보드의 AI 질의 페이지는 도구 호출 내역과 차트 카드를 표시하며, “시각화에서 열기”를 누르면 해당 보드·필드·기간으로 Viz 화면을 엽니다. `aggregation`이 `avg`/`min`/`max`이면 Viz가 `bucket_seconds` 단위로 집계한 뒤 차트와 커서 값 패널에 반영합니다.
+대시보드의 AI 질의 페이지는 도구 호출 내역과 차트 카드를 표시하며, “시각화에서 열기”를 누르면 해당 보드·필드·기간으로 Viz 화면을 엽니다. `aggregation`이 `avg`/`min`/`max`이면 Viz가 `/viz/query-items`에 `aggregation`/`bucket_seconds`를 전달하고, 서버가 Mongo `$group`으로 집계한 결과를 차트·커서 값·통계 패널에 사용합니다.
 
 ### 스트리밍 (SSE)
 

@@ -199,6 +199,35 @@ func TestAIToolsIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("server aggregation", func(t *testing.T) {
+		windowStart, _ := time.Parse(time.RFC3339, start)
+		windowEnd, _ := time.Parse(time.RFC3339, end)
+		filter := bson.M{
+			"board_id":  board.ID,
+			"timestamp": bson.M{"$gte": windowStart, "$lte": windowEnd},
+		}
+		items := []models.VizItem{{
+			Label:    "temperature",
+			FieldRef: models.FieldRef{FieldName: "payload.temperature_celsius"},
+		}}
+		points, meta, err := handler.queryVizSeriesAggregated(ctx, filter, items, "avg", 120, 100)
+		if err != nil {
+			t.Fatalf("queryVizSeriesAggregated: %v", err)
+		}
+		if len(points) < 2 || len(points) >= 6 {
+			t.Fatalf("expected aggregated points, got %#v", points)
+		}
+		if meta.TotalMatched != 6 || meta.Downsampled {
+			t.Fatalf("meta = %#v", meta)
+		}
+		for _, point := range points {
+			value, ok := point.Values["temperature"].(float64)
+			if !ok || value < 18 || value > 40 {
+				t.Fatalf("unexpected aggregated point %#v", point)
+			}
+		}
+	})
+
 	t.Run("anomalies", func(t *testing.T) {
 		raw := json.RawMessage(fmt.Sprintf(`{"field":"payload.temperature_celsius","method":"zscore","threshold":1.2,"start":%q,"end":%q}`, start, end))
 		out, err := exec.findAnomalies(ctx, raw)

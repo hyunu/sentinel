@@ -354,6 +354,8 @@ export const api = {
       time_range?: { start: string; end: string };
       since?: string;
       limit?: number;
+      aggregation?: 'avg' | 'min' | 'max';
+      bucket_seconds?: number;
       mode?: 'live';
     }, options?: { signal?: AbortSignal; timeoutMs?: number }) =>
       request<{

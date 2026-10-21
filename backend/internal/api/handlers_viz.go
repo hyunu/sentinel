@@ -188,11 +188,13 @@ func (h *Handler) VizQuery(c *gin.Context) {
 }
 
 type VizQueryItemsRequest struct {
-	BoardID   string            `json:"board_id" binding:"required"`
-	Items     []models.VizItem  `json:"items" binding:"required"`
-	TimeRange *models.TimeRange `json:"time_range,omitempty"`
-	Since     string            `json:"since,omitempty"`
-	Limit     *int              `json:"limit,omitempty"`
+	BoardID       string            `json:"board_id" binding:"required"`
+	Items         []models.VizItem  `json:"items" binding:"required"`
+	TimeRange     *models.TimeRange `json:"time_range,omitempty"`
+	Since         string            `json:"since,omitempty"`
+	Limit         *int              `json:"limit,omitempty"`
+	Aggregation   string            `json:"aggregation,omitempty"`
+	BucketSeconds int               `json:"bucket_seconds,omitempty"`
 	// Mode "live" returns raw parsed samples (never min/avg/max rollups).
 	Mode string `json:"mode,omitempty"`
 }
@@ -237,6 +239,8 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	)
 	if live {
 		results, meta, err = h.queryVizSeriesRaw(ctx, filter, req.Items, limit)
+	} else if isVizAggregation(req.Aggregation) {
+		results, meta, err = h.queryVizSeriesAggregated(ctx, filter, req.Items, req.Aggregation, req.BucketSeconds, limit)
 	} else {
 		results, meta, err = h.queryVizSeries(ctx, filter, req.Items, limit)
 	}
