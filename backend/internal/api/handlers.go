@@ -1044,19 +1044,14 @@ func (h *Handler) SeedDefaultProtocol(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	count, err := h.db.Protocols().CountDocuments(ctx, bson.M{"name": "LCP Protocol"})
-	if err == nil && count > 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "default protocol already exists"})
-		return
-	}
-
-	proto := protocol.DefaultLCPProtocolSpec(uuid.New().String())
-	proto.CreatedAt = time.Now()
-	proto.UpdatedAt = time.Now()
-
-	if _, err := h.db.Protocols().InsertOne(ctx, proto); err != nil {
+	proto, created, err := h.db.EnsureLCPProtocol(ctx)
+	if err != nil {
 		h.logger.Error("failed to seed default protocol", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to seed protocol"})
+		return
+	}
+	if !created {
+		c.JSON(http.StatusOK, gin.H{"message": "default protocol already exists"})
 		return
 	}
 
