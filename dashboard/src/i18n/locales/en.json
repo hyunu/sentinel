@@ -257,6 +257,7 @@
     "noItems": "No items. Use + Add All Fields above to add fields.",
     "noFieldMatch": "No fields match \"{{query}}\".",
     "chart": "Chart",
+    "aiAggregation": "AI aggregation: {{aggregation}} · {{seconds}}s buckets",
     "chartView": "Chart view",
     "fullscreen": "Fullscreen (F)",
     "exitFullscreen": "Exit fullscreen (Esc)",

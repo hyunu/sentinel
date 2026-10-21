@@ -24,6 +24,7 @@ import {
 } from '../components/ChartControlIcons';
 import { formatDateOnly, formatChartAxisTime, formatTimeInterval, parseDateOnly } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
+import { aggregateVizRows } from '../lib/vizAiAggregation';
 import {
   cancelChartZoomRaf,
   chartZoomEquals,
@@ -132,6 +133,8 @@ interface AIChartLink {
   fields: string[];
   start: string;
   end: string;
+  aggregation?: string;
+  bucket_seconds?: number;
   title?: string;
 }
 
@@ -488,9 +491,13 @@ export default function VizDashboardPage() {
     [items],
   );
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
+  const aggregatedRawVizData = useMemo(
+    () => aggregateVizRows(rawVizData, aiChartLink?.aggregation, aiChartLink?.bucket_seconds),
+    [rawVizData, aiChartLink],
+  );
   const chartData = useMemo(
-    () => toChartPoints(rawVizData, items),
-    [rawVizData, itemTransformKey],
+    () => toChartPoints(aggregatedRawVizData, items),
+    [aggregatedRawVizData, itemTransformKey],
   );
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
   const refAreaLeftRef = useRef<number | null>(null);
@@ -1696,6 +1703,7 @@ export default function VizDashboardPage() {
       if (!parsed?.board_id || !Array.isArray(parsed.fields) || parsed.fields.length === 0) return;
       setAiChartLink(parsed);
       setSelectedBoard(parsed.board_id);
+      setChartZoom(null);
       if (parsed.start && parsed.end) {
         setChartQueryTimeRange({ start: parsed.start, end: parsed.end });
       }
@@ -1770,6 +1778,8 @@ export default function VizDashboardPage() {
       const p = await api.viz.getProfile(id);
       setSelectedBoard(p.board_id);
       setItems(normalizeVizItems(p.items));
+      setAiChartLink(null);
+      setChartQueryTimeRange(null);
       setSavedProfileId(p.id);
       setShowProfileAdd(false);
       setProfileDraftName('');
@@ -2040,6 +2050,7 @@ export default function VizDashboardPage() {
             else void fetchAll();
             break;
           case 'toggle-live':
+            setAiChartLink(null);
             setLiveMode(v => !v);
             break;
           default:
@@ -2423,8 +2434,13 @@ export default function VizDashboardPage() {
   }, [chartZoom, chartData]);
 
   const detailChartData = useMemo(
-    () => (detailRawVizData ? toChartPoints(detailRawVizData, items) : null),
-    [detailRawVizData, items, itemTransformKey],
+    () => (detailRawVizData
+      ? toChartPoints(
+        aggregateVizRows(detailRawVizData, aiChartLink?.aggregation, aiChartLink?.bucket_seconds),
+        items,
+      )
+      : null),
+    [detailRawVizData, items, itemTransformKey, aiChartLink],
   );
 
   useEffect(() => {
@@ -2579,18 +2595,26 @@ export default function VizDashboardPage() {
 
   const displayRawVizData = useMemo(() => {
     if (!rawVizData.length) return [];
-    if (!zoomWindow) return rawVizData;
-    if (inMemoryFull) {
-      return rawVizData.slice(zoomWindow.start, zoomWindow.end + 1);
-    }
-    const { startTs, endTs } = zoomWindow;
-    if (queryMeta?.downsampled) {
-      if (detailRawVizData?.length) {
-        return filterVizRowsByTimeRange(detailRawVizData, startTs, endTs);
+    let rows: VizDataRow[];
+    if (!zoomWindow) {
+      rows = rawVizData;
+    } else if (inMemoryFull) {
+      rows = filterVizRowsByTimeRange(rawVizData, zoomWindow.startTs, zoomWindow.endTs);
+    } else {
+      const { startTs, endTs } = zoomWindow;
+      if (queryMeta?.downsampled) {
+        if (detailRawVizData?.length) {
+          rows = filterVizRowsByTimeRange(detailRawVizData, startTs, endTs);
+        } else if (detailLoading) {
+          return [];
+        } else {
+          rows = filterVizRowsByTimeRange(rawVizData, startTs, endTs);
+        }
+      } else {
+        rows = filterVizRowsByTimeRange(rawVizData, startTs, endTs);
       }
-      if (detailLoading) return [];
     }
-    return filterVizRowsByTimeRange(rawVizData, startTs, endTs);
+    return aggregateVizRows(rows, aiChartLink?.aggregation, aiChartLink?.bucket_seconds);
   }, [
     rawVizData,
     zoomWindow,
@@ -2598,12 +2622,10 @@ export default function VizDashboardPage() {
     detailLoading,
     inMemoryFull,
     queryMeta?.downsampled,
+    aiChartLink,
   ]);
 
-  const rawValuesSource = useMemo(() => {
-    if (inMemoryFull) return rawVizData;
-    return displayRawVizData;
-  }, [inMemoryFull, rawVizData, displayRawVizData]);
+  const rawValuesSource = useMemo(() => displayRawVizData, [displayRawVizData]);
 
   const rawValuesByTimeKey = useMemo(() => {
     const map = new Map<string, Record<string, number>>();
@@ -3085,7 +3107,7 @@ export default function VizDashboardPage() {
           <div className="viz-config-row-content viz-source-row">
             <label className="viz-source-field">
               <span className="viz-source-field-label">{t('common.board')}</span>
-              <select value={selectedBoard} onChange={e => setSelectedBoard(e.target.value)}>
+              <select value={selectedBoard} onChange={e => { setSelectedBoard(e.target.value); setAiChartLink(null); }}>
                 <option value="">{t('viz.selectBoard')}</option>
                 {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
@@ -3166,7 +3188,7 @@ export default function VizDashboardPage() {
                   <button
                     type="button"
                     className={`viz-time-live-toggle btn-live${liveMode ? ' active' : ''}`}
-                    onClick={() => setLiveMode(v => !v)}
+                    onClick={() => { setAiChartLink(null); setLiveMode(v => !v); }}
                     aria-pressed={liveMode}
                   >
                     {liveMode ? t('viz.liveBadge') : t('viz.live')}
@@ -3599,6 +3621,14 @@ export default function VizDashboardPage() {
           <div className="viz-chart-header-main">
             <h2>{t('viz.chart')}</h2>
             <p className="viz-chart-summary">{chartSummary}</p>
+            {aiChartLink?.aggregation && aiChartLink.aggregation !== 'raw' && (
+              <span className="viz-ai-aggregation-badge">
+                {t('viz.aiAggregation', {
+                  aggregation: aiChartLink.aggregation,
+                  seconds: aiChartLink.bucket_seconds ?? 60,
+                })}
+              </span>
+            )}
           </div>
           <div className="viz-chart-toolbar">
             <button

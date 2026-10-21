@@ -96,11 +96,12 @@ type ProviderConfig struct {
 
 // ChartSpec is an optional visualization artifact returned by the agent.
 type ChartSpec struct {
-	BoardID     string   `json:"board_id"`
-	ProtocolID  string   `json:"protocol_id,omitempty"`
-	Fields      []string `json:"fields"`
-	Start       string   `json:"start"`
-	End         string   `json:"end"`
-	Aggregation string   `json:"aggregation,omitempty"`
-	Title       string   `json:"title,omitempty"`
+	BoardID       string   `json:"board_id"`
+	ProtocolID    string   `json:"protocol_id,omitempty"`
+	Fields        []string `json:"fields"`
+	Start         string   `json:"start"`
+	End           string   `json:"end"`
+	Aggregation   string   `json:"aggregation,omitempty"`
+	BucketSeconds int      `json:"bucket_seconds,omitempty"`
+	Title         string   `json:"title,omitempty"`
 }

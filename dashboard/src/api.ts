@@ -177,6 +177,7 @@ export interface AIChartSpec {
   start: string;
   end: string;
   aggregation?: string;
+  bucket_seconds?: number;
   title?: string;
 }
 

@@ -238,6 +238,14 @@ export default function AIQueryPage() {
                     <p className="muted">
                       {formatAITime(m.chart.start)} ~ {formatAITime(m.chart.end)}
                     </p>
+                    {m.chart.aggregation && m.chart.aggregation !== 'raw' && (
+                      <p className="muted">
+                        {t('viz.aiAggregation', {
+                          aggregation: m.chart.aggregation,
+                          seconds: m.chart.bucket_seconds ?? 60,
+                        })}
+                      </p>
+                    )}
                   </div>
                   <button type="button" className="btn-primary" onClick={() => openChart(m.chart!)}>
                     {t('ai.openInViz')}

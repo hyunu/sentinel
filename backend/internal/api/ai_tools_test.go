@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hyunu/sentinel/internal/ai"
 	"github.com/hyunu/sentinel/internal/protocol"
 	"go.uber.org/zap"
 )
@@ -307,6 +309,46 @@ func TestPercentChange(t *testing.T) {
 	}
 	if got := percentChange(0, 5); got != nil {
 		t.Fatalf("percentChange(0,5) = %v", got)
+	}
+}
+
+func TestDefaultChartBucketSeconds(t *testing.T) {
+	start := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		span time.Duration
+		want int
+	}{
+		{10 * time.Minute, 60},
+		{2 * time.Hour, 300},
+		{12 * time.Hour, 900},
+		{3 * 24 * time.Hour, 3600},
+	}
+	for _, tc := range cases {
+		if got := defaultChartBucketSeconds(start, start.Add(tc.span)); got != tc.want {
+			t.Errorf("span %s = %d, want %d", tc.span, got, tc.want)
+		}
+	}
+}
+
+func TestProposeChartComputesDefaultBucket(t *testing.T) {
+	handler := NewHandler(nil, zap.NewNop(), nil)
+	exec := &aiToolExecutor{h: handler, boardID: "board-1", protocolID: "proto-1"}
+	raw := json.RawMessage(`{
+		"fields":["payload.temperature_celsius"],
+		"start":"2026-10-21T10:00:00Z",
+		"end":"2026-10-21T12:00:00Z",
+		"aggregation":"avg"
+	}`)
+	out, err := exec.proposeChart(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("proposeChart: %v", err)
+	}
+	chart := out.(ai.ChartSpec)
+	if chart.Aggregation != "avg" || chart.BucketSeconds != 300 {
+		t.Fatalf("chart = %#v", chart)
+	}
+	if chart.BoardID != "board-1" || chart.ProtocolID != "proto-1" {
+		t.Fatalf("chart ids = %#v", chart)
 	}
 }
 

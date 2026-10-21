@@ -170,14 +170,15 @@ Linux에서는 `extra_hosts` 또는 같은 Compose 네트워크에 모델 서버
     "fields": ["payload.temperature_celsius"],
     "start": "2026-10-21T10:00:00Z",
     "end": "2026-10-21T11:00:00Z",
-    "aggregation": "raw"
+    "aggregation": "raw",
+    "bucket_seconds": 60
   },
   "usage": {"prompt_tokens": 1200, "completion_tokens": 180, "total_tokens": 1380},
   "rounds": 3
 }
 ```
 
-대시보드의 AI 질의 페이지는 도구 호출 내역과 차트 카드를 표시하며, “시각화에서 열기”를 누르면 해당 보드·필드·기간으로 Viz 화면을 엽니다.
+대시보드의 AI 질의 페이지는 도구 호출 내역과 차트 카드를 표시하며, “시각화에서 열기”를 누르면 해당 보드·필드·기간으로 Viz 화면을 엽니다. `aggregation`이 `avg`/`min`/`max`이면 Viz가 `bucket_seconds` 단위로 집계한 뒤 차트와 커서 값 패널에 반영합니다.
 
 ### 스트리밍 (SSE)
 

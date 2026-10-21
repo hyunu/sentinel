@@ -888,12 +888,13 @@ func (e *aiToolExecutor) queryRaw(ctx context.Context, raw json.RawMessage) (any
 
 func (e *aiToolExecutor) proposeChart(ctx context.Context, raw json.RawMessage) (any, error) {
 	var args struct {
-		Fields      []string `json:"fields"`
-		Start       string   `json:"start"`
-		End         string   `json:"end"`
-		LastMinutes int      `json:"last_minutes"`
-		Aggregation string   `json:"aggregation"`
-		Title       string   `json:"title"`
+		Fields        []string `json:"fields"`
+		Start         string   `json:"start"`
+		End           string   `json:"end"`
+		LastMinutes   int      `json:"last_minutes"`
+		Aggregation   string   `json:"aggregation"`
+		BucketSeconds int      `json:"bucket_seconds"`
+		Title         string   `json:"title"`
 	}
 	if err := decodeToolArgs(raw, &args); err != nil {
 		return nil, err
@@ -929,19 +930,43 @@ func (e *aiToolExecutor) proposeChart(ctx context.Context, raw json.RawMessage) 
 	if aggregation == "" {
 		aggregation = "raw"
 	}
+	bucketSeconds := args.BucketSeconds
+	if bucketSeconds <= 0 {
+		bucketSeconds = defaultChartBucketSeconds(window.Start, window.End)
+	} else if bucketSeconds > 86400 {
+		bucketSeconds = 86400
+	}
 	title := strings.TrimSpace(args.Title)
 	if title == "" {
 		title = strings.Join(fields, ", ")
 	}
 	return ai.ChartSpec{
-		BoardID:     e.boardID,
-		ProtocolID:  e.protocolID,
-		Fields:      fields,
-		Start:       window.Start.Format(time.RFC3339),
-		End:         window.End.Format(time.RFC3339),
-		Aggregation: aggregation,
-		Title:       title,
+		BoardID:       e.boardID,
+		ProtocolID:    e.protocolID,
+		Fields:        fields,
+		Start:         window.Start.Format(time.RFC3339),
+		End:           window.End.Format(time.RFC3339),
+		Aggregation:   aggregation,
+		BucketSeconds: bucketSeconds,
+		Title:         title,
 	}, nil
+}
+
+func defaultChartBucketSeconds(start, end time.Time) int {
+	if end.Before(start) {
+		return 60
+	}
+	span := end.Sub(start)
+	switch {
+	case span <= time.Hour:
+		return 60
+	case span <= 6*time.Hour:
+		return 300
+	case span <= 24*time.Hour:
+		return 900
+	default:
+		return 3600
+	}
 }
 
 func (e *aiToolExecutor) fieldStats(ctx context.Context, filter bson.M, field string) (aiFieldStats, error) {
@@ -1140,6 +1165,7 @@ var (
 			"end":{"type":"string","format":"date-time"},
 			"last_minutes":{"type":"integer","minimum":1,"maximum":10080},
 			"aggregation":{"type":"string","enum":["raw","avg","min","max"]},
+			"bucket_seconds":{"type":"integer","minimum":1,"maximum":86400,"description":"Aggregation bucket size. Defaults to 60s/5m/15m/1h based on the range."},
 			"title":{"type":"string"}
 		},
 		"required":["fields"],

@@ -4695,3 +4695,15 @@ pre {
 .sessions-table td {
   vertical-align: middle;
 }
+
+.viz-ai-aggregation-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
