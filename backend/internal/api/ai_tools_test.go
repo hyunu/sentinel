@@ -30,6 +30,7 @@ func TestAIToolRegistrySchemas(t *testing.T) {
 	for _, want := range []string{
 		"list_boards", "get_board", "list_protocols", "get_protocol",
 		"list_fields", "stats", "query_series", "find_events",
+		"find_anomalies", "compare_sessions",
 		"list_sessions", "query_raw", "propose_chart",
 	} {
 		if !names[want] {
@@ -219,6 +220,93 @@ func TestDetectEventsLowThreshold(t *testing.T) {
 	}
 	if events[0].DurationSeconds != 1 || events[0].Count != 2 {
 		t.Fatalf("event = %#v", events[0])
+	}
+}
+
+func TestDetectAnomaliesZScore(t *testing.T) {
+	base := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	samples := []eventSample{
+		{Timestamp: base, Value: 0},
+		{Timestamp: base.Add(time.Second), Value: 0},
+		{Timestamp: base.Add(2 * time.Second), Value: 0},
+		{Timestamp: base.Add(3 * time.Second), Value: 0},
+		{Timestamp: base.Add(4 * time.Second), Value: 0},
+		{Timestamp: base.Add(5 * time.Second), Value: 10},
+	}
+	summary, points, err := detectAnomalies(samples, "zscore", 2, 10)
+	if err != nil {
+		t.Fatalf("detectAnomalies: %v", err)
+	}
+	if summary.Method != "zscore" || summary.Count != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(points) != 1 || points[0].Value != 10 {
+		t.Fatalf("points = %#v", points)
+	}
+	if points[0].Score < 2 {
+		t.Fatalf("score = %v", points[0].Score)
+	}
+}
+
+func TestDetectAnomaliesIQR(t *testing.T) {
+	base := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	values := []float64{1, 2, 3, 4, 5, 6, 100}
+	samples := make([]eventSample, len(values))
+	for i, value := range values {
+		samples[i] = eventSample{Timestamp: base.Add(time.Duration(i) * time.Second), Value: value}
+	}
+	summary, points, err := detectAnomalies(samples, "iqr", 1.5, 10)
+	if err != nil {
+		t.Fatalf("detectAnomalies: %v", err)
+	}
+	if summary.Method != "iqr" || summary.Count != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(points) != 1 || points[0].Value != 100 {
+		t.Fatalf("points = %#v", points)
+	}
+	if summary.Q1 == nil || summary.Q3 == nil || summary.Upper == nil {
+		t.Fatalf("missing quartiles: %#v", summary)
+	}
+	if *summary.Upper >= 100 {
+		t.Fatalf("upper bound = %v", *summary.Upper)
+	}
+}
+
+func TestDetectAnomaliesChangePoint(t *testing.T) {
+	base := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	values := []float64{1, 1, 1, 10, 10, 10}
+	samples := make([]eventSample, len(values))
+	for i, value := range values {
+		samples[i] = eventSample{Timestamp: base.Add(time.Duration(i) * time.Second), Value: value}
+	}
+	summary, points, err := detectAnomalies(samples, "change_point", 0.5, 10)
+	if err != nil {
+		t.Fatalf("detectAnomalies: %v", err)
+	}
+	if summary.Method != "change_point" || summary.Count != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(points) != 1 || points[0].Value != 10 {
+		t.Fatalf("points = %#v", points)
+	}
+}
+
+func TestDetectAnomaliesRejectsUnknownMethod(t *testing.T) {
+	if _, _, err := detectAnomalies(nil, "magic", 1, 10); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPercentChange(t *testing.T) {
+	if got := percentChange(10, 15); got == nil || *got != 50 {
+		t.Fatalf("percentChange(10,15) = %v", got)
+	}
+	if got := percentChange(10, 5); got == nil || *got != -50 {
+		t.Fatalf("percentChange(10,5) = %v", got)
+	}
+	if got := percentChange(0, 5); got != nil {
+		t.Fatalf("percentChange(0,5) = %v", got)
 	}
 }
 

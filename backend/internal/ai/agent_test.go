@@ -159,7 +159,8 @@ func TestAgentForcesFinalAnswerAfterMaxRounds(t *testing.T) {
 	}
 }
 
-func TestAgentReportsToolErrorsToModel(t *testing.T) {	registry := NewToolRegistry(Tool{
+func TestAgentReportsToolErrorsToModel(t *testing.T) {
+	registry := NewToolRegistry(Tool{
 		Spec: ToolSpec{Name: "stats", Description: "field stats", Parameters: json.RawMessage(`{"type":"object"}`)},
 		Execute: func(_ context.Context, _ json.RawMessage) (any, error) {
 			return nil, errors.New("field not found")
@@ -180,6 +181,86 @@ func TestAgentReportsToolErrorsToModel(t *testing.T) {	registry := NewToolRegist
 	toolMsg := provider.requests[1].Messages[len(provider.requests[1].Messages)-1]
 	if !strings.Contains(toolMsg.Content, "field not found") {
 		t.Fatalf("tool error result = %q", toolMsg.Content)
+	}
+}
+
+type streamScript struct {
+	tokens   []string
+	response ChatResponse
+}
+
+type fakeStreamProvider struct {
+	scripts  []streamScript
+	requests []ChatRequest
+	chatUsed bool
+}
+
+func (f *fakeStreamProvider) Name() string  { return "fake-stream" }
+func (f *fakeStreamProvider) Model() string { return "fake-stream-model" }
+
+func (f *fakeStreamProvider) Chat(_ context.Context, _ ChatRequest) (ChatResponse, error) {
+	f.chatUsed = true
+	return ChatResponse{}, errors.New("Chat should not be called for a streaming request")
+}
+
+func (f *fakeStreamProvider) ChatStream(_ context.Context, req ChatRequest, onToken func(string) error) (ChatResponse, error) {
+	f.requests = append(f.requests, req)
+	if len(f.scripts) == 0 {
+		return ChatResponse{}, errors.New("no scripted stream")
+	}
+	script := f.scripts[0]
+	f.scripts = f.scripts[1:]
+	for _, token := range script.tokens {
+		if err := onToken(token); err != nil {
+			return ChatResponse{}, err
+		}
+	}
+	return script.response, nil
+}
+
+func TestAgentEmitsStreamingEvents(t *testing.T) {
+	registry := NewToolRegistry(Tool{
+		Spec: ToolSpec{Name: "stats", Parameters: json.RawMessage(`{"type":"object"}`)},
+		Execute: func(_ context.Context, _ json.RawMessage) (any, error) {
+			return map[string]any{"avg": 21.5}, nil
+		},
+	})
+	provider := &fakeStreamProvider{scripts: []streamScript{
+		{response: ChatResponse{ToolCalls: []ToolCall{{ID: "call_1", Name: "stats", Arguments: json.RawMessage(`{}`)}}}},
+		{tokens: []string{"평", "균"}, response: ChatResponse{Content: "평균"}},
+	}}
+
+	var events []Event
+	result, err := NewAgent(provider, Options{MaxRounds: 3}, nil).Run(context.Background(), Request{
+		Query: "평균 알려줘",
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}, registry)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if provider.chatUsed {
+		t.Fatal("agent used non-streaming Chat")
+	}
+	if result.Answer != "평균" {
+		t.Fatalf("answer = %q", result.Answer)
+	}
+
+	var types []string
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	want := []string{"round", "tool_call", "round", "token", "token", "done"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %#v, want %v", types, want)
+	}
+	if events[1].ToolCall == nil || events[1].ToolCall.Name != "stats" {
+		t.Fatalf("tool event = %#v", events[1])
+	}
+	if events[len(events)-1].Result == nil || events[len(events)-1].Result.Answer != "평균" {
+		t.Fatalf("done event = %#v", events[len(events)-1])
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	aiToolCount        = 11
+	aiToolCount        = 13
 	aiDefaultPointCap  = 240
 	aiMaxPointCap      = 1000
 	aiMaxSeriesSpan    = 7 * 24 * time.Hour
@@ -104,6 +104,8 @@ func (h *Handler) buildAIToolRegistry(boardID, protocolID string) *ai.ToolRegist
 		ai.Tool{Spec: ai.ToolSpec{Name: "stats", Description: "Compute deterministic count/min/max/avg statistics for one parsed field.", Parameters: aiSchemaStats}, Execute: exec.stats},
 		ai.Tool{Spec: ai.ToolSpec{Name: "query_series", Description: "Query a numeric parsed field as a time series. Prefer this for trends and charts.", Parameters: aiSchemaQuerySeries}, Execute: exec.querySeries},
 		ai.Tool{Spec: ai.ToolSpec{Name: "find_events", Description: "Find contiguous time intervals where a numeric field satisfies a threshold condition.", Parameters: aiSchemaFindEvents}, Execute: exec.findEvents},
+		ai.Tool{Spec: ai.ToolSpec{Name: "find_anomalies", Description: "Detect statistical anomalies or abrupt change points in one numeric field.", Parameters: aiSchemaFindAnomalies}, Execute: exec.findAnomalies},
+		ai.Tool{Spec: ai.ToolSpec{Name: "compare_sessions", Description: "Compare count/min/max/avg of one field across capture sessions.", Parameters: aiSchemaCompareSessions}, Execute: exec.compareSessions},
 		ai.Tool{Spec: ai.ToolSpec{Name: "list_sessions", Description: "List capture sessions for the selected board.", Parameters: aiSchemaListSessions}, Execute: exec.listSessions},
 		ai.Tool{Spec: ai.ToolSpec{Name: "query_raw", Description: "Read a small sample of raw UART frames for spot checking or debugging.", Parameters: aiSchemaQueryRaw}, Execute: exec.queryRaw},
 		ai.Tool{Spec: ai.ToolSpec{Name: "propose_chart", Description: "Return a chart specification for the dashboard. Call this when the user asks for a chart or visualization.", Parameters: aiSchemaProposeChart}, Execute: exec.proposeChart},
@@ -512,44 +514,9 @@ func (e *aiToolExecutor) findEvents(ctx context.Context, raw json.RawMessage) (a
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	filter := e.boardTimeFilter(window)
-	total, err := e.h.db.UartData().CountDocuments(ctx, filter)
+	samples, scanned, total, err := e.scanFieldSamples(ctx, e.boardTimeFilter(window), field, aiMaxEventScan)
 	if err != nil {
-		return nil, fmt.Errorf("count events: %w", err)
-	}
-
-	scanLimit := int64(aiMaxEventScan)
-	if total < scanLimit {
-		scanLimit = total
-	}
-	cursor, err := e.h.db.UartData().Find(ctx, filter,
-		options.Find().
-			SetSort(bson.M{"timestamp": 1}).
-			SetProjection(bson.M{"timestamp": 1, "parsed_fields": 1}).
-			SetBatchSize(1000).
-			SetLimit(scanLimit),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("scan events: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	samples := make([]eventSample, 0, minInt(int(scanLimit), 4096))
-	scanned := 0
-	for cursor.Next(ctx) {
-		var doc vizSampleDoc
-		if err := cursor.Decode(&doc); err != nil {
-			continue
-		}
-		scanned++
-		value, ok := extractVizValue(doc.ParsedFields[field])
-		if !ok {
-			continue
-		}
-		samples = append(samples, eventSample{Timestamp: doc.Timestamp, Value: value})
-	}
-	if err := cursor.Err(); err != nil {
-		return nil, fmt.Errorf("scan events: %w", err)
+		return nil, err
 	}
 
 	events := detectEvents(samples, op, *args.Value, minDuration)
@@ -574,6 +541,227 @@ func (e *aiToolExecutor) findEvents(ctx context.Context, raw json.RawMessage) (a
 		"truncated":    total > int64(scanned),
 		"event_count":  len(events),
 		"events":       events,
+	}, nil
+}
+
+func (e *aiToolExecutor) scanFieldSamples(
+	ctx context.Context,
+	filter bson.M,
+	field string,
+	maxDocs int,
+) ([]eventSample, int, int64, error) {
+	total, err := e.h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("count frames: %w", err)
+	}
+	scanLimit := int64(maxDocs)
+	if total < scanLimit {
+		scanLimit = total
+	}
+	cursor, err := e.h.db.UartData().Find(ctx, filter,
+		options.Find().
+			SetSort(bson.M{"timestamp": 1}).
+			SetProjection(bson.M{"timestamp": 1, "parsed_fields": 1}).
+			SetBatchSize(1000).
+			SetLimit(scanLimit),
+	)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("scan frames: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	samples := make([]eventSample, 0, minInt(int(scanLimit), 4096))
+	scanned := 0
+	for cursor.Next(ctx) {
+		var doc vizSampleDoc
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		scanned++
+		value, ok := extractVizValue(doc.ParsedFields[field])
+		if !ok {
+			continue
+		}
+		samples = append(samples, eventSample{Timestamp: doc.Timestamp, Value: value})
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, 0, 0, fmt.Errorf("scan frames: %w", err)
+	}
+	return samples, scanned, total, nil
+}
+
+func (e *aiToolExecutor) findAnomalies(ctx context.Context, raw json.RawMessage) (any, error) {
+	var args struct {
+		Field       string  `json:"field"`
+		Method      string  `json:"method"`
+		Threshold   float64 `json:"threshold"`
+		Start       string  `json:"start"`
+		End         string  `json:"end"`
+		LastMinutes int     `json:"last_minutes"`
+		Limit       int     `json:"limit"`
+	}
+	if err := decodeToolArgs(raw, &args); err != nil {
+		return nil, err
+	}
+	field := strings.TrimSpace(args.Field)
+	if err := validateFieldName(field); err != nil {
+		return nil, err
+	}
+	method := strings.ToLower(strings.TrimSpace(args.Method))
+	if method == "" {
+		method = "zscore"
+	}
+	threshold := args.Threshold
+	if threshold <= 0 {
+		switch method {
+		case "iqr":
+			threshold = 1.5
+		case "change_point":
+			threshold = 0.3
+		default:
+			threshold = 3
+		}
+	}
+	window, err := e.window(args.Start, args.End, args.LastMinutes, aiMaxEventSpan)
+	if err != nil {
+		return nil, err
+	}
+	limit := clampAILimit(args.Limit, 20, 100)
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	samples, scanned, total, err := e.scanFieldSamples(ctx, e.boardTimeFilter(window), field, aiMaxEventScan)
+	if err != nil {
+		return nil, err
+	}
+	summary, points, err := detectAnomalies(samples, method, threshold, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"field":        field,
+		"start":        window.Start,
+		"end":          window.End,
+		"scanned":      scanned,
+		"total_frames": total,
+		"truncated":    total > int64(scanned),
+		"summary":      summary,
+		"anomalies":    points,
+	}, nil
+}
+
+type sessionComparison struct {
+	SessionID    string       `json:"session_id"`
+	Name         string       `json:"name"`
+	Start        time.Time    `json:"start"`
+	End          time.Time    `json:"end"`
+	Frames       int64        `json:"frames"`
+	Stats        aiFieldStats `json:"stats"`
+	DeltaPercent *float64     `json:"delta_percent,omitempty"`
+}
+
+func (e *aiToolExecutor) compareSessions(ctx context.Context, raw json.RawMessage) (any, error) {
+	var args struct {
+		SessionIDs []string `json:"session_ids"`
+		Field      string   `json:"field"`
+	}
+	if err := decodeToolArgs(raw, &args); err != nil {
+		return nil, err
+	}
+	field := strings.TrimSpace(args.Field)
+	if err := validateFieldName(field); err != nil {
+		return nil, err
+	}
+	if len(args.SessionIDs) > 5 {
+		return nil, fmt.Errorf("at most 5 sessions can be compared")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var sessions []models.Session
+	if len(args.SessionIDs) == 0 {
+		cursor, err := e.h.db.Sessions().Find(ctx, bson.M{"board_id": e.boardID},
+			options.Find().SetSort(bson.M{"start_time": -1}).SetLimit(2),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("load sessions: %w", err)
+		}
+		defer cursor.Close(ctx)
+		if err := cursor.All(ctx, &sessions); err != nil {
+			return nil, fmt.Errorf("load sessions: %w", err)
+		}
+	} else {
+		cursor, err := e.h.db.Sessions().Find(ctx, bson.M{
+			"_id":      bson.M{"$in": args.SessionIDs},
+			"board_id": e.boardID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load sessions: %w", err)
+		}
+		defer cursor.Close(ctx)
+		var found []models.Session
+		if err := cursor.All(ctx, &found); err != nil {
+			return nil, fmt.Errorf("load sessions: %w", err)
+		}
+		byID := make(map[string]models.Session, len(found))
+		for _, session := range found {
+			byID[session.ID] = session
+		}
+		for _, id := range args.SessionIDs {
+			if session, ok := byID[id]; ok {
+				sessions = append(sessions, session)
+			}
+		}
+	}
+	if len(sessions) == 0 {
+		return nil, fmt.Errorf("no matching sessions found for this board")
+	}
+
+	comparisons := make([]sessionComparison, 0, len(sessions))
+	var baseline *float64
+	for _, session := range sessions {
+		start := session.StartTime
+		end := session.EndTime
+		if end.IsZero() || end.Before(start) {
+			end = time.Now().UTC()
+		}
+		filter := bson.M{
+			"board_id":  e.boardID,
+			"timestamp": bson.M{"$gte": start, "$lte": end},
+		}
+		stats, err := e.fieldStats(ctx, filter, field)
+		if err != nil {
+			return nil, err
+		}
+		frames, err := e.h.db.UartData().CountDocuments(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("count session frames: %w", err)
+		}
+		comparison := sessionComparison{
+			SessionID: session.ID,
+			Name:      session.Name,
+			Start:     start,
+			End:       end,
+			Frames:    frames,
+			Stats:     stats,
+		}
+		if stats.Avg != nil {
+			if baseline == nil {
+				value := *stats.Avg
+				baseline = &value
+			} else {
+				comparison.DeltaPercent = percentChange(*baseline, *stats.Avg)
+			}
+		}
+		comparisons = append(comparisons, comparison)
+	}
+
+	return map[string]any{
+		"field":    field,
+		"sessions": comparisons,
+		"count":    len(comparisons),
 	}, nil
 }
 
@@ -908,6 +1096,29 @@ var (
 			"end":{"type":"string","format":"date-time"},
 			"limit":{"type":"integer","minimum":1,"maximum":100}
 		},
+		"additionalProperties":false
+	}`)
+	aiSchemaFindAnomalies = json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"field":{"type":"string","description":"Exact parsed numeric field name."},
+			"method":{"type":"string","enum":["zscore","iqr","change_point"],"description":"zscore (default), iqr, or change_point."},
+			"threshold":{"type":"number","minimum":0,"description":"z-score cutoff (default 3), IQR multiplier (default 1.5), or relative change (default 0.3)."},
+			"start":{"type":"string","format":"date-time"},
+			"end":{"type":"string","format":"date-time"},
+			"last_minutes":{"type":"integer","minimum":1,"maximum":1440},
+			"limit":{"type":"integer","minimum":1,"maximum":100}
+		},
+		"required":["field"],
+		"additionalProperties":false
+	}`)
+	aiSchemaCompareSessions = json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"session_ids":{"type":"array","items":{"type":"string"},"maxItems":5,"description":"Omit to compare the two most recent sessions."},
+			"field":{"type":"string","description":"Exact parsed numeric field name."}
+		},
+		"required":["field"],
 		"additionalProperties":false
 	}`)
 	aiSchemaQueryRaw = json.RawMessage(`{

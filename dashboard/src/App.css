@@ -4616,3 +4616,14 @@ pre {
   margin-top: 8px;
   font-size: 11px;
 }
+
+.ai-stream-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--primary);
+  animation: ai-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes ai-cursor-blink {
+  50% { opacity: 0; }
+}

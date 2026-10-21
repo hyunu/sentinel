@@ -136,6 +136,71 @@ func TestOpenAIProviderChatWithoutToolsOmitsToolFields(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderChatStreamAccumulatesContentAndToolCalls(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		chunks := []string{
+			`{"choices":[{"delta":{"content":"안"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":"녕"}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"stats","arguments":"{\"field\":"}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"temperature_celsius\"}"}}]}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		}
+		for _, chunk := range chunks {
+			_, _ = io.WriteString(w, "data: "+chunk+"\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	provider, err := NewProvider(testProviderConfig(srv.URL + "/v1"))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	streamer, ok := provider.(StreamingProvider)
+	if !ok {
+		t.Fatal("provider does not implement StreamingProvider")
+	}
+
+	var tokens []string
+	resp, err := streamer.ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "온도"}},
+		Tools:    []ToolSpec{{Name: "stats", Parameters: json.RawMessage(`{"type":"object"}`)}},
+	}, func(token string) error {
+		tokens = append(tokens, token)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if got["stream"] != true {
+		t.Fatalf("stream = %#v", got["stream"])
+	}
+	if strings.Join(tokens, "") != "안녕" {
+		t.Fatalf("tokens = %#v", tokens)
+	}
+	if resp.Content != "안녕" {
+		t.Fatalf("content = %q", resp.Content)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "stats" {
+		t.Fatalf("tool calls = %#v", resp.ToolCalls)
+	}
+	if string(resp.ToolCalls[0].Arguments) != `{"field":"temperature_celsius"}` {
+		t.Fatalf("arguments = %s", resp.ToolCalls[0].Arguments)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason = %q", resp.FinishReason)
+	}
+}
+
 func TestOpenAIProviderReturnsReadableError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

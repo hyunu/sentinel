@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,6 +133,88 @@ func TestAnthropicProviderConvertsMessagesAndParsesToolUse(t *testing.T) {
 		t.Fatalf("content = %q", resp.Content)
 	}
 	if resp.Usage == nil || resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 3 {
+		t.Fatalf("usage = %#v", resp.Usage)
+	}
+}
+
+func TestAnthropicProviderChatStreamAccumulatesTextAndToolUse(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		events := []string{
+			`event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}`,
+			`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"안"}}`,
+			`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"녕"}}`,
+			`event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"stats"}}`,
+			`event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"field\":\"temperature_celsius\"}"}}`,
+			`event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}`,
+			`event: message_stop
+data: {"type":"message_stop"}`,
+		}
+		for _, event := range events {
+			_, _ = io.WriteString(w, event+"\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer srv.Close()
+
+	provider, err := NewProvider(ProviderConfig{
+		Provider: "anthropic",
+		BaseURL:  srv.URL,
+		APIKey:   "anthropic-key",
+		Model:    "claude-test",
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	streamer, ok := provider.(StreamingProvider)
+	if !ok {
+		t.Fatal("provider does not implement StreamingProvider")
+	}
+
+	var tokens []string
+	resp, err := streamer.ChatStream(context.Background(), ChatRequest{
+		Messages:  []Message{{Role: RoleUser, Content: "온도"}},
+		Tools:     []ToolSpec{{Name: "stats", Parameters: json.RawMessage(`{"type":"object"}`)}},
+		MaxTokens: 100,
+	}, func(token string) error {
+		tokens = append(tokens, token)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if got["stream"] != true {
+		t.Fatalf("stream = %#v", got["stream"])
+	}
+	if strings.Join(tokens, "") != "안녕" || resp.Content != "안녕" {
+		t.Fatalf("content = %q tokens=%#v", resp.Content, tokens)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "stats" {
+		t.Fatalf("tool calls = %#v", resp.ToolCalls)
+	}
+	if string(resp.ToolCalls[0].Arguments) != `{"field":"temperature_celsius"}` {
+		t.Fatalf("arguments = %s", resp.ToolCalls[0].Arguments)
+	}
+	if resp.FinishReason != "tool_use" {
+		t.Fatalf("finish reason = %q", resp.FinishReason)
+	}
+	if resp.Usage == nil || resp.Usage.PromptTokens != 7 || resp.Usage.CompletionTokens != 3 {
 		t.Fatalf("usage = %#v", resp.Usage)
 	}
 }

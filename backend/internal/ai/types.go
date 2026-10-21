@@ -69,6 +69,22 @@ type Provider interface {
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 }
 
+// StreamingProvider is implemented by providers that can stream text deltas.
+type StreamingProvider interface {
+	Provider
+	ChatStream(ctx context.Context, req ChatRequest, onToken func(string) error) (ChatResponse, error)
+}
+
+// Event is a provider-neutral progress event used by the SSE endpoint.
+type Event struct {
+	Type     string          `json:"type"` // round, token, tool_call, done, error
+	Content  string          `json:"content,omitempty"`
+	Code     string          `json:"code,omitempty"`
+	Round    int             `json:"round,omitempty"`
+	ToolCall *ToolCallRecord `json:"tool_call,omitempty"`
+	Result   *Result         `json:"result,omitempty"`
+}
+
 // ProviderConfig is the provider-neutral configuration loaded from env.
 type ProviderConfig struct {
 	Provider string

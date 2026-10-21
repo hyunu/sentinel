@@ -1,5 +1,6 @@
 const BASE = '/api/v1';
 
+import { extractSSEEvents } from './lib/aiSse';
 import type { JsonRuleDocument, ParseResult } from './types/ruleparser';
 
 export type {
@@ -192,6 +193,22 @@ export interface AIMessage {
   content: string;
 }
 
+export interface AIQueryRequest {
+  board_id: string;
+  query: string;
+  protocol_id?: string;
+  history?: AIMessage[];
+}
+
+export interface AIStreamEvent {
+  type: 'round' | 'token' | 'tool_call' | 'done' | 'error';
+  content?: string;
+  code?: string;
+  round?: number;
+  tool_call?: AIToolCall;
+  result?: AIQueryResult;
+}
+
 export interface AIQueryResult {
   answer: string;
   provider: string;
@@ -362,16 +379,50 @@ export const api = {
 
   ai: {
     status: () => request<AIStatus>('/ai/status'),
-    query: (data: {
-      board_id: string;
-      query: string;
-      protocol_id?: string;
-      history?: AIMessage[];
-    }) =>
+    query: (data: AIQueryRequest) =>
       request<AIQueryResult>('/ai/query', {
         method: 'POST',
         body: JSON.stringify(data),
         timeoutMs: 120000,
       }),
+    stream: async (
+      data: AIQueryRequest,
+      handlers: {
+        onEvent: (event: AIStreamEvent) => void;
+        signal?: AbortSignal;
+      },
+    ) => {
+      const res = await fetch(`${BASE}/ai/query/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        signal: handlers.signal,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Request failed');
+      }
+      if (!res.body) {
+        throw new Error('Streaming is not supported by this browser');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const extracted = extractSSEEvents(buffer);
+        buffer = extracted.rest;
+        for (const payload of extracted.events) {
+          try {
+            handlers.onEvent(JSON.parse(payload) as AIStreamEvent);
+          } catch {
+            /* ignore malformed event */
+          }
+        }
+      }
+    },
   },
 };

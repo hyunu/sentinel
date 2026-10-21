@@ -34,7 +34,7 @@ curl http://localhost:5050/api/v1/ai/status
 ```
 
 ```json
-{"configured":true,"provider":"openai","model":"exaone-4.0-32b","max_rounds":6,"tools":11}
+{"configured":true,"provider":"openai","model":"exaone-4.0-32b","max_rounds":6,"tools":13}
 ```
 
 ## 2. Provider 예시
@@ -118,6 +118,8 @@ Linux에서는 `extra_hosts` 또는 같은 Compose 네트워크에 모델 서버
 | `stats` | 필드의 count/min/max/avg |
 | `query_series` | 필드 시계열 (rollup 활용, 최대 1000 포인트) |
 | `find_events` | `field > value` 같은 조건의 연속 구간 |
+| `find_anomalies` | z-score / IQR / change-point 기반 이상치 탐지 |
+| `compare_sessions` | 세션 간 count/min/max/avg 비교 및 변화율 |
 | `list_sessions` | 캡처 세션 목록 |
 | `query_raw` | 원본 UART 샘플 (최대 50건) |
 | `propose_chart` | 대시보드 차트 스펙 반환 |
@@ -177,6 +179,32 @@ Linux에서는 `extra_hosts` 또는 같은 Compose 네트워크에 모델 서버
 
 대시보드의 AI 질의 페이지는 도구 호출 내역과 차트 카드를 표시하며, “시각화에서 열기”를 누르면 해당 보드·필드·기간으로 Viz 화면을 엽니다.
 
+### 스트리밍 (SSE)
+
+`POST /api/v1/ai/query/stream`은 동일한 요청 본문을 받아 `text/event-stream`으로 진행 상황과 토큰을 전송합니다.
+
+```text
+data: {"type":"round","round":1}
+
+data: {"type":"tool_call","round":1,"tool_call":{"name":"list_fields","arguments":{"last_minutes":60},"duration_ms":2}}
+
+data: {"type":"round","round":2}
+
+data: {"type":"token","content":"최근 "}
+
+data: {"type":"token","content":"1시간 "}
+
+data: {"type":"done","result":{"answer":"...","tool_calls":[...],"rounds":2}}
+```
+
+- `round`: 모델 호출 라운드 시작
+- `token`: 응답 텍스트 델타
+- `tool_call`: 도구 실행 완료
+- `error`: `code`와 사용자용 메시지
+- `done`: 최종 `result` (비스트리밍 응답과 동일한 구조)
+
+대시보드는 스트리밍 중 “중단” 버튼으로 `AbortController`를 통해 요청을 취소할 수 있습니다.
+
 ## 5. 테스트
 
 ```bash
@@ -186,7 +214,8 @@ go test ./internal/ai ./internal/api ./internal/config
 
 - provider 요청/응답 변환은 `httptest`로 실제 HTTP를 사용합니다.
 - 에이전트 루프, 도구 오류 전달, 최대 라운드, 히스토리 정제를 테스트합니다.
-- 시간 범위, 이벤트 구간 검출, 필드 경로 추출은 순수 함수 단위 테스트로 검증합니다.
+- OpenAI 호환·Anthropic 스트리밍(SSE) 누적과 tool call 델타를 테스트합니다.
+- 시간 범위, 이벤트 구간, 이상치(z-score/IQR/change-point), 필드 경로 추출은 순수 함수 단위 테스트로 검증합니다.
 
 ## 6. 문제 해결
 
@@ -200,10 +229,10 @@ go test ./internal/ai ./internal/api ./internal/config
 
 ## 7. 확장 아이디어
 
-- 이상 탐지 도구(`z-score`, 변화점) 추가
-- 세션 자동 분할·비교 도구
 - 자연어 → VizProfile 생성
 - 리포트 저장 및 스케줄링
 - 임베딩 기반 프로토콜 문서 검색(RAG)
+- 세션 자동 분할 규칙 추천
+- 이상 탐지 결과를 세션 경계/차트 주석으로 저장
 
 현재 구조는 도구를 추가하는 것만으로 기능을 확장할 수 있습니다. LLM 교체는 `AI_PROVIDER`/`AI_BASE_URL`/`AI_MODEL`만 바꾸면 됩니다.

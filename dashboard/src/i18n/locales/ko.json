@@ -164,7 +164,9 @@
     "openInViz": "시각화에서 열기",
     "usage": "{{tokens}} 토큰",
     "suggestionFields": "최근 1시간 동안 사용 가능한 필드를 알려줘",
-    "suggestionSummary": "최근 1시간 데이터를 요약하고 이상 징후를 알려줘"
+    "suggestionSummary": "최근 1시간 데이터를 요약하고 이상 징후를 알려줘",
+    "stop": "중단",
+    "stopped": "중단되었습니다."
   },
   "viz": {
     "title": "시각화",

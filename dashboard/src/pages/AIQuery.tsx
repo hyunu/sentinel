@@ -33,6 +33,7 @@ export default function AIQueryPage() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<AIStatus | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     api.boards.list().then(setBoards).catch(console.error);
@@ -40,47 +41,102 @@ export default function AIQueryPage() {
     api.ai.status().then(setStatus).catch(() => setStatus(null));
   }, []);
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, loading]);
 
   const configured = status?.configured !== false;
 
+  const updateLastAssistant = (updater: (message: ChatMessage) => ChatMessage) => {
+    setMessages(prev => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      if (last.role !== 'assistant') return prev;
+      const next = [...prev];
+      next[next.length - 1] = updater(last);
+      return next;
+    });
+  };
+
   const send = async (text?: string) => {
     const question = (text ?? query).trim();
     if (!question || !selectedBoard || loading || !configured) return;
 
     const history = messages
-      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .filter(m => m.role === 'user' || (m.role === 'assistant' && m.content.trim() !== ''))
       .slice(-8)
       .map(m => ({ role: m.role, content: m.content }));
 
-    setMessages(prev => [...prev, { role: 'user', content: question }]);
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', content: question },
+      { role: 'assistant', content: '' },
+    ]);
     setQuery('');
     setLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const result = await api.ai.query({
+      await api.ai.stream({
         board_id: selectedBoard,
         protocol_id: selectedProto || undefined,
         query: question,
         history,
+      }, {
+        signal: controller.signal,
+        onEvent: event => {
+          if (event.type === 'round') {
+            updateLastAssistant(message => ({ ...message, content: '' }));
+          } else if (event.type === 'token') {
+            updateLastAssistant(message => ({ ...message, content: message.content + (event.content ?? '') }));
+          } else if (event.type === 'tool_call' && event.tool_call) {
+            updateLastAssistant(message => ({
+              ...message,
+              toolCalls: [...(message.toolCalls ?? []), event.tool_call!],
+            }));
+          } else if (event.type === 'done' && event.result) {
+            const result = event.result;
+            updateLastAssistant(() => ({
+              role: 'assistant',
+              content: result.answer,
+              toolCalls: result.tool_calls,
+              chart: result.chart ?? undefined,
+              usage: result.usage ?? undefined,
+            }));
+          } else if (event.type === 'error') {
+            updateLastAssistant(message => ({
+              ...message,
+              content: t('ai.errorPrefix', { message: event.content || event.code || 'AI error' }),
+            }));
+          }
+        },
       });
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: result.answer,
-        toolCalls: result.tool_calls,
-        chart: result.chart ?? undefined,
-        usage: result.usage ?? undefined,
-      }]);
     } catch (e) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: t('ai.errorPrefix', { message: String(e) }),
-      }]);
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        updateLastAssistant(message => ({
+          ...message,
+          content: message.content ? `${message.content}\n\n${t('ai.stopped')}` : t('ai.stopped'),
+        }));
+      } else {
+        updateLastAssistant(message => ({
+          ...message,
+          content: message.content
+            ? `${message.content}\n\n${t('ai.errorPrefix', { message: String(e) })}`
+            : t('ai.errorPrefix', { message: String(e) }),
+        }));
+      }
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
+  };
+
+  const stop = () => {
+    abortRef.current?.abort();
   };
 
   const openChart = (chart: AIChartSpec) => {
@@ -118,7 +174,7 @@ export default function AIQueryPage() {
         <div className="form-grid">
           <div className="form-field">
             <label>{t('common.board')}</label>
-            <select value={selectedBoard} onChange={e => { setSelectedBoard(e.target.value); setMessages([]); }}>
+            <select value={selectedBoard} onChange={e => { abortRef.current?.abort(); setSelectedBoard(e.target.value); setMessages([]); }}>
               <option value="">{t('ai.selectBoard')}</option>
               {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
@@ -151,7 +207,15 @@ export default function AIQueryPage() {
           {messages.map((m, i) => (
             <div key={i} className={`chat-msg ${m.role}`}>
               <strong>{m.role === 'user' ? t('ai.you') : t('ai.assistant')}</strong>
-              <p className="ai-message-text">{m.content}</p>
+              <p className="ai-message-text">
+                {m.content}
+                {loading && i === messages.length - 1 && m.content && (
+                  <span className="ai-stream-cursor" aria-hidden="true">▍</span>
+                )}
+              </p>
+              {loading && i === messages.length - 1 && !m.content && !(m.toolCalls?.length) && (
+                <em className="muted">{t('ai.thinking')}</em>
+              )}
               {m.toolCalls && m.toolCalls.length > 0 && (
                 <details className="ai-tool-calls">
                   <summary>{t('ai.toolsUsed', { count: m.toolCalls.length })}</summary>
@@ -185,7 +249,6 @@ export default function AIQueryPage() {
               )}
             </div>
           ))}
-          {loading && <div className="chat-msg assistant"><em>{t('ai.thinking')}</em></div>}
           <div ref={bottomRef} />
         </div>
         <div className="chat-input-row">
@@ -198,11 +261,11 @@ export default function AIQueryPage() {
           />
           <button
             type="button"
-            onClick={() => send()}
-            disabled={loading || !selectedBoard || !configured}
-            className="btn-primary"
+            onClick={() => (loading ? stop() : send())}
+            disabled={!loading && (!selectedBoard || !configured)}
+            className={loading ? 'btn-danger' : 'btn-primary'}
           >
-            {t('common.send')}
+            {loading ? t('ai.stop') : t('common.send')}
           </button>
         </div>
       </div>

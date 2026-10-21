@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -67,6 +69,7 @@ type anthropicRequest struct {
 	Tools       []anthropicTool    `json:"tools,omitempty"`
 	MaxTokens   int                `json:"max_tokens"`
 	Temperature *float64           `json:"temperature,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -107,6 +110,14 @@ type anthropicResponse struct {
 }
 
 func (p *anthropicProvider) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
+	return p.chat(ctx, req, nil)
+}
+
+func (p *anthropicProvider) ChatStream(ctx context.Context, req ChatRequest, onToken func(string) error) (ChatResponse, error) {
+	return p.chat(ctx, req, onToken)
+}
+
+func (p *anthropicProvider) chat(ctx context.Context, req ChatRequest, onToken func(string) error) (ChatResponse, error) {
 	system, messages := toAnthropicMessages(req.Messages)
 	body := anthropicRequest{
 		Model:       p.model,
@@ -114,6 +125,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, req ChatRequest) (ChatResp
 		Messages:    messages,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
+		Stream:      onToken != nil,
 	}
 	if body.MaxTokens <= 0 {
 		body.MaxTokens = 1024
@@ -150,12 +162,17 @@ func (p *anthropicProvider) Chat(ctx context.Context, req ChatRequest) (ChatResp
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		return ChatResponse{}, fmt.Errorf("ai provider returned status %d: %s", res.StatusCode, strings.TrimSpace(truncateText(string(respBody), maxProviderErrorBody)))
+	}
+	if onToken != nil {
+		return p.readAnthropicStream(res.Body, onToken)
+	}
+
 	respBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("read ai response: %w", err)
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return ChatResponse{}, fmt.Errorf("ai provider returned status %d: %s", res.StatusCode, strings.TrimSpace(truncateText(string(respBody), maxProviderErrorBody)))
 	}
 
 	var decoded anthropicResponse
@@ -190,6 +207,128 @@ func (p *anthropicProvider) Chat(ctx context.Context, req ChatRequest) (ChatResp
 			CompletionTokens: decoded.Usage.OutputTokens,
 			TotalTokens:      decoded.Usage.InputTokens + decoded.Usage.OutputTokens,
 		}
+	}
+	return result, nil
+}
+
+type anthropicStreamEvent struct {
+	Type    string `json:"type"`
+	Index   int    `json:"index"`
+	Message *struct {
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	} `json:"message"`
+	ContentBlock *struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"content_block"`
+	Delta *struct {
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
+		StopReason  string `json:"stop_reason"`
+	} `json:"delta"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (p *anthropicProvider) readAnthropicStream(body io.Reader, onToken func(string) error) (ChatResponse, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+
+	result := ChatResponse{}
+	type toolAccum struct {
+		id        string
+		name      string
+		arguments string
+	}
+	toolAcc := make(map[int]*toolAccum)
+	var order []int
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
+		var event anthropicStreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return result, fmt.Errorf("decode anthropic stream event: %w", err)
+		}
+		switch event.Type {
+		case "message_start":
+			if event.Message != nil {
+				result.Usage = &Usage{PromptTokens: event.Message.Usage.InputTokens}
+			}
+		case "content_block_start":
+			if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
+				acc := &toolAccum{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				toolAcc[event.Index] = acc
+				order = append(order, event.Index)
+			}
+		case "content_block_delta":
+			if event.Delta == nil {
+				continue
+			}
+			switch event.Delta.Type {
+			case "text_delta":
+				if event.Delta.Text != "" {
+					result.Content += event.Delta.Text
+					if err := onToken(event.Delta.Text); err != nil {
+						return result, err
+					}
+				}
+			case "input_json_delta":
+				if acc, ok := toolAcc[event.Index]; ok {
+					acc.arguments += event.Delta.PartialJSON
+				}
+			}
+		case "message_delta":
+			if event.Delta != nil && event.Delta.StopReason != "" {
+				result.FinishReason = event.Delta.StopReason
+			}
+			if event.Usage != nil {
+				if result.Usage == nil {
+					result.Usage = &Usage{}
+				}
+				result.Usage.CompletionTokens = event.Usage.OutputTokens
+				result.Usage.TotalTokens = result.Usage.PromptTokens + result.Usage.CompletionTokens
+			}
+		case "error":
+			if event.Error != nil {
+				return result, fmt.Errorf("anthropic stream error: %s", event.Error.Message)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return result, fmt.Errorf("read anthropic stream: %w", err)
+	}
+
+	result.Content = strings.TrimSpace(result.Content)
+	sort.Ints(order)
+	for _, idx := range order {
+		acc := toolAcc[idx]
+		id := acc.id
+		if id == "" {
+			id = fmt.Sprintf("call_%d", idx+1)
+		}
+		result.ToolCalls = append(result.ToolCalls, ToolCall{
+			ID:        id,
+			Name:      acc.name,
+			Arguments: normalizeArguments(acc.arguments),
+		})
 	}
 	return result, nil
 }

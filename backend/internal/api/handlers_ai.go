@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +22,20 @@ type aiQueryRequest struct {
 	ProtocolID string       `json:"protocol_id,omitempty"`
 	Query      string       `json:"query" binding:"required"`
 	History    []ai.Message `json:"history,omitempty"`
+}
+
+type aiQueryFailure struct {
+	Status  int
+	Code    string
+	Message string
+	Err     error
+}
+
+func (f *aiQueryFailure) Error() string {
+	if f.Err != nil {
+		return f.Message + ": " + f.Err.Error()
+	}
+	return f.Message
 }
 
 // AIStatus reports whether the server has a usable AI provider without
@@ -55,30 +71,102 @@ func (h *Handler) AIQuery(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), aiRequestTimeout)
+	defer cancel()
+
+	result, boardID, protocolID, err := h.runAIQuery(ctx, req, nil)
+	if err != nil {
+		failure := asAIQueryFailure(err)
+		c.JSON(failure.Status, gin.H{
+			"error": failure.Message,
+			"code":  failure.Code,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"answer":      result.Answer,
+		"provider":    result.Provider,
+		"model":       result.Model,
+		"board_id":    boardID,
+		"protocol_id": protocolID,
+		"tool_calls":  result.ToolCalls,
+		"chart":       result.Chart,
+		"usage":       result.Usage,
+		"rounds":      result.Rounds,
+	})
+}
+
+// AIQueryStream streams progress events and token deltas as Server-Sent Events.
+func (h *Handler) AIQueryStream(c *gin.Context) {
+	if h.agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",
+			"code":  "ai_not_configured",
+		})
+		return
+	}
+
+	var req aiQueryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiRequestTimeout)
 	defer cancel()
 
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.Flush()
+
+	send := func(event ai.Event) error {
+		return writeAIEvent(c.Writer, event)
+	}
+
+	_, _, _, err := h.runAIQuery(ctx, req, send)
+	if err != nil {
+		failure := asAIQueryFailure(err)
+		if failure.Err != nil {
+			h.logger.Error("ai stream failed",
+				zap.String("code", failure.Code),
+				zap.Error(failure.Err),
+			)
+		}
+		_ = send(ai.Event{
+			Type:    "error",
+			Code:    failure.Code,
+			Content: failure.Message,
+		})
+	}
+}
+
+func (h *Handler) runAIQuery(
+	ctx context.Context,
+	req aiQueryRequest,
+	onEvent func(ai.Event) error,
+) (*ai.Result, string, string, error) {
+	req.Query = strings.TrimSpace(req.Query)
+	if req.Query == "" {
+		return nil, "", "", &aiQueryFailure{Status: http.StatusBadRequest, Code: "query_required", Message: "query is required"}
+	}
+
 	resolvedBoardID, err := h.resolveBoardID(ctx, req.BoardID, "")
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
-		return
+		return nil, "", "", &aiQueryFailure{Status: http.StatusNotFound, Code: "board_not_found", Message: "board not found"}
 	}
 	var board models.Board
 	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": resolvedBoardID}).Decode(&board); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
-		return
+		return nil, "", "", &aiQueryFailure{Status: http.StatusNotFound, Code: "board_not_found", Message: "board not found"}
 	}
 
 	systemContext, proto, err := h.buildAIContext(ctx, board, req.ProtocolID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return nil, "", "", &aiQueryFailure{Status: http.StatusBadRequest, Code: "protocol_not_found", Message: err.Error(), Err: err}
 	}
 	protocolID := ""
 	if proto != nil {
@@ -92,33 +180,43 @@ func (h *Handler) AIQuery(c *gin.Context) {
 		SystemContext: systemContext,
 		BoardID:       board.ID,
 		ProtocolID:    protocolID,
+		OnEvent:       onEvent,
 	}, registry)
 	if err != nil {
-		h.logger.Error("ai query failed",
-			zap.String("board_id", board.ID),
-			zap.String("protocol_id", protocolID),
-			zap.Error(err),
-		)
 		status := http.StatusBadGateway
 		if ctx.Err() == context.DeadlineExceeded {
 			status = http.StatusGatewayTimeout
 		}
-		c.JSON(status, gin.H{
-			"error": "AI request failed. Check the provider configuration and backend logs.",
-			"code":  "ai_request_failed",
-		})
-		return
+		return nil, "", "", &aiQueryFailure{
+			Status:  status,
+			Code:    "ai_request_failed",
+			Message: "AI request failed. Check the provider configuration and backend logs.",
+			Err:     err,
+		}
 	}
+	return result, board.ID, protocolID, nil
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"answer":      result.Answer,
-		"provider":    result.Provider,
-		"model":       result.Model,
-		"board_id":    board.ID,
-		"protocol_id": protocolID,
-		"tool_calls":  result.ToolCalls,
-		"chart":       result.Chart,
-		"usage":       result.Usage,
-		"rounds":      result.Rounds,
-	})
+func asAIQueryFailure(err error) *aiQueryFailure {
+	if failure, ok := err.(*aiQueryFailure); ok {
+		return failure
+	}
+	return &aiQueryFailure{
+		Status:  http.StatusInternalServerError,
+		Code:    "ai_request_failed",
+		Message: "AI request failed.",
+		Err:     err,
+	}
+}
+
+func writeAIEvent(w gin.ResponseWriter, event ai.Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	w.Flush()
+	return nil
 }

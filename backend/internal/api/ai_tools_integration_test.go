@@ -37,6 +37,22 @@ func (p *integrationAIProvider) Chat(_ context.Context, req ai.ChatRequest) (ai.
 	return resp, nil
 }
 
+type integrationStreamProvider struct{}
+
+func (p *integrationStreamProvider) Name() string  { return "integration-stream" }
+func (p *integrationStreamProvider) Model() string { return "integration-stream-model" }
+func (p *integrationStreamProvider) Chat(_ context.Context, _ ai.ChatRequest) (ai.ChatResponse, error) {
+	return ai.ChatResponse{}, fmt.Errorf("Chat should not be called")
+}
+func (p *integrationStreamProvider) ChatStream(_ context.Context, _ ai.ChatRequest, onToken func(string) error) (ai.ChatResponse, error) {
+	for _, token := range []string{"스트림", " 응답"} {
+		if err := onToken(token); err != nil {
+			return ai.ChatResponse{}, err
+		}
+	}
+	return ai.ChatResponse{Content: "스트림 응답"}, nil
+}
+
 // TestAIToolsIntegration exercises the Mongo aggregations used by the AI tools.
 // It is skipped unless SENTINEL_TEST_MONGO_URI is set, so normal unit tests do
 // not require a database.
@@ -89,6 +105,28 @@ func TestAIToolsIntegration(t *testing.T) {
 		if _, err := database.UartData().InsertOne(ctx, doc); err != nil {
 			t.Fatalf("insert uart: %v", err)
 		}
+	}
+
+	sessions := []interface{}{
+		models.Session{
+			ID:        "session-a",
+			BoardID:   board.ID,
+			Name:      "Session A",
+			StartTime: base.Add(-time.Minute),
+			EndTime:   base.Add(2 * time.Minute),
+			CreatedAt: base,
+		},
+		models.Session{
+			ID:        "session-b",
+			BoardID:   board.ID,
+			Name:      "Session B",
+			StartTime: base.Add(3 * time.Minute),
+			EndTime:   base.Add(10 * time.Minute),
+			CreatedAt: base,
+		},
+	}
+	if _, err := database.Sessions().InsertMany(ctx, sessions); err != nil {
+		t.Fatalf("insert sessions: %v", err)
 	}
 
 	handler := NewHandler(database, zap.NewNop(), nil)
@@ -157,6 +195,41 @@ func TestAIToolsIntegration(t *testing.T) {
 		}
 		if events[0].Count != 2 || events[0].Max != 35 {
 			t.Fatalf("first event = %#v", events[0])
+		}
+	})
+
+	t.Run("anomalies", func(t *testing.T) {
+		raw := json.RawMessage(fmt.Sprintf(`{"field":"payload.temperature_celsius","method":"zscore","threshold":1.2,"start":%q,"end":%q}`, start, end))
+		out, err := exec.findAnomalies(ctx, raw)
+		if err != nil {
+			t.Fatalf("findAnomalies: %v", err)
+		}
+		payload := out.(map[string]any)
+		anomalies := payload["anomalies"].([]anomalyPoint)
+		if len(anomalies) == 0 {
+			t.Fatalf("expected anomalies: %#v", payload)
+		}
+		if anomalies[0].Score == 0 {
+			t.Fatalf("anomaly score missing: %#v", anomalies[0])
+		}
+	})
+
+	t.Run("compare sessions", func(t *testing.T) {
+		raw := json.RawMessage(`{"field":"payload.temperature_celsius","session_ids":["session-a","session-b"]}`)
+		out, err := exec.compareSessions(ctx, raw)
+		if err != nil {
+			t.Fatalf("compareSessions: %v", err)
+		}
+		payload := out.(map[string]any)
+		comparisons := payload["sessions"].([]sessionComparison)
+		if len(comparisons) != 2 {
+			t.Fatalf("comparisons = %#v", comparisons)
+		}
+		if comparisons[0].Stats.Avg == nil || comparisons[1].DeltaPercent == nil {
+			t.Fatalf("comparison stats = %#v", comparisons)
+		}
+		if *comparisons[1].DeltaPercent >= 0 {
+			t.Fatalf("expected negative delta: %#v", comparisons[1])
 		}
 	})
 
@@ -286,6 +359,36 @@ func TestAIToolsIntegration(t *testing.T) {
 		}
 		if calls != 2 {
 			t.Fatalf("provider calls = %d", calls)
+		}
+	})
+
+	t.Run("streaming handler", func(t *testing.T) {
+		agent := ai.NewAgent(&integrationStreamProvider{}, ai.Options{MaxRounds: 2}, zap.NewNop())
+		router := SetupRouter(database, zap.NewNop(), agent)
+
+		body := `{"board_id":"board-ai-test","query":"스트리밍 테스트"}`
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/ai/query/stream", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+		}
+		if !strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/event-stream") {
+			t.Fatalf("content type = %q", recorder.Header().Get("Content-Type"))
+		}
+		stream := recorder.Body.String()
+		for _, want := range []string{
+			`"type":"round"`,
+			`"type":"token","content":"스트림"`,
+			`"type":"token","content":" 응답"`,
+			`"type":"done"`,
+			`"answer":"스트림 응답"`,
+		} {
+			if !strings.Contains(stream, want) {
+				t.Fatalf("stream missing %q:\n%s", want, stream)
+			}
 		}
 	})
 }

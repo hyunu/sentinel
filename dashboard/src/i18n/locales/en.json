@@ -164,7 +164,9 @@
     "openInViz": "Open in Visualization",
     "usage": "{{tokens}} tokens",
     "suggestionFields": "List the fields available in the last hour",
-    "suggestionSummary": "Summarize the last hour and point out anomalies"
+    "suggestionSummary": "Summarize the last hour and point out anomalies",
+    "stop": "Stop",
+    "stopped": "Stopped."
   },
   "viz": {
     "title": "Visualization",
