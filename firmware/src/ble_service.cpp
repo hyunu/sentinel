@@ -1,5 +1,6 @@
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <string>
 #include <vector>
 
 #include "ble_service.h"
@@ -149,6 +150,10 @@ void ble_refresh_advertising() {
 
     adv->setManufacturerData(mfg.data(), (int)mfgLen);
     NimBLEDevice::setDeviceName(name);
+    // The 128-bit service UUID + manufacturer data fill the legacy adv packet,
+    // so put the human-readable name in the scan response.
+    adv->enableScanResponse(true);
+    adv->setName(std::string(name));
     adv->start();
 
     Serial.printf("[BLE] Advertising name=%s flags=0x%02X uid=%s\n", name, gStatusFlags, gUidStr);

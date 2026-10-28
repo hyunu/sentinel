@@ -9,6 +9,7 @@ static bool displayReady = false;
 static String lastUid = "";
 static bool lastWifi = false;
 static bool lastServer = false;
+static bool hasRendered = false;
 
 void display_init() {
     Serial.println("[DISPLAY] Init..."); Serial.flush();
@@ -25,7 +26,8 @@ void display_init() {
 
 void display_update(const String &uid, bool wifiConnected, bool serverRegistered) {
     if (!displayReady) return;
-    if (uid == lastUid && wifiConnected == lastWifi && serverRegistered == lastServer) return;
+    if (hasRendered && uid == lastUid && wifiConnected == lastWifi && serverRegistered == lastServer) return;
+    hasRendered = true;
     lastUid = uid; lastWifi = wifiConnected; lastServer = serverRegistered;
 
     u8g2.clearBuffer();
