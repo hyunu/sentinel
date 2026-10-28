@@ -199,6 +199,26 @@ func TestAIToolsIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy downsample fallback", func(t *testing.T) {
+		windowStart, _ := time.Parse(time.RFC3339, start)
+		windowEnd, _ := time.Parse(time.RFC3339, end)
+		filter := bson.M{
+			"board_id":  board.ID,
+			"timestamp": bson.M{"$gte": windowStart, "$lte": windowEnd},
+		}
+		items := []models.VizItem{{
+			Label:    "temperature",
+			FieldRef: models.FieldRef{FieldName: "payload.temperature_celsius"},
+		}}
+		points, _, err := handler.queryVizSeries(ctx, filter, items, 2)
+		if err != nil {
+			t.Fatalf("queryVizSeries fallback: %v", err)
+		}
+		if len(points) == 0 {
+			t.Fatal("expected downsampled points")
+		}
+	})
+
 	t.Run("server aggregation", func(t *testing.T) {
 		windowStart, _ := time.Parse(time.RFC3339, start)
 		windowEnd, _ := time.Parse(time.RFC3339, end)

@@ -39,8 +39,7 @@ type vizBucketDocEntry struct {
 }
 
 type vizBucketGroup struct {
-	Bucket int64               `bson:"_id"`
-	Docs   []vizBucketDocEntry `bson:"docs"`
+	Docs []vizBucketDocEntry `bson:"docs"`
 }
 
 func extractVizValue(v interface{}) (float64, bool) {
@@ -401,40 +400,20 @@ func (h *Handler) queryVizSeries(
 	if maxBuckets < 1 {
 		maxBuckets = 1
 	}
-	stride := int64(math.Ceil(float64(total) / float64(maxBuckets)))
-	if stride < 1 {
-		stride = 1
-	}
-
+	// $bucketAuto (MongoDB 3.4+) is used instead of $setWindowFields (5.0+)
+	// so the N100 deployment can run MongoDB 4.4 without AVX support.
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
 		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}}},
 		{{Key: "$project", Value: projection}},
-		{{Key: "$setWindowFields", Value: bson.M{
-			"sortBy": bson.M{"timestamp": 1},
-			"output": bson.M{
-				"rowNum": bson.M{"$documentNumber": bson.M{}},
-			},
-		}}},
-		{{Key: "$addFields", Value: bson.M{
-			"bucket": bson.M{
-				"$floor": bson.M{
-					"$divide": bson.A{
-						bson.M{"$subtract": bson.A{"$rowNum", 1}},
-						stride,
-					},
-				},
-			},
-		}}},
-		{{Key: "$group", Value: bson.M{
-			"_id": "$bucket",
-			"docs": bson.M{"$push": bson.M{
+		{{Key: "$bucketAuto", Value: bson.M{
+			"groupBy": "$timestamp",
+			"buckets": maxBuckets,
+			"output": bson.M{"docs": bson.M{"$push": bson.M{
 				"timestamp":     "$timestamp",
 				"parsed_fields": "$parsed_fields",
-			}},
+			}}},
 		}}},
-		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
-		{{Key: "$limit", Value: maxBuckets}},
 	}
 
 	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetBatchSize(500))
