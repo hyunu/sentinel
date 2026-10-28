@@ -52,8 +52,10 @@ void setup() {
 
     uart_sniffer_init();
     display_init();
-    ble_init();
+    // wifi_init must run before ble_init so WiFi.macAddress() is valid for
+    // the BLE MAC characteristic (6e400004).
     wifi_init();
+    ble_init();
     wifi_startup();
 
     lastHeartbeat = millis();

@@ -66,6 +66,7 @@ void wifi_init() {
     Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    Serial.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(true);
 
