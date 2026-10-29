@@ -62,10 +62,12 @@ static String getBoardId() {
 }
 
 void wifi_init() {
-    board_id = getBoardId();
-    Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    // WiFi.mode() must precede getBoardId(): before the station interface is
+    // initialized WiFi.macAddress() can return a placeholder MAC.
+    board_id = getBoardId();
+    Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
     Serial.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(true);
