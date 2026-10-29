@@ -92,7 +92,7 @@ class UartWriteCallback : public NimBLECharacteristicCallbacks {
         std::string val = pCharacteristic->getValue();
         String value = String(val.c_str());
         if (value.length() == 0) return;
-        Serial.printf("[BLE] Received write payload: %s\n", value.c_str());
+        Serial.printf("[BLE] Received write payload (%u bytes)\n", (unsigned)value.length());
 
         String ssid = _extract_json_field(value, "ssid");
         String password = _extract_json_field(value, "password");

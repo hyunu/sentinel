@@ -11,6 +11,8 @@ static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
 static bool pendingInitialHeartbeat = false;
 static unsigned long wifiConnectedAt = 0;
+static unsigned long connectStartedAt = 0;
+static bool connectTimeoutLogged = false;
 
 static String backend_url = String(BACKEND_URL);
 static String board_uid = String("");
@@ -70,7 +72,13 @@ void wifi_init() {
     Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
     Serial.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
     WiFi.setAutoReconnect(true);
-    WiFi.setSleep(true);
+    WiFi.setSleep(false);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            Serial.printf("[WiFi] Disconnected reason=%d\n", (int)info.wifi_sta_disconnected.reason);
+        }
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
     const String storedUid = nvs_load_string("uid");
     if (storedUid.length() > 0) {
@@ -84,6 +92,21 @@ void wifi_init() {
         backend_url = storedUrl;
         Serial.printf("[WiFi] Restored backend URL: %s\n", backend_url.c_str());
     }
+}
+
+static void log_wifi_scan(const String &targetSsid) {
+    Serial.println("[WiFi] Scanning 2.4GHz networks...");
+    int count = WiFi.scanNetworks();
+    Serial.printf("[WiFi] Scan found %d network(s)\n", count);
+    for (int i = 0; i < count; i++) {
+        const String ssid = WiFi.SSID(i);
+        if (ssid == targetSsid) {
+            Serial.printf("[WiFi] target ssid=\"%s\" rssi=%d ch=%d enc=%d\n",
+                          ssid.c_str(), (int)WiFi.RSSI(i), (int)WiFi.channel(i),
+                          (int)WiFi.encryptionType(i));
+        }
+    }
+    WiFi.scanDelete();
 }
 
 void wifi_startup() {
@@ -114,6 +137,9 @@ void wifi_connect(const String &ssid, const String &password) {
     }
 
     connecting = true;
+    connectStartedAt = millis();
+    connectTimeoutLogged = false;
+    log_wifi_scan(ssid);
     Serial.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
     WiFi.disconnect(false);
     delay(100);
@@ -132,6 +158,9 @@ void wifi_loop() {
         Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
         ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
+    } else if (connecting && !connectTimeoutLogged && connectStartedAt > 0 && millis() - connectStartedAt > 15000) {
+        connectTimeoutLogged = true;
+        Serial.printf("[WiFi] Connect timeout: status=%d\n", (int)WiFi.status());
     }
 
     if (pendingInitialHeartbeat && millis() - wifiConnectedAt >= 2500) {
