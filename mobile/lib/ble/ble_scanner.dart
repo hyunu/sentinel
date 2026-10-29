@@ -217,9 +217,19 @@ class BleScanner {
       }
       json.write('}');
 
-      await writeCh.write(json.toString().codeUnits, withoutResponse: false).timeout(const Duration(seconds: 10));
-
-      return true;
+      Object? lastError;
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await writeCh
+              .write(json.toString().codeUnits, withoutResponse: false)
+              .timeout(const Duration(seconds: 8));
+          return true;
+        } catch (e) {
+          lastError = e;
+          if (attempt < 3) await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
+      throw lastError ?? Exception('BLE write failed');
     } catch (e) {
       throw Exception('sendWifiConfig failed: $e');
     }

@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
+#include <esp_mac.h>
 
 #include "wifi_manager.h"
 #include "config.h"
@@ -11,6 +12,8 @@ static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
 static bool pendingInitialHeartbeat = false;
 static unsigned long wifiConnectedAt = 0;
+static unsigned long wifiConnectingAt = 0;
+static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 static String backend_url = String(BACKEND_URL);
 static String board_uid = String("");
@@ -54,7 +57,10 @@ static bool waitForWifiReady(uint32_t timeoutMs) {
 
 static String getBoardId() {
     uint8_t mac[6];
-    WiFi.macAddress(mac);
+    // The WiFi netif is not ready when wifi_init() runs. Reading it through
+    // WiFi.macAddress(mac) at that point leaves the buffer undefined, which
+    // made board_id change on every reboot. The eFuse STA MAC is stable.
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char buf[32];
     snprintf(buf, sizeof(buf), "%s_%02x%02x%02x%02x%02x%02x",
              BOARD_ID_PREFIX, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -72,6 +78,8 @@ void wifi_init() {
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(false);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    // Keep the BLE-readable MAC synchronized with the initialized STA.
+    ble_set_wifi_mac(WiFi.macAddress());
 
     const String storedUid = nvs_load_string("uid");
     if (storedUid.length() > 0) {
@@ -99,20 +107,11 @@ void wifi_startup() {
 void wifi_connect(const String &ssid, const String &password) {
     pendingInitialHeartbeat = false;
     wifiConnectedAt = 0;
+    wifiConnectingAt = millis();
+    WiFi.setAutoReconnect(false);
 
     nvs_save_string("ssid", ssid);
     nvs_save_string("pass", password);
-
-    // Same network already up — re-run onboarding heartbeat without reconnecting
-    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == ssid && hasValidIp()) {
-        Serial.printf("[WiFi] Already connected to %s — scheduling onboarding heartbeat\n", ssid.c_str());
-        connecting = false;
-        pendingInitialHeartbeat = true;
-        wifiConnectedAt = millis() - 3000; // fire on next wifi_loop (~immediate)
-        ble_set_wifi_connected(true);
-        ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
-        return;
-    }
 
     connecting = true;
     Serial.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
@@ -128,11 +127,25 @@ bool wifi_is_connected() {
 void wifi_loop() {
     if (connecting && WiFi.status() == WL_CONNECTED && hasValidIp()) {
         connecting = false;
+        WiFi.setAutoReconnect(true);
         pendingInitialHeartbeat = true;
         wifiConnectedAt = millis();
+        // The STA netif may finalize its locally-administered MAC only after
+        // association. Keep the BLE-readable MAC in sync with heartbeats.
+        ble_set_wifi_mac(WiFi.macAddress());
         Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
         ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
+    }
+
+    if (connecting && millis() - wifiConnectingAt >= WIFI_CONNECT_TIMEOUT_MS) {
+        connecting = false;
+        pendingInitialHeartbeat = false;
+        WiFi.setAutoReconnect(false);
+        WiFi.disconnect(false);
+        ble_set_wifi_connected(false);
+        ble_send_uart_data(String("EVENT:WIFI_FAILED"));
+        Serial.println("[WiFi] Connection timed out; waiting for new onboarding config");
     }
 
     if (pendingInitialHeartbeat && millis() - wifiConnectedAt >= 2500) {
@@ -183,6 +196,14 @@ void wifi_clear_board_registration() {
     ble_preload_uid("");
     ble_set_uid("");
     ble_set_server_registered(false);
+    // A server-side deletion must also leave the configured WLAN. Keep the
+    // credentials for the next onboarding, but prevent auto-reconnect until
+    // the phone sends a fresh configuration.
+    connecting = false;
+    pendingInitialHeartbeat = false;
+    WiFi.setAutoReconnect(false);
+    WiFi.disconnect(false);
+    ble_set_wifi_connected(false);
     Serial.println("[WiFi] Board registration cleared (server deleted)");
 }
 
@@ -243,6 +264,8 @@ static String buildHeartbeatBody() {
 }
 
 bool wifi_send_heartbeat() {
+    // Keep onboarding's BLE identity aligned with the board_id used below.
+    ble_set_wifi_mac(WiFi.macAddress());
     const String body = buildHeartbeatBody();
     Serial.printf("[HTTP] Heartbeat body: %s\n", body.c_str());
 

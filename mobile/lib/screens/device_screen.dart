@@ -10,6 +10,7 @@ import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
 
 const String kTemperatureProtocolId = 'temperature-telemetry-v1';
+const String kDefaultServerUrl = 'http://116.39.187.5:50000';
 
 class _ProtocolField {
   final String name;
@@ -47,8 +48,8 @@ class _Protocol {
     final fieldsRaw = j['fields'];
     final fields = fieldsRaw is List
         ? fieldsRaw
-            .map((f) => _ProtocolField.fromJson(f as Map<String, dynamic>))
-            .toList()
+              .map((f) => _ProtocolField.fromJson(f as Map<String, dynamic>))
+              .toList()
         : <_ProtocolField>[];
     final rulesRaw = j['parse_rules'];
     final parseRules = rulesRaw is Map
@@ -67,11 +68,7 @@ class _Protocol {
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
   final AdvertisementData? advertisementData;
-  const DeviceScreen({
-    super.key,
-    required this.device,
-    this.advertisementData,
-  });
+  const DeviceScreen({super.key, required this.device, this.advertisementData});
 
   @override
   State<DeviceScreen> createState() => _DeviceScreenState();
@@ -106,6 +103,13 @@ class _DeviceScreenState extends State<DeviceScreen>
   String? _selectedProfileId;
 
   late TabController _tabCtrl;
+
+  String get _baseUrl {
+    final raw = _urlCtrl.text.trim();
+    return StorageService.normalizeServerUrl(
+      raw.isEmpty ? kDefaultServerUrl : raw,
+    );
+  }
 
   @override
   void initState() {
@@ -154,7 +158,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       _ssidCtrl.text = 'hyunu_2.4Ghz';
       _passCtrl.text = 'gusdn1006';
       _baudCtrl.text = '19200';
-      _urlCtrl.text = 'http://192.168.0.9:5050';
+      _urlCtrl.text = kDefaultServerUrl;
     }
   }
 
@@ -191,7 +195,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   void _applyProfile(OnboardingProfile profile, {bool notify = true}) {
     _ssidCtrl.text = profile.ssid;
     _passCtrl.text = profile.password;
-    _urlCtrl.text = profile.serverUrl;
+    _urlCtrl.text = StorageService.normalizeServerUrl(profile.serverUrl);
     _baudCtrl.text = profile.baudRate?.toString() ?? '19200';
     if (notify && mounted) {
       setState(() => _selectedProfileId = profile.id);
@@ -222,7 +226,8 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
     return selected.ssid != ssid ||
         selected.password != pass ||
-        selected.serverUrl != url ||
+        StorageService.normalizeServerUrl(selected.serverUrl) !=
+            StorageService.normalizeServerUrl(url) ||
         selected.baudRate != baud;
   }
 
@@ -238,7 +243,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       name: name ?? _ssidCtrl.text.trim(),
       ssid: _ssidCtrl.text.trim(),
       password: _passCtrl.text.trim(),
-      serverUrl: _urlCtrl.text.trim(),
+      serverUrl: StorageService.normalizeServerUrl(_urlCtrl.text),
       baudRate: baud,
       updatedAt: DateTime.now(),
     );
@@ -251,7 +256,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       return;
     }
     await _persistCurrentProfile();
-    if (mounted) AppToast.success(context, 'Profile "${selected.name}" updated');
+    if (mounted) {
+      AppToast.success(context, 'Profile "${selected.name}" updated');
+    }
   }
 
   Future<void> _persistCurrentProfile() async {
@@ -282,7 +289,11 @@ class _DeviceScreenState extends State<DeviceScreen>
   Future<void> _promptSaveProfile() async {
     final ssid = _ssidCtrl.text.trim();
     if (ssid.isEmpty) {
-      AppToast.error(context, 'Enter a WiFi SSID before saving a profile.', persistent: false);
+      AppToast.error(
+        context,
+        'Enter a WiFi SSID before saving a profile.',
+        persistent: false,
+      );
       return;
     }
 
@@ -302,8 +313,14 @@ class _DeviceScreenState extends State<DeviceScreen>
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
           ],
         );
       },
@@ -329,8 +346,14 @@ class _DeviceScreenState extends State<DeviceScreen>
         title: const Text('Delete profile'),
         content: Text('Delete "${profile.name}"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
         ],
       ),
     );
@@ -342,28 +365,39 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   Future<void> _connect() async {
     setState(() => _connecting = true);
-    try {
-      await widget.device.disconnect().timeout(const Duration(seconds: 2));
-    } catch (_) {}
-    try {
-      await widget.device.connect(timeout: const Duration(seconds: 10));
-      await widget.device.connectionState
-          .firstWhere((s) => s == BluetoothConnectionState.connected)
-          .timeout(const Duration(seconds: 5));
+    Object? lastError;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await widget.device.disconnect().timeout(const Duration(seconds: 2));
+      } catch (_) {}
+      try {
+        await widget.device.connect(timeout: const Duration(seconds: 8));
+        await widget.device.connectionState
+            .firstWhere((s) => s == BluetoothConnectionState.connected)
+            .timeout(const Duration(seconds: 4));
+        if (mounted) {
+          setState(() {
+            _connected = true;
+            _connecting = false;
+          });
+        }
+        break;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 3) await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+    if (!_connected) {
       if (mounted) {
-        setState(() {
-          _connected = true;
-          _connecting = false;
-        });
-      }
-    } catch (e) {
-    if (mounted) {
         setState(() => _connecting = false);
-        _showError('Could not connect to the device.');
+        _showError('Could not connect to the device after 3 attempts.');
       }
+      debugPrint('BLE connection failed: $lastError');
       return;
     }
 
+    await _connSub?.cancel();
+    _scanner.clearCache();
     _connSub = widget.device.connectionState.listen((s) {
       if (mounted) {
         setState(() {
@@ -378,15 +412,19 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   Future<void> _loadProtocols() async {
     try {
-      final base = _urlCtrl.text.isNotEmpty ? _urlCtrl.text : 'http://192.168.0.9:5050';
+      final base = _baseUrl;
       final res = await http.get(Uri.parse('$base/api/v1/protocols'));
       if (res.statusCode == 200) {
         final list = json.decode(res.body) as List;
         if (mounted) {
           setState(() {
-            _protocols = list.map((p) => _Protocol.fromJson(p as Map<String, dynamic>)).toList();
+            _protocols = list
+                .map((p) => _Protocol.fromJson(p as Map<String, dynamic>))
+                .toList();
             if (_selectedProtoId == null || _selectedProtoId!.isEmpty) {
-              final defaultProto = _protocols.where((p) => p.id == kTemperatureProtocolId);
+              final defaultProto = _protocols.where(
+                (p) => p.id == kTemperatureProtocolId,
+              );
               _selectedProtoId = defaultProto.isNotEmpty
                   ? defaultProto.first.id
                   : (_protocols.isNotEmpty ? _protocols.first.id : null);
@@ -400,9 +438,11 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   Future<void> _syncBoardFromServer() async {
     try {
-      final base = _urlCtrl.text.isNotEmpty ? _urlCtrl.text : 'http://192.168.0.9:5050';
+      final base = _baseUrl;
       final bleMac = widget.device.remoteId.str;
-      final res = await http.get(Uri.parse('$base/api/v1/boards')).timeout(const Duration(seconds: 5));
+      final res = await http
+          .get(Uri.parse('$base/api/v1/boards'))
+          .timeout(const Duration(seconds: 5));
       if (res.statusCode != 200 || !mounted) return;
 
       for (final raw in json.decode(res.body) as List) {
@@ -440,7 +480,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (hb == null || hb.year <= 1) continue;
         final hbUtc = hb.toUtc();
         if (newerThan != null && !hbUtc.isAfter(newerThan.toUtc())) continue;
-        if (!hbUtc.isBefore(since.toUtc().subtract(const Duration(seconds: 5)))) {
+        if (!hbUtc.isBefore(
+          since.toUtc().subtract(const Duration(seconds: 5)),
+        )) {
           return true;
         }
       }
@@ -453,12 +495,16 @@ class _DeviceScreenState extends State<DeviceScreen>
     required String uid,
     required DateTime since,
     required Completer<void> heartbeatOk,
+    bool Function()? shouldAbort,
     DateTime? newerThan,
-    Duration timeout = const Duration(seconds: 90),
+    Duration timeout = const Duration(seconds: 40),
   }) async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       if (heartbeatOk.isCompleted) return;
+      if (shouldAbort?.call() == true) {
+        throw StateError('wifi_failed');
+      }
       if (await _serverHasRecentHeartbeat(
         baseUrl,
         uid,
@@ -471,7 +517,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       await Future.delayed(const Duration(seconds: 2));
     }
     if (!heartbeatOk.isCompleted) {
-      throw TimeoutException('heartbeat not received within ${timeout.inSeconds}s');
+      throw TimeoutException(
+        'heartbeat not received within ${timeout.inSeconds}s',
+      );
     }
   }
 
@@ -484,7 +532,11 @@ class _DeviceScreenState extends State<DeviceScreen>
     return null;
   }
 
-  String? _findExistingUidForMac(List boards, String bleMac, {String? wifiMac}) {
+  String? _findExistingUidForMac(
+    List boards,
+    String bleMac, {
+    String? wifiMac,
+  }) {
     String? bestUid;
     int? bestNum;
     final wifiNorm = wifiMac?.replaceAll(':', '').toLowerCase();
@@ -494,7 +546,8 @@ class _DeviceScreenState extends State<DeviceScreen>
       final boardWifi = raw['wifi_mac']?.toString() ?? '';
       final boardWifiNorm = boardWifi.replaceAll(':', '').toLowerCase();
       final bleMatch = boardBle.isNotEmpty && boardBle == bleMac;
-      final wifiMatch = wifiNorm != null &&
+      final wifiMatch =
+          wifiNorm != null &&
           wifiNorm.isNotEmpty &&
           boardWifiNorm.isNotEmpty &&
           boardWifiNorm == wifiNorm;
@@ -511,22 +564,35 @@ class _DeviceScreenState extends State<DeviceScreen>
     return bestUid;
   }
 
-  Future<String?> _claimUid(String baseUrl, String bleMac, {String? wifiMac}) async {
-    final claimRes = await http
-        .post(
-          Uri.parse('$baseUrl/api/v1/boards/claim'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({
-            'mac_address': bleMac,
-            if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
-          }),
-        )
-        .timeout(const Duration(seconds: 5));
-    if (claimRes.statusCode == 200) {
-      final body = json.decode(claimRes.body);
-      return body['uid'] as String?;
+  Future<String?> _claimUid(
+    String baseUrl,
+    String bleMac, {
+    String? wifiMac,
+  }) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final claimRes = await http
+            .post(
+              Uri.parse('$baseUrl/api/v1/boards/claim'),
+              headers: {'Content-Type': 'application/json'},
+              body: json.encode({
+                'mac_address': bleMac,
+                if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
+              }),
+            )
+            .timeout(const Duration(seconds: 5));
+        if (claimRes.statusCode == 200) {
+          final body = json.decode(claimRes.body);
+          return body['uid'] as String?;
+        }
+        lastError = 'HTTP ${claimRes.statusCode}';
+      } catch (e) {
+        lastError = e;
+      }
+      if (attempt < 3) await Future.delayed(const Duration(seconds: 1));
     }
-    throw Exception('Claim failed: ${claimRes.statusCode}');
+    throw Exception('Claim failed: $lastError');
   }
 
   Future<void> _sendWifi() async {
@@ -538,37 +604,52 @@ class _DeviceScreenState extends State<DeviceScreen>
     setState(() => _sendingWifi = true);
     try {
       final baud = int.tryParse(_baudCtrl.text.trim());
-      final url = _urlCtrl.text.trim();
-      final baseUrl = url.isNotEmpty ? url : 'http://192.168.0.9:5050';
+      final baseUrl = _baseUrl;
 
       _onboardingProfiler.startStep('server_reachable');
-      try {
-        final pingRes =
-            await http.get(Uri.parse('$baseUrl/api/v1/protocols')).timeout(const Duration(seconds: 3));
-        if (pingRes.statusCode < 200 || pingRes.statusCode >= 400) {
-          _onboardingProfiler.finishFailure('server_reachable', note: 'HTTP ${pingRes.statusCode}');
-          if (mounted) _showError('Cannot reach the server. Check the server URL.');
-          return;
+      Object? pingError;
+      var serverReachable = false;
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+          final pingRes = await http
+              .get(Uri.parse('$baseUrl/api/v1/protocols'))
+              .timeout(const Duration(seconds: 4));
+          if (pingRes.statusCode >= 200 && pingRes.statusCode < 400) {
+            serverReachable = true;
+            break;
+          }
+          pingError = 'HTTP ${pingRes.statusCode}';
+        } catch (e) {
+          pingError = e;
         }
-        _onboardingProfiler.completeStep('server_reachable');
-      } catch (e) {
-        _onboardingProfiler.finishFailure('server_reachable', note: '$e');
-        if (mounted) _showError('Cannot reach the server. Check the server URL.');
+        if (attempt < 3) await Future.delayed(const Duration(seconds: 1));
+      }
+      if (!serverReachable) {
+        _onboardingProfiler.finishFailure('server_reachable', note: '$pingError');
+        if (mounted) {
+          _showError('Cannot reach the server. Check the server URL.');
+        }
         return;
       }
+      _onboardingProfiler.completeStep('server_reachable');
 
       final bleMac = widget.device.remoteId.str;
       String? wifiMac;
       try {
         wifiMac = await _scanner.readWifiMac(widget.device);
       } catch (_) {}
+      if (wifiMac != null && RegExp(r'^[0:]+$').hasMatch(wifiMac)) {
+        wifiMac = null; // ignore all-zero MAC from older firmware
+      }
 
       String? claimedUid;
       DateTime? heartbeatBaseline;
 
       _onboardingProfiler.startStep('uid_claimed');
       try {
-        final boardsRes = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
+        final boardsRes = await http
+            .get(Uri.parse('$baseUrl/api/v1/boards'))
+            .timeout(const Duration(seconds: 5));
         if (boardsRes.statusCode == 200) {
           final boards = json.decode(boardsRes.body) as List;
           claimedUid = _findExistingUidForMac(boards, bleMac, wifiMac: wifiMac);
@@ -592,8 +673,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       _onboardingProfiler.completeStep('uid_claimed', note: claimedUid);
       final claimTime = DateTime.now();
 
-      final heartbeatOk = Completer<void>();
+      Completer<void>? heartbeatOk;
       var configSent = false;
+      var wifiFailed = false;
       StreamSubscription<String>? logSub;
 
       _onboardingProfiler.startStep('ble_subscribed');
@@ -601,82 +683,116 @@ class _DeviceScreenState extends State<DeviceScreen>
         final logStream = await _scanner.subscribeToLogs(widget.device);
         _onboardingProfiler.completeStep('ble_subscribed');
         logSub = logStream.listen((msg) {
-          debugPrint('[BLE LOG] $msg');
-          _onboardingProfiler.markBleEvent(msg);
-          if (!configSent) return;
-          if (msg.contains('EVENT:HEARTBEAT_OK') && !heartbeatOk.isCompleted) {
-            heartbeatOk.complete();
-          }
+           debugPrint('[BLE LOG] $msg');
+           _onboardingProfiler.markBleEvent(msg);
+           if (msg.contains('EVENT:WIFI_FAILED')) wifiFailed = true;
+           if (!configSent) return;
+           if (msg.contains('EVENT:HEARTBEAT_OK') &&
+               heartbeatOk != null &&
+               !heartbeatOk.isCompleted) {
+             heartbeatOk.complete();
+           }
         });
       } catch (e) {
         _onboardingProfiler.finishFailure('ble_subscribed', note: '$e');
         debugPrint('BLE log subscribe failed: $e');
       }
 
-      _onboardingProfiler.startStep('config_sent');
-      await _scanner.sendWifiConfig(
-        widget.device,
-        ssid: ssid,
-        password: pass,
-        baudRate: baud,
-        serverUrl: url.isNotEmpty ? url : null,
-        uid: claimedUid,
-      );
-      configSent = true;
-      _onboardingProfiler.completeStep('config_sent', note: claimedUid);
-
       _onboardingProfiler.startStep('board_ready');
-      await _waitForBoardReady(
-        baseUrl: baseUrl,
-        uid: claimedUid,
-        since: claimTime,
-        newerThan: heartbeatBaseline,
-        heartbeatOk: heartbeatOk,
-      );
+      Object? onboardingError;
+      var boardReady = false;
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        final currentHeartbeat = Completer<void>();
+        heartbeatOk = currentHeartbeat;
+        wifiFailed = false;
+        configSent = false;
+        try {
+          _onboardingProfiler.startStep(
+            'config_sent',
+            note: 'attempt $attempt/3',
+          );
+          await _scanner.sendWifiConfig(
+            widget.device,
+            ssid: ssid,
+            password: pass,
+            baudRate: baud,
+            serverUrl: baseUrl,
+            uid: claimedUid,
+          );
+          configSent = true;
+          _onboardingProfiler.completeStep('config_sent', note: claimedUid);
+          await _waitForBoardReady(
+            baseUrl: baseUrl,
+            uid: claimedUid,
+            since: claimTime,
+            newerThan: heartbeatBaseline,
+            heartbeatOk: currentHeartbeat,
+            shouldAbort: () => wifiFailed,
+          );
+          boardReady = true;
+          break;
+        } catch (e) {
+          onboardingError = e;
+          if (attempt < 3) {
+            try {
+              await _connect();
+            } catch (_) {}
+            await Future.delayed(const Duration(seconds: 1));
+          }
+        }
+      }
+      if (!boardReady) throw onboardingError ?? TimeoutException('board not ready');
       _onboardingProfiler.completeStep('board_ready');
       await logSub?.cancel();
 
       _onboardingProfiler.startStep('registered');
       String? uid;
-      try {
-        final regRes = await http
-            .post(
-              Uri.parse('$baseUrl/api/v1/boards/register'),
-              headers: {'Content-Type': 'application/json'},
-              body: json.encode({
-                'uid': claimedUid,
-                'mac_address': bleMac,
-                if (wifiMac != null && wifiMac.isNotEmpty) 'wifi_mac': wifiMac,
-                if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty)
-                  'protocol_id': _selectedProtoId,
-              }),
-            )
-            .timeout(const Duration(seconds: 5));
-        if (regRes.statusCode == 201) {
-          final regBody = json.decode(regRes.body);
-          uid = regBody['uid'] as String?;
-          _onboardingProfiler.completeStep('registered', note: uid);
-        } else {
-          _onboardingProfiler.finishFailure('registered', note: 'HTTP ${regRes.statusCode}');
-          throw Exception('Register failed: ${regRes.statusCode}');
+      Object? regError;
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+          final regRes = await http
+              .post(
+                Uri.parse('$baseUrl/api/v1/boards/register'),
+                headers: {'Content-Type': 'application/json'},
+                body: json.encode({
+                  'uid': claimedUid,
+                  'mac_address': bleMac,
+                  if (wifiMac != null && wifiMac.isNotEmpty)
+                    'wifi_mac': wifiMac,
+                  if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty)
+                    'protocol_id': _selectedProtoId,
+                }),
+              )
+              .timeout(const Duration(seconds: 5));
+          if (regRes.statusCode == 201) {
+            final regBody = json.decode(regRes.body);
+            uid = regBody['uid']?.toString() ?? claimedUid;
+            _onboardingProfiler.completeStep('registered', note: uid);
+            break;
+          }
+          regError = 'HTTP ${regRes.statusCode} ${regRes.body}';
+        } catch (e) {
+          regError = e;
         }
-      } catch (e) {
-        if (!_onboardingProfiler.hasFailed) {
-          _onboardingProfiler.finishFailure('registered', note: '$e');
+        if (attempt < 3) {
+          await Future.delayed(const Duration(seconds: 1));
         }
-        throw Exception('Server registration failed: $e');
+      }
+      if (uid == null) {
+        _onboardingProfiler.finishFailure('registered', note: '$regError');
+        throw Exception('Server registration failed: $regError');
       }
 
       await _storage.saveWifiProfile(ssid, pass);
-      if (url.isNotEmpty) await _storage.setServerUrl(url);
+      await _storage.setServerUrl(baseUrl);
       await _persistCurrentProfile();
 
-      _onboardingProfiler.finishSuccess(uid: uid ?? claimedUid);
+      _onboardingProfiler.finishSuccess(uid: uid);
 
       if (mounted) {
         setState(() => _wifiConfigured = true);
         _scanner.clearCache();
-        Navigator.pop(context, uid ?? claimedUid);
+        Navigator.pop(context, uid);
       }
     } catch (e) {
       if (!_onboardingProfiler.hasFailed) {
@@ -695,7 +811,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (mounted) setState(() => _scanningUart = true);
       _uartSub = stream.listen((data) {
         if (!mounted) return;
-        final hex = data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+        final hex = data
+            .map((b) => b.toRadixString(16).padLeft(2, '0'))
+            .join(' ');
         setState(() {
           _uartLogs.add(hex);
           if (_uartLogs.length > 500) _uartLogs = _uartLogs.sublist(-500);
@@ -718,7 +836,8 @@ class _DeviceScreenState extends State<DeviceScreen>
     if (msg.contains('No UID claimed')) {
       return 'Could not obtain a board ID from the server.';
     }
-    if (msg.contains('Register failed') || msg.contains('Server registration failed')) {
+    if (msg.contains('Register failed') ||
+        msg.contains('Server registration failed')) {
       return 'Server registration failed. Try again.';
     }
     if (msg.contains('sendWifiConfig failed')) {
@@ -744,13 +863,6 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (protocol.id == _selectedProtoId) return protocol;
     }
     return null;
-  }
-
-  String get _baseUrl {
-    final raw = _urlCtrl.text.trim().isNotEmpty
-        ? _urlCtrl.text.trim()
-        : 'http://192.168.0.9:5050';
-    return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
   }
 
   void _resetParsedFrames() {
@@ -910,7 +1022,12 @@ class _DeviceScreenState extends State<DeviceScreen>
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
-        border: Border(bottom: BorderSide(color: cs.outline.withValues(alpha: 0.3), width: 0.5)),
+        border: Border(
+          bottom: BorderSide(
+            color: cs.outline.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
@@ -922,7 +1039,9 @@ class _DeviceScreenState extends State<DeviceScreen>
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.chevron_left, size: 28),
                   style: IconButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
                 Expanded(
@@ -971,8 +1090,12 @@ class _DeviceScreenState extends State<DeviceScreen>
     final (Color bg, Color dot, String label) = _connected
         ? (cs.primary.withValues(alpha: 0.1), cs.primary, 'Connected')
         : _connecting
-            ? (cs.tertiary.withValues(alpha: 0.1), cs.tertiary, 'Connecting')
-            : (cs.onSurfaceVariant.withValues(alpha: 0.06), cs.onSurfaceVariant.withValues(alpha: 0.3), 'Offline');
+        ? (cs.tertiary.withValues(alpha: 0.1), cs.tertiary, 'Connecting')
+        : (
+            cs.onSurfaceVariant.withValues(alpha: 0.06),
+            cs.onSurfaceVariant.withValues(alpha: 0.3),
+            'Offline',
+          );
 
     return Container(
       margin: const EdgeInsets.only(right: 12),
@@ -985,11 +1108,19 @@ class _DeviceScreenState extends State<DeviceScreen>
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6, height: 6,
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
           ),
           const SizedBox(width: 5),
-          Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: dot)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: dot,
+            ),
+          ),
         ],
       ),
     );
@@ -999,7 +1130,12 @@ class _DeviceScreenState extends State<DeviceScreen>
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: cs.outline.withValues(alpha: 0.2), width: 0.5)),
+        border: Border(
+          bottom: BorderSide(
+            color: cs.outline.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
       ),
       child: TabBar(
         controller: _tabCtrl,
@@ -1035,17 +1171,33 @@ class _DeviceScreenState extends State<DeviceScreen>
             const SizedBox(height: 8),
             _buildTextField(cs, _ssidCtrl, 'WiFi SSID', Icons.wifi_rounded),
             const SizedBox(height: 10),
-            _buildTextField(cs, _passCtrl, 'WiFi Password', Icons.lock_rounded, obscure: true),
+            _buildTextField(
+              cs,
+              _passCtrl,
+              'WiFi Password',
+              Icons.lock_rounded,
+              obscure: true,
+            ),
             const SizedBox(height: 16),
             _buildFormGroupLabel(cs, 'Device'),
             const SizedBox(height: 8),
-            _buildTextField(cs, _baudCtrl, 'Baud Rate', Icons.speed_rounded,
-                placeholder: 'e.g. 115200'),
+            _buildTextField(
+              cs,
+              _baudCtrl,
+              'Baud Rate',
+              Icons.speed_rounded,
+              placeholder: 'e.g. 115200',
+            ),
             const SizedBox(height: 16),
             _buildFormGroupLabel(cs, 'Server'),
             const SizedBox(height: 8),
-            _buildTextField(cs, _urlCtrl, 'Server URL', Icons.dns_rounded,
-                placeholder: 'http://192.168.0.9:5050'),
+            _buildTextField(
+              cs,
+              _urlCtrl,
+              'Server URL',
+              Icons.dns_rounded,
+              placeholder: kDefaultServerUrl,
+            ),
             const SizedBox(height: 16),
             _buildFormGroupLabel(cs, 'Protocol'),
             const SizedBox(height: 8),
@@ -1053,8 +1205,8 @@ class _DeviceScreenState extends State<DeviceScreen>
               Text(
                 'Load protocols from the server URL above.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                    ),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                ),
               )
             else
               DropdownButtonFormField<String>(
@@ -1063,13 +1215,20 @@ class _DeviceScreenState extends State<DeviceScreen>
                   labelText: 'UART parse protocol',
                   filled: true,
                   fillColor: cs.surface.withValues(alpha: 0.45),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 items: _protocols
-                    .map((p) => DropdownMenuItem(
-                          value: p.id,
-                          child: Text('${p.name} v${p.version}', overflow: TextOverflow.ellipsis),
-                        ))
+                    .map(
+                      (p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text(
+                          '${p.name} v${p.version}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
                     .toList(),
                 onChanged: _onProtocolChanged,
               ),
@@ -1089,9 +1248,9 @@ class _DeviceScreenState extends State<DeviceScreen>
               Text(
                 'Saved on the server for this board. ESP32 does not need the protocol ID.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                      height: 1.35,
-                    ),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                  height: 1.35,
+                ),
               ),
             ],
             if (_profileDirty) ...[
@@ -1114,7 +1273,8 @@ class _DeviceScreenState extends State<DeviceScreen>
             Row(
               children: [
                 Container(
-                  width: 36, height: 36,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     color: _connected
                         ? cs.primary.withValues(alpha: 0.1)
@@ -1122,9 +1282,13 @@ class _DeviceScreenState extends State<DeviceScreen>
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    _connected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                    _connected
+                        ? Icons.bluetooth_connected
+                        : Icons.bluetooth_disabled,
                     size: 18,
-                    color: _connected ? cs.primary : cs.onSurfaceVariant.withValues(alpha: 0.3),
+                    color: _connected
+                        ? cs.primary
+                        : cs.onSurfaceVariant.withValues(alpha: 0.3),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1132,7 +1296,10 @@ class _DeviceScreenState extends State<DeviceScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Bluetooth LE', style: Theme.of(context).textTheme.bodyMedium),
+                      Text(
+                        'Bluetooth LE',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
                       Text(
                         _connected ? 'Connected and ready' : 'Not connected',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1145,10 +1312,17 @@ class _DeviceScreenState extends State<DeviceScreen>
                 if (!_connected && !_connecting)
                   TextButton(
                     onPressed: _connect,
-                    child: const Text('Reconnect', style: TextStyle(fontSize: 12)),
+                    child: const Text(
+                      'Reconnect',
+                      style: TextStyle(fontSize: 12),
+                    ),
                   ),
                 if (_connecting)
-                  const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
               ],
             ),
           ]),
@@ -1169,7 +1343,10 @@ class _DeviceScreenState extends State<DeviceScreen>
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.25), width: 0.5),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.25),
+          width: 0.5,
+        ),
       ),
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       child: Column(
@@ -1194,16 +1371,16 @@ class _DeviceScreenState extends State<DeviceScreen>
                     Text(
                       'Profiles',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Text(
                       _onboardingProfiles.isEmpty
                           ? 'Save presets for quick onboarding'
                           : '${_onboardingProfiles.length} saved',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant.withValues(alpha: 0.75),
-                          ),
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                      ),
                     ),
                   ],
                 ),
@@ -1255,11 +1432,18 @@ class _DeviceScreenState extends State<DeviceScreen>
                 height: 40,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [cs.primary.withValues(alpha: 0.2), cs.primary.withValues(alpha: 0.08)],
+                    colors: [
+                      cs.primary.withValues(alpha: 0.2),
+                      cs.primary.withValues(alpha: 0.08),
+                    ],
                   ),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.bookmark_add_outlined, size: 20, color: cs.primary),
+                child: Icon(
+                  Icons.bookmark_add_outlined,
+                  size: 20,
+                  color: cs.primary,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1269,18 +1453,23 @@ class _DeviceScreenState extends State<DeviceScreen>
                   children: [
                     Text(
                       'Create a profile',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     Text(
                       'Store WiFi, server URL, and baud rate',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant.withValues(alpha: 0.75),
-                          ),
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                      ),
                     ),
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
             ],
           ),
         ),
@@ -1299,7 +1488,10 @@ class _DeviceScreenState extends State<DeviceScreen>
           decoration: BoxDecoration(
             color: cs.surface.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cs.outline.withValues(alpha: 0.35), width: 1),
+            border: Border.all(
+              color: cs.outline.withValues(alpha: 0.35),
+              width: 1,
+            ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1309,9 +1501,9 @@ class _DeviceScreenState extends State<DeviceScreen>
               Text(
                 'New',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: cs.primary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -1346,7 +1538,9 @@ class _DeviceScreenState extends State<DeviceScreen>
             color: active ? null : cs.surface.withValues(alpha: 0.45),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: active ? cs.primary.withValues(alpha: 0.45) : cs.outline.withValues(alpha: 0.25),
+              color: active
+                  ? cs.primary.withValues(alpha: 0.45)
+                  : cs.outline.withValues(alpha: 0.25),
               width: active ? 1.2 : 0.5,
             ),
           ),
@@ -1367,9 +1561,11 @@ class _DeviceScreenState extends State<DeviceScreen>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: active ? cs.onSurface : cs.onSurface.withValues(alpha: 0.9),
-                          ),
+                        fontWeight: FontWeight.w600,
+                        color: active
+                            ? cs.onSurface
+                            : cs.onSurface.withValues(alpha: 0.9),
+                      ),
                     ),
                   ),
                   _buildProfileMenu(cs, profile),
@@ -1381,9 +1577,9 @@ class _DeviceScreenState extends State<DeviceScreen>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.85),
-                      fontSize: 11,
-                    ),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.85),
+                  fontSize: 11,
+                ),
               ),
               const Spacer(),
               Row(
@@ -1394,17 +1590,21 @@ class _DeviceScreenState extends State<DeviceScreen>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                            fontSize: 10,
-                            fontFamily: 'monospace',
-                          ),
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
                   if (profile.baudRate != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
-                        color: (active ? cs.primary : cs.onSurfaceVariant).withValues(alpha: 0.12),
+                        color: (active ? cs.primary : cs.onSurfaceVariant)
+                            .withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
@@ -1433,7 +1633,11 @@ class _DeviceScreenState extends State<DeviceScreen>
       child: PopupMenuButton<String>(
         padding: EdgeInsets.zero,
         iconSize: 18,
-        icon: Icon(Icons.more_horiz_rounded, size: 18, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+        icon: Icon(
+          Icons.more_horiz_rounded,
+          size: 18,
+          color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+        ),
         color: cs.surfaceContainerHigh,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         onSelected: (action) {
@@ -1470,11 +1674,15 @@ class _DeviceScreenState extends State<DeviceScreen>
           Expanded(
             child: Text(
               hasSelection ? 'Unsaved changes' : 'Unsaved configuration',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
             ),
           ),
           TextButton(
-            onPressed: hasSelection ? _updateCurrentProfile : _promptSaveProfile,
+            onPressed: hasSelection
+                ? _updateCurrentProfile
+                : _promptSaveProfile,
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1490,10 +1698,10 @@ class _DeviceScreenState extends State<DeviceScreen>
     return Text(
       label.toUpperCase(),
       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: cs.onSurfaceVariant.withValues(alpha: 0.55),
-            letterSpacing: 0.8,
-            fontWeight: FontWeight.w600,
-          ),
+        color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+        letterSpacing: 0.8,
+        fontWeight: FontWeight.w600,
+      ),
     );
   }
 
@@ -1512,8 +1720,14 @@ class _DeviceScreenState extends State<DeviceScreen>
             decoration: const InputDecoration(labelText: 'Profile name'),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
           ],
         );
       },
@@ -1534,25 +1748,32 @@ class _DeviceScreenState extends State<DeviceScreen>
       children: [
         Icon(icon, size: 16, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
         const SizedBox(width: 8),
-        Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(
-          color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-        )),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildOnboardingProfileCard(ColorScheme cs) {
-    final steps = _onboardingProfiler.steps.where((s) => s.status != OnboardingStepStatus.pending).toList();
-    final maxMs = steps.fold<int>(0, (max, s) {
-      final ms = s.durationMs ?? 0;
-      return ms > max ? ms : max;
-    }).clamp(1, 999999);
+    final steps = _onboardingProfiler.steps
+        .where((s) => s.status != OnboardingStepStatus.pending)
+        .toList();
+    final maxMs = steps
+        .fold<int>(0, (max, s) {
+          final ms = s.durationMs ?? 0;
+          return ms > max ? ms : max;
+        })
+        .clamp(1, 999999);
 
     final headerColor = _onboardingProfiler.hasFailed
         ? cs.tertiary
         : _onboardingProfiler.isRunning
-            ? cs.primary
-            : cs.secondary;
+        ? cs.primary
+        : cs.secondary;
 
     return _buildGlassCard(cs, [
       Row(
@@ -1564,17 +1785,17 @@ class _DeviceScreenState extends State<DeviceScreen>
               _onboardingProfiler.isRunning
                   ? 'Profiling onboarding...'
                   : _onboardingProfiler.hasFailed
-                      ? 'Onboarding failed'
-                      : 'Onboarding complete',
+                  ? 'Onboarding failed'
+                  : 'Onboarding complete',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
           Text(
             '${_onboardingProfiler.totalMs} ms',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontFamily: 'monospace',
-                ),
+              color: cs.onSurfaceVariant,
+              fontFamily: 'monospace',
+            ),
           ),
         ],
       ),
@@ -1585,16 +1806,28 @@ class _DeviceScreenState extends State<DeviceScreen>
     ]);
   }
 
-  Widget _buildProfileStepRow(ColorScheme cs, OnboardingStepRecord step, int maxMs) {
+  Widget _buildProfileStepRow(
+    ColorScheme cs,
+    OnboardingStepRecord step,
+    int maxMs,
+  ) {
     final (Color color, IconData icon) = switch (step.status) {
       OnboardingStepStatus.running => (cs.primary, Icons.hourglass_top_rounded),
       OnboardingStepStatus.done => (cs.secondary, Icons.check_rounded),
       OnboardingStepStatus.failed => (cs.tertiary, Icons.close_rounded),
-      OnboardingStepStatus.pending => (cs.onSurfaceVariant, Icons.circle_outlined),
+      OnboardingStepStatus.pending => (
+        cs.onSurfaceVariant,
+        Icons.circle_outlined,
+      ),
     };
-    final ms = step.durationMs ?? (_onboardingProfiler.isRunning && step.status == OnboardingStepStatus.running
-        ? DateTime.now().difference(step.startedAt ?? DateTime.now()).inMilliseconds
-        : 0);
+    final ms =
+        step.durationMs ??
+        (_onboardingProfiler.isRunning &&
+                step.status == OnboardingStepStatus.running
+            ? DateTime.now()
+                  .difference(step.startedAt ?? DateTime.now())
+                  .inMilliseconds
+            : 0);
     final barWidth = maxMs > 0 ? (ms / maxMs).clamp(0.05, 1.0) : 0.05;
 
     return Padding(
@@ -1609,16 +1842,18 @@ class _DeviceScreenState extends State<DeviceScreen>
               Expanded(
                 child: Text(
                   step.label,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurface),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: cs.onSurface),
                 ),
               ),
               Text(
                 step.status == OnboardingStepStatus.running ? '...' : '${ms}ms',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontFamily: 'monospace',
-                      fontSize: 10,
-                    ),
+                  color: cs.onSurfaceVariant,
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                ),
               ),
             ],
           ),
@@ -1627,9 +1862,9 @@ class _DeviceScreenState extends State<DeviceScreen>
             Text(
               step.note!,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-                    fontSize: 10,
-                  ),
+                color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                fontSize: 10,
+              ),
             ),
           ],
           const SizedBox(height: 6),
@@ -1653,29 +1888,48 @@ class _DeviceScreenState extends State<DeviceScreen>
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: cs.outline.withValues(alpha: 0.3), width: 0.5),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
       ),
       child: Column(children: children),
     );
   }
 
-  Widget _buildTextField(ColorScheme cs, TextEditingController ctrl, String label,
-      IconData icon, {bool obscure = false, String? placeholder}) {
+  Widget _buildTextField(
+    ColorScheme cs,
+    TextEditingController ctrl,
+    String label,
+    IconData icon, {
+    bool obscure = false,
+    String? placeholder,
+  }) {
     return TextField(
       controller: ctrl,
       obscureText: obscure,
       style: TextStyle(fontSize: 14, color: cs.onSurface),
       decoration: InputDecoration(
         hintText: placeholder ?? label,
-        prefixIcon: Icon(icon, size: 18, color: cs.primary.withValues(alpha: 0.6)),
+        prefixIcon: Icon(
+          icon,
+          size: 18,
+          color: cs.primary.withValues(alpha: 0.6),
+        ),
         filled: true,
         fillColor: cs.surface.withValues(alpha: 0.5),
-        hintStyle: TextStyle(color: cs.onSurfaceVariant.withValues(alpha: 0.4), fontSize: 13),
+        hintStyle: TextStyle(
+          color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+          fontSize: 13,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
       ),
     );
   }
@@ -1688,15 +1942,31 @@ class _DeviceScreenState extends State<DeviceScreen>
       child: FilledButton.icon(
         onPressed: canSend && !_sendingWifi ? _sendWifi : null,
         icon: _sendingWifi
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : Icon(_connected ? Icons.send_rounded : Icons.bluetooth_disabled, size: 18),
-        label: Text(_sendingWifi
-            ? 'Sending...'
-            : _connected
-                ? (_wifiConfigured ? 'Update Configuration' : 'Send Configuration')
-                : (_connecting ? 'Connecting...' : 'Not Connected')),
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Icon(
+                _connected ? Icons.send_rounded : Icons.bluetooth_disabled,
+                size: 18,
+              ),
+        label: Text(
+          _sendingWifi
+              ? 'Sending...'
+              : _connected
+              ? (_wifiConfigured
+                    ? 'Update Configuration'
+                    : 'Send Configuration')
+              : (_connecting ? 'Connecting...' : 'Not Connected'),
+        ),
         style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           backgroundColor: cs.primary,
           disabledBackgroundColor: cs.onSurfaceVariant.withValues(alpha: 0.06),
         ),
@@ -1711,7 +1981,12 @@ class _DeviceScreenState extends State<DeviceScreen>
       (p) => p.id == _selectedProtoId,
       orElse: () => _protocols.isNotEmpty
           ? _protocols.first
-          : _Protocol.fromJson({'id': '', 'name': '', 'version': '', 'fields': []}),
+          : _Protocol.fromJson({
+              'id': '',
+              'name': '',
+              'version': '',
+              'fields': [],
+            }),
     );
     final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
@@ -1723,20 +1998,28 @@ class _DeviceScreenState extends State<DeviceScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 56, height: 56,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   color: cs.primary.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(Icons.analytics_outlined, size: 24,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.3)),
+                child: Icon(
+                  Icons.analytics_outlined,
+                  size: 24,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                ),
               ),
               const SizedBox(height: 16),
-              Text('No data yet', style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: cs.onSurface.withValues(alpha: 0.6),
-              )),
+              Text(
+                'No data yet',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: cs.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
               const SizedBox(height: 6),
-              Text('Start the UART stream to\nview parsed data',
+              Text(
+                'Start the UART stream to\nview parsed data',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: cs.onSurfaceVariant.withValues(alpha: 0.5),
@@ -1760,20 +2043,31 @@ class _DeviceScreenState extends State<DeviceScreen>
             _buildGlassCard(cs, [
               DropdownButton<String>(
                 value: _selectedProtoId,
-                hint: Text('Select protocol',
-                    style: TextStyle(color: cs.onSurfaceVariant.withValues(alpha: 0.5))),
+                hint: Text(
+                  'Select protocol',
+                  style: TextStyle(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                  ),
+                ),
                 isExpanded: true,
                 dropdownColor: cs.surfaceContainerHigh,
                 underline: const SizedBox(),
-                items: _protocols.map((p) => DropdownMenuItem(
-                  value: p.id,
-                  child: Text(
-                    p.fields.isNotEmpty
-                        ? '${p.name} v${p.version} · ${p.fields.length} fields'
-                        : '${p.name} v${p.version}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                  ),
-                )).toList(),
+                items: _protocols
+                    .map(
+                      (p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text(
+                          p.fields.isNotEmpty
+                              ? '${p.name} v${p.version} · ${p.fields.length} fields'
+                              : '${p.name} v${p.version}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: _onProtocolChanged,
               ),
               if (showParsed) ...[
@@ -1786,22 +2080,35 @@ class _DeviceScreenState extends State<DeviceScreen>
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: selectedProto.fields.map((f) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(
-                        children: [
-                          Text(f.name, style: TextStyle(
-                            fontSize: 12, color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-                          )),
-                          const Spacer(),
-                          Text('${f.type}${f.unit != null ? " (${f.unit})" : ""}',
-                              style: TextStyle(
-                                fontSize: 11, fontFamily: 'monospace',
-                                color: cs.primary.withValues(alpha: 0.6),
-                              )),
-                        ],
-                      ),
-                    )).toList(),
+                    children: selectedProto.fields
+                        .map(
+                          (f) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                Text(
+                                  f.name,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant.withValues(
+                                      alpha: 0.7,
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '${f.type}${f.unit != null ? " (${f.unit})" : ""}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    color: cs.primary.withValues(alpha: 0.6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ),
               ],
@@ -1842,17 +2149,27 @@ class _DeviceScreenState extends State<DeviceScreen>
                             setState(() => _scanningUart = false);
                           },
                           icon: const Icon(Icons.stop_rounded, size: 16),
-                          label: const Text('Stop', style: TextStyle(fontSize: 12)),
+                          label: const Text(
+                            'Stop',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           style: FilledButton.styleFrom(
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         )
                       : FilledButton.icon(
                           onPressed: _connected ? _startUartStream : null,
                           icon: const Icon(Icons.play_arrow_rounded, size: 16),
-                          label: const Text('Start', style: TextStyle(fontSize: 12)),
+                          label: const Text(
+                            'Start',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           style: FilledButton.styleFrom(
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                 ),
@@ -1871,7 +2188,12 @@ class _DeviceScreenState extends State<DeviceScreen>
       (p) => p.id == _selectedProtoId,
       orElse: () => _protocols.isNotEmpty
           ? _protocols.first
-          : _Protocol.fromJson({'id': '', 'name': '', 'version': '', 'fields': []}),
+          : _Protocol.fromJson({
+              'id': '',
+              'name': '',
+              'version': '',
+              'fields': [],
+            }),
     );
     final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
@@ -1883,20 +2205,28 @@ class _DeviceScreenState extends State<DeviceScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 56, height: 56,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   color: cs.primary.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(Icons.terminal_rounded, size: 24,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.3)),
+                child: Icon(
+                  Icons.terminal_rounded,
+                  size: 24,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                ),
               ),
               const SizedBox(height: 16),
-              Text('Monitor', style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: cs.onSurface.withValues(alpha: 0.6),
-              )),
+              Text(
+                'Monitor',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: cs.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
               const SizedBox(height: 6),
-              Text('Start the UART stream from\nthe Data tab to monitor traffic',
+              Text(
+                'Start the UART stream from\nthe Data tab to monitor traffic',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: cs.onSurfaceVariant.withValues(alpha: 0.5),
@@ -1925,7 +2255,10 @@ class _DeviceScreenState extends State<DeviceScreen>
               GestureDetector(
                 onTap: () => setState(() => _uartLogs.clear()),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: cs.onSurfaceVariant.withValues(alpha: 0.06),
                     borderRadius: BorderRadius.circular(8),
@@ -1933,13 +2266,20 @@ class _DeviceScreenState extends State<DeviceScreen>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.delete_sweep, size: 14,
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
-                      const SizedBox(width: 4),
-                      Text('Clear', style: TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w500,
+                      Icon(
+                        Icons.delete_sweep,
+                        size: 14,
                         color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                      )),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Clear',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1953,10 +2293,14 @@ class _DeviceScreenState extends State<DeviceScreen>
             itemCount: _uartLogs.length,
             itemBuilder: (_, i) {
               final hex = _uartLogs[i];
-              final parsed = showParsed ? _parseHex(hex, selectedProto) : <String, String>{};
+              final parsed = showParsed
+                  ? _parseHex(hex, selectedProto)
+                  : <String, String>{};
               final dir = hex.startsWith('01')
                   ? 'RX'
-                  : hex.startsWith('02') ? 'TX' : null;
+                  : hex.startsWith('02')
+                  ? 'TX'
+                  : null;
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 6),
@@ -1965,7 +2309,10 @@ class _DeviceScreenState extends State<DeviceScreen>
                   decoration: BoxDecoration(
                     color: cs.surfaceContainerLow,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: cs.outline.withValues(alpha: 0.2), width: 0.5),
+                    border: Border.all(
+                      color: cs.outline.withValues(alpha: 0.2),
+                      width: 0.5,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1974,24 +2321,34 @@ class _DeviceScreenState extends State<DeviceScreen>
                         children: [
                           if (dir != null)
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: dir == 'RX'
                                     ? cs.secondary.withValues(alpha: 0.12)
                                     : cs.primary.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(4),
                               ),
-                              child: Text(dir, style: TextStyle(
-                                fontSize: 9, fontWeight: FontWeight.w700,
-                                color: dir == 'RX' ? cs.secondary : cs.primary,
-                                letterSpacing: 0.5,
-                              )),
+                              child: Text(
+                                dir,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  color: dir == 'RX'
+                                      ? cs.secondary
+                                      : cs.primary,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
                             ),
                           const Spacer(),
                           Text(
                             'PKT #${_uartLogs.length - i}',
                             style: TextStyle(
-                              fontSize: 9, fontFamily: 'monospace',
+                              fontSize: 9,
+                              fontFamily: 'monospace',
                               color: cs.onSurfaceVariant.withValues(alpha: 0.3),
                             ),
                           ),
@@ -2018,13 +2375,19 @@ class _DeviceScreenState extends State<DeviceScreen>
                           child: Wrap(
                             spacing: 12,
                             runSpacing: 4,
-                            children: parsed.entries.map((e) => Text(
-                              '${e.key}: ${e.value}',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-                              ),
-                            )).toList(),
+                            children: parsed.entries
+                                .map(
+                                  (e) => Text(
+                                    '${e.key}: ${e.value}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: cs.onSurfaceVariant.withValues(
+                                        alpha: 0.7,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                           ),
                         ),
                       ],

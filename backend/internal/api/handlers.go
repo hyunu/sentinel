@@ -49,6 +49,14 @@ func NewHandler(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts 
 }
 
 func (h *Handler) resolveBoardID(ctx context.Context, boardID, uid string) (string, error) {
+	// A device sends both fields. Prefer UID when present so a stale/random
+	// board_id cannot route telemetry into a different board record.
+	if uid != "" {
+		var byUID models.Board
+		if err := h.db.Boards().FindOne(ctx, bson.M{"uid": uid}).Decode(&byUID); err == nil {
+			return byUID.ID, nil
+		}
+	}
 	// If boardID provided, try multiple ways to resolve it to internal _id:
 	if boardID != "" {
 		// 1) try _id match
@@ -275,7 +283,8 @@ func (h *Handler) ClaimBoard(c *gin.Context) {
 		ID:            uuid.New().String(),
 		UID:           uid,
 		Name:          fmt.Sprintf("STN-%s", uid),
-		MACAddress:    "",
+		MACAddress:    req.MACAddress,
+		WifiMAC:       macHexToColon(req.WifiMAC),
 		LastHeartbeat: time.Time{},
 		IsActive:      false,
 		CreatedAt:     time.Now(),

@@ -1,6 +1,8 @@
 #include <NimBLEDevice.h>
 #include <WiFi.h>
 #include <string>
+#include <esp_mac.h>
+#include <cstring>
 #include <vector>
 
 #include "ble_service.h"
@@ -11,6 +13,7 @@
 static NimBLEServer *pServer = nullptr;
 static NimBLECharacteristic *pUartNotifyChar = nullptr;
 static NimBLECharacteristic *pUartWriteChar = nullptr;
+static NimBLECharacteristic *pMacChar = nullptr;
 static bool deviceConnected = false;
 
 static uint8_t gStatusFlags = 0;
@@ -169,6 +172,12 @@ void ble_set_uid(const String &uid) {
     ble_refresh_advertising();
 }
 
+void ble_set_wifi_mac(const String &mac) {
+    if (!pMacChar || mac.length() == 0) return;
+    pMacChar->setValue(reinterpret_cast<const uint8_t *>(mac.c_str()), mac.length());
+    Serial.printf("[BLE] WiFi MAC characteristic updated: %s\n", mac.c_str());
+}
+
 void ble_set_wifi_connected(bool connected) {
     (void)connected;
     ble_refresh_advertising();
@@ -201,16 +210,24 @@ void ble_init() {
     );
     pUartWriteChar->setCallbacks(new UartWriteCallback());
 
-    NimBLECharacteristic *pMacChar = pService->createCharacteristic(
+    pMacChar = pService->createCharacteristic(
         NimBLEUUID(UART_MAC_CHAR_UUID),
         NIMBLE_PROPERTY::READ
     );
+    // Read the factory WiFi MAC from eFuse. WiFi.macAddress() can return zeros
+    // before the WiFi driver is initialized (ble_init runs before wifi_init).
+    char macStr[18];
     {
-        String mac = WiFi.macAddress();
-        pMacChar->setValue(mac.c_str());
+        uint8_t mac[6];
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        pMacChar->setValue(reinterpret_cast<const uint8_t *>(macStr), strlen(macStr));
     }
 
     pService->start();
+    // Re-apply after service start so the value is always visible to centrals.
+    pMacChar->setValue(reinterpret_cast<const uint8_t *>(macStr), strlen(macStr));
 
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(NimBLEUUID(UART_SERVICE_UUID));

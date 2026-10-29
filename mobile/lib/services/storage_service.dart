@@ -8,14 +8,29 @@ class StorageService {
   static const _onboardingProfilesKey = 'onboarding_profiles';
   static const _lastOnboardingProfileIdKey = 'last_onboarding_profile_id';
 
+  /// Trims whitespace, adds http:// when no scheme is present, and removes
+  /// trailing slashes so endpoints never become `//api/v1/...`.
+  static String normalizeServerUrl(String raw) {
+    var url = raw.trim();
+    if (url.isEmpty) return url;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'http://$url';
+    }
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    return url;
+  }
+
   Future<String?> getServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_serverUrlKey);
+    final url = prefs.getString(_serverUrlKey);
+    return url == null ? null : normalizeServerUrl(url);
   }
 
   Future<void> setServerUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_serverUrlKey, url);
+    await prefs.setString(_serverUrlKey, normalizeServerUrl(url));
   }
 
   Future<Map<String, String>> getWifiProfiles() async {
