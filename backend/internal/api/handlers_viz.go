@@ -326,7 +326,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 		{{Key: "$project", Value: bson.M{"_id": 0, "idx": "$_id"}}},
 	}
 
-	cur, err := h.db.UartData().Aggregate(ctx, pipeline)
+	cur, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true))
 	if err != nil {
 		h.logger.Error("spectrum aggregation failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "spectrum query failed"})

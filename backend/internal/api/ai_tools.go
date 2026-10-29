@@ -339,7 +339,7 @@ func (e *aiToolExecutor) listFields(ctx context.Context, raw json.RawMessage) (a
 		{{Key: "$limit", Value: int64(limit)}},
 	}
 
-	cursor, err := e.h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetBatchSize(200))
+	cursor, err := e.h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true).SetBatchSize(200))
 	if err != nil {
 		return nil, fmt.Errorf("list fields: %w", err)
 	}
@@ -998,7 +998,7 @@ func (e *aiToolExecutor) fieldStats(ctx context.Context, filter bson.M, field st
 		}}},
 	}
 
-	cursor, err := e.h.db.UartData().Aggregate(ctx, pipeline)
+	cursor, err := e.h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true))
 	if err != nil {
 		return aiFieldStats{}, fmt.Errorf("field stats: %w", err)
 	}

@@ -101,7 +101,7 @@ func (h *Handler) queryVizSeriesAggregated(
 		{{Key: "$limit", Value: int64(limit)}},
 	}
 
-	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetBatchSize(500))
+	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true).SetBatchSize(500))
 	if err != nil {
 		return nil, vizQueryMeta{}, fmt.Errorf("aggregate series: %w", err)
 	}

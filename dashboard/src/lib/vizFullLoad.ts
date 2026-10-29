@@ -7,10 +7,10 @@ export type VizFullLoadMeta = {
 };
 
 /** In-memory full dataset budget (~100 MiB JSON). */
-export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
+export const FULL_LOAD_BYTE_BUDGET = 20 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
-export const FULL_LOAD_MAX_POINTS = 500_000;
+export const FULL_LOAD_MAX_POINTS = 20_000;
 
 export function estimateVizPayloadBytes(data: VizFullLoadRow[]): number {
   if (data.length === 0) return 0;

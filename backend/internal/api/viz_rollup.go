@@ -263,14 +263,71 @@ func (h *Handler) queryVizSeriesFromRollups(
 			"sum_fields":   1,
 		})
 
+	rollupCount, err := h.db.VizRollups().CountDocuments(ctx, rollupFilter)
+	if err != nil {
+		return nil, false, err
+	}
+	if rollupCount == 0 {
+		return nil, false, nil
+	}
+
 	cursor, err := h.db.VizRollups().Find(ctx, rollupFilter, findOpts)
 	if err != nil {
 		return nil, false, err
 	}
 	defer cursor.Close(ctx)
 
+	// Each rollup bucket produces up to 3 points (min/avg/max). If there are
+	// more buckets than the chart can usefully display, merge adjacent buckets
+	// before expanding them. This keeps response construction independent of
+	// the raw data volume for long ranges.
+	targetBuckets := effectiveLimit / 3
+	if targetBuckets < 1 {
+		targetBuckets = 1
+	}
+	mergeFactor := int((rollupCount + int64(targetBuckets) - 1) / int64(targetBuckets))
+	if mergeFactor < 1 {
+		mergeFactor = 1
+	}
+
 	bucketSpan := time.Duration(granularitySec) * time.Second
 	points := make([]vizDataPoint, 0, effectiveLimit)
+	var groupStart, groupLast time.Time
+	var groupCount int64
+	groupMin := make(map[string]float64)
+	groupMax := make(map[string]float64)
+	groupSum := make(map[string]float64)
+	grouped := 0
+
+	flushGroup := func() {
+		if groupCount <= 0 {
+			return
+		}
+		minValues := make(map[string]interface{}, len(groupMin))
+		avgValues := make(map[string]interface{}, len(groupSum))
+		maxValues := make(map[string]interface{}, len(groupMax))
+		for label, value := range groupMin {
+			minValues[label] = value
+		}
+		for label, value := range groupSum {
+			avgValues[label] = value / float64(groupCount)
+		}
+		for label, value := range groupMax {
+			maxValues[label] = value
+		}
+		span := groupLast.Sub(groupStart) + bucketSpan
+		mid := groupStart.Add(span / 2)
+		points = appendRollupPoint(points, groupStart, minValues)
+		points = appendRollupPoint(points, mid, avgValues)
+		points = appendRollupPoint(points, groupLast.Add(bucketSpan-time.Millisecond), maxValues)
+		groupStart = time.Time{}
+		groupCount = 0
+		groupMin = make(map[string]float64)
+		groupMax = make(map[string]float64)
+		groupSum = make(map[string]float64)
+		grouped = 0
+	}
+
 	for cursor.Next(ctx) {
 		var doc vizRollupDoc
 		if err := cursor.Decode(&doc); err != nil {
@@ -279,10 +336,11 @@ func (h *Handler) queryVizSeriesFromRollups(
 		if doc.Count <= 0 {
 			continue
 		}
-
-		minValues := make(map[string]interface{})
-		avgValues := make(map[string]interface{})
-		maxValues := make(map[string]interface{})
+		if groupCount == 0 {
+			groupStart = doc.BucketStart
+		}
+		groupLast = doc.BucketStart
+		groupCount += doc.Count
 
 		for _, item := range items {
 			fieldName := item.FieldRef.FieldName
@@ -290,23 +348,29 @@ func (h *Handler) queryVizSeriesFromRollups(
 				continue
 			}
 			if minV, ok := readRollupFieldValue(doc.MinFields, fieldName); ok {
-				minValues[item.Label] = minV
+				if current, exists := groupMin[item.Label]; !exists || minV < current {
+					groupMin[item.Label] = minV
+				}
 			}
 			if maxV, ok := readRollupFieldValue(doc.MaxFields, fieldName); ok {
-				maxValues[item.Label] = maxV
+				if current, exists := groupMax[item.Label]; !exists || maxV > current {
+					groupMax[item.Label] = maxV
+				}
 			}
 			if sumV, ok := readRollupFieldValue(doc.SumFields, fieldName); ok {
-				avgValues[item.Label] = sumV / float64(doc.Count)
+				groupSum[item.Label] += sumV
 			}
 		}
 
-		points = appendRollupPoint(points, doc.BucketStart, minValues)
-		points = appendRollupPoint(points, doc.BucketStart.Add(bucketSpan/2), avgValues)
-		points = appendRollupPoint(points, doc.BucketStart.Add(bucketSpan-time.Millisecond), maxValues)
+		grouped++
+		if grouped >= mergeFactor {
+			flushGroup()
+		}
 	}
 	if err := cursor.Err(); err != nil {
 		return nil, false, err
 	}
+	flushGroup()
 
 	if len(points) == 0 {
 		return nil, false, nil

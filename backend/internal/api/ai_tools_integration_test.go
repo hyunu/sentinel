@@ -130,6 +130,25 @@ func TestAIToolsIntegration(t *testing.T) {
 		t.Fatalf("insert sessions: %v", err)
 	}
 
+	rollupField := "payload\uFF0Etemperature_celsius"
+	rollups := make([]interface{}, 0, len(values))
+	for i, value := range values {
+		bucket := base.Add(time.Duration(i) * time.Minute)
+		rollups = append(rollups, bson.M{
+			"_id":             fmt.Sprintf("perf-rollup-%d", i),
+			"board_id":        board.ID,
+			"granularity_sec": 60,
+			"bucket_start":    bucket,
+			"count":           1,
+			"min_fields":      bson.M{rollupField: value},
+			"max_fields":      bson.M{rollupField: value},
+			"sum_fields":      bson.M{rollupField: value},
+		})
+	}
+	if _, err := database.VizRollups().InsertMany(ctx, rollups); err != nil {
+		t.Fatalf("insert rollups: %v", err)
+	}
+
 	handler := NewHandler(database, zap.NewNop(), nil)
 	exec := &aiToolExecutor{h: handler, boardID: board.ID, protocolID: "proto-test"}
 	start := base.Add(-time.Minute).Format(time.RFC3339)
@@ -245,6 +264,32 @@ func TestAIToolsIntegration(t *testing.T) {
 			if !ok || value < 18 || value > 40 {
 				t.Fatalf("unexpected aggregated point %#v", point)
 			}
+		}
+	})
+
+	t.Run("rollup merge", func(t *testing.T) {
+		windowStart, _ := time.Parse(time.RFC3339, start)
+		windowEnd, _ := time.Parse(time.RFC3339, end)
+		filter := bson.M{
+			"board_id":  board.ID,
+			"timestamp": bson.M{"$gte": windowStart, "$lte": windowEnd},
+		}
+		items := []models.VizItem{{
+			Label:    "temperature",
+			FieldRef: models.FieldRef{FieldName: "payload.temperature_celsius"},
+		}}
+		points, meta, err := handler.queryVizSeries(ctx, filter, items, 2)
+		if err != nil {
+			t.Fatalf("queryVizSeries rollups: %v", err)
+		}
+		if len(points) != 2 || !meta.Downsampled {
+			t.Fatalf("points=%#v meta=%#v", points, meta)
+		}
+		if points[0].Values["temperature"].(float64) != 18 {
+			t.Fatalf("first point = %#v", points[0])
+		}
+		if points[len(points)-1].Values["temperature"].(float64) != 40 {
+			t.Fatalf("last point = %#v", points[len(points)-1])
 		}
 	})
 

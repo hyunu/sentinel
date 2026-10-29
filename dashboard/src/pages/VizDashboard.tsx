@@ -114,6 +114,7 @@ type ChartPoint = VizChartPoint;
 const COLORS = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8', '#f7dc6f'];
 const CHART_TYPES = ['line', 'bar', 'area'] as const;
 const MAX_POINTS = 8000;
+const DETAIL_MAX_POINTS = 20_000;
 const MAX_CHART_SERIES = 24;
 const MAX_PROFILES = 5;
 const POLL_INTERVAL = 3000;
@@ -220,9 +221,17 @@ function normalizeVizItems(items: VizItem[]): VizItem[] {
   }));
 }
 
+function newVizItemId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // crypto.randomUUID is unavailable in non-secure contexts (plain HTTP LAN IP).
+  return `viz-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function makeItem(protoId: string, fieldName: string, idx: number, usedShortLabels: Set<string>): VizItem {
   return {
-    id: crypto.randomUUID(),
+    id: newVizItemId(),
     label: fieldName,
     short_label: ensureUniqueShortLabel(shortLabelFromField(fieldName), usedShortLabels),
     color: COLORS[idx % COLORS.length],
@@ -536,6 +545,8 @@ export default function VizDashboardPage() {
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
   const [fieldValuesLayout, setFieldValuesLayout] = useState<FieldValuesLayout>(readFieldValuesLayout);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
+  const hoverCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastHoverCommitRef = useRef(0);
   const [queryMeta, setQueryMeta] = useState<VizQueryMeta | null>(null);
   const [detailRawVizData, setDetailRawVizData] = useState<VizDataRow[] | null>(null);
   const [detailQueryMeta, setDetailQueryMeta] = useState<VizQueryMeta | null>(null);
@@ -2470,7 +2481,7 @@ export default function VizDashboardPage() {
     const zoomSpanMs = Math.max(1, zoomEndMs - zoomStartMs);
     const fullSpanMs = Math.max(1, fullEndMs - fullStartMs);
     const zoomRatio = fullSpanMs / zoomSpanMs;
-    const detailLimit = Math.min(50000, Math.max(MAX_POINTS, Math.round(MAX_POINTS * zoomRatio)));
+    const detailLimit = Math.min(DETAIL_MAX_POINTS, Math.max(MAX_POINTS, Math.round(MAX_POINTS * zoomRatio)));
 
     const applyDetail = (
       data: VizDataRow[],
@@ -2914,9 +2925,35 @@ export default function VizDashboardPage() {
 
   const handleChartHoverTimeKey = useCallback((timeKey: string | null) => {
     if (isChartPanning || isChartSelecting || isChartMeasuring) return;
-    if (timeKey == null) return;
-    setHoverTimeKey(timeKey);
+    if (timeKey == null) {
+      if (hoverCommitTimerRef.current != null) {
+        clearTimeout(hoverCommitTimerRef.current);
+        hoverCommitTimerRef.current = null;
+      }
+      setHoverTimeKey(null);
+      return;
+    }
+    const now = performance.now();
+    const elapsed = now - lastHoverCommitRef.current;
+    const commit = () => {
+      hoverCommitTimerRef.current = null;
+      lastHoverCommitRef.current = performance.now();
+      setHoverTimeKey(timeKey);
+    };
+    // The canvas tooltip updates immediately; the side value panel only needs
+    // a modest refresh rate. Throttling avoids re-rendering the whole page on
+    // every pointer sample while zooming/panning large datasets.
+    if (elapsed >= 80) {
+      commit();
+    } else {
+      if (hoverCommitTimerRef.current != null) clearTimeout(hoverCommitTimerRef.current);
+      hoverCommitTimerRef.current = setTimeout(commit, 80 - elapsed);
+    }
   }, [isChartPanning, isChartSelecting, isChartMeasuring]);
+
+  useEffect(() => () => {
+    if (hoverCommitTimerRef.current != null) clearTimeout(hoverCommitTimerRef.current);
+  }, []);
 
   const handleChartPlotBoundsChange = useCallback((bounds: { left: number; width: number }) => {
     chartPlotBoundsRef.current = bounds;

@@ -416,7 +416,7 @@ func (h *Handler) queryVizSeries(
 		}}},
 	}
 
-	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetBatchSize(500))
+	cursor, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true).SetBatchSize(500))
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}
