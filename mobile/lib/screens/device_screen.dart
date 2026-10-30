@@ -260,6 +260,11 @@ class _DeviceScreenState extends State<DeviceScreen>
         selected.baudRate != baud;
   }
 
+  String _compactBleId(String id) {
+    if (id.length <= 17) return id;
+    return '${id.substring(0, 8)}…${id.substring(id.length - 4)}';
+  }
+
   String _shortUrl(String url) {
     if (url.isEmpty) return 'No server';
     return url.replaceFirst(RegExp(r'^https?://'), '');
@@ -1246,15 +1251,20 @@ class _DeviceScreenState extends State<DeviceScreen>
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        widget.device.remoteId.str,
+                        'BLE: ${_compactBleId(widget.device.remoteId.str)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.65),
                           fontFamily: 'monospace',
+                          fontSize: 9,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'WiFi MAC: ${_wifiMac ?? '—'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: cs.onSurfaceVariant.withValues(alpha: 0.65),
                           fontFamily: 'monospace',
@@ -1290,7 +1300,12 @@ class _DeviceScreenState extends State<DeviceScreen>
       children: [
         _buildFlagChip(cs, 'AP', _boardWifi, 'WiFi AP connected'),
         const SizedBox(width: 4),
-        _buildFlagChip(cs, 'SVR', _boardServer, 'Server heartbeat registered'),
+        _buildFlagChip(
+          cs,
+          'SERVER',
+          _boardServer,
+          'Server heartbeat registered',
+        ),
       ],
     );
   }
@@ -1301,8 +1316,10 @@ class _DeviceScreenState extends State<DeviceScreen>
     bool active,
     String tooltip,
   ) {
-    // AP uses the WiFi/success color; SVR shares the Connected/BLE color.
-    final accent = label == 'AP' ? cs.secondary : cs.primary;
+    // AP and SERVER share the WiFi/success color; Connected remains BLE indigo.
+    final accent = (label == 'AP' || label == 'SERVER')
+        ? cs.secondary
+        : cs.primary;
     final color = active ? accent : cs.onSurfaceVariant.withValues(alpha: 0.45);
     return Tooltip(
       message: tooltip,
