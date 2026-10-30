@@ -194,18 +194,22 @@ bool wifi_has_board_uid() {
 void wifi_clear_board_registration() {
     board_uid = "";
     nvs_save_string("uid", "");
+    // A server-side deletion resets the local onboarding state as well.
+    // Otherwise the board would auto-connect to the stored AP again after a
+    // reboot even though it no longer exists on the server.
+    nvs_save_string("ssid", "");
+    nvs_save_string("pass", "");
+    nvs_save_string("url", "");
+    backend_url = String(BACKEND_URL);
     ble_preload_uid("");
     ble_set_uid("");
     ble_set_server_registered(false);
-    // A server-side deletion must also leave the configured WLAN. Keep the
-    // credentials for the next onboarding, but prevent auto-reconnect until
-    // the phone sends a fresh configuration.
     connecting = false;
     pendingInitialHeartbeat = false;
     WiFi.setAutoReconnect(false);
     WiFi.disconnect(false);
     ble_set_wifi_connected(false);
-    AppLog.println("[WiFi] Board registration cleared (server deleted)");
+    AppLog.println("[WiFi] Board registration and WiFi credentials cleared");
 }
 
 static String extract_json_string_field(const String &json, const char *key) {
@@ -291,6 +295,17 @@ bool wifi_send_heartbeat() {
                     AppLog.println("[HTTP] Server deleted this board — registration cleared");
                 }
                 break;
+            }
+            // If the server no longer knows this board (e.g. it was deleted
+            // while offline), wipe local onboarding state as well.
+            if (code == 404 ||
+                (code == 400 &&
+                 (response.indexOf("board not found") >= 0 ||
+                  response.indexOf("board_id or uid required") >= 0))) {
+                wifi_clear_board_registration();
+                ble_send_uart_data(String("EVENT:BOARD_DELETED"));
+                AppLog.println("[HTTP] Board unknown to server — local onboarding cleared");
+                return false;
             }
         }
         if (attempt < maxAttempts) delay(backoffMs[attempt - 1]);
