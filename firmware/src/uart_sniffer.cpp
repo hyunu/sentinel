@@ -31,6 +31,7 @@ static uint32_t load_stored_baud() {
 
 static void begin_uart(uint32_t baud) {
     Serial1.end();
+    Serial1.setRxBufferSize(8192);
     Serial1.begin(baud, SERIAL_8N1, UART_MONITOR_RX, UART_MONITOR_TX);
 }
 

@@ -8,6 +8,9 @@
 #include "ble_service.h"
 #include "logger.h"
 
+static int http_post(const String &path, const String &body, String *responseOut = nullptr);
+static void flush_uart_batch();
+
 static String board_id;
 static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
@@ -20,6 +23,15 @@ static String backend_url = String(BACKEND_URL);
 static String board_uid = String("");
 
 static const char *NVS_NS = "sentinel";
+
+// UART frames arrive faster than one HTTP request can be completed. Queue a
+// short burst and send it through the batch endpoint to avoid serial RX
+// overflows and the huge per-frame HTTP overhead.
+static const int UART_BATCH_MAX = 24;
+static const unsigned long UART_BATCH_INTERVAL_MS = 500;
+static String uartBatch[UART_BATCH_MAX];
+static int uartBatchCount = 0;
+static unsigned long lastUartBatchAt = 0;
 
 static void nvs_save_string(const char *key, const String &val) {
     Preferences prefs;
@@ -149,6 +161,12 @@ void wifi_loop() {
         AppLog.println("[WiFi] Connection timed out; waiting for new onboarding config");
     }
 
+    if (wifi_is_connected() && uartBatchCount > 0 &&
+        (millis() - lastUartBatchAt >= UART_BATCH_INTERVAL_MS ||
+         uartBatchCount >= UART_BATCH_MAX)) {
+        flush_uart_batch();
+    }
+
     if (pendingInitialHeartbeat && millis() - wifiConnectedAt >= 2500) {
         pendingInitialHeartbeat = false;
         if (!waitForWifiReady(15000)) {
@@ -222,7 +240,7 @@ static String extract_json_string_field(const String &json, const char *key) {
     return json.substring(idx, end);
 }
 
-static int http_post(const String &path, const String &body, String *responseOut = nullptr) {
+static int http_post(const String &path, const String &body, String *responseOut) {
     if (!wifi_is_connected() || !hasValidIp()) return -1;
 
     HTTPClient http;
@@ -319,10 +337,46 @@ bool wifi_send_heartbeat() {
 }
 
 void wifi_send_uart_data(const String &hex_data) {
-    String body = "{\"board_id\":\"" + board_id + "\"";
-    if (board_uid.length() > 0) body += ",\"uid\":\"" + board_uid + "\"";
-    body += ",\"raw_hex\":\"" + hex_data + "\",\"direction\":\"RX\"}";
-    http_post("/api/v1/data/uart", body);
+    if (uartBatchCount < UART_BATCH_MAX) {
+        uartBatch[uartBatchCount++] = hex_data;
+        return;
+    }
+
+    // Keep the newest frames when the network is slower than the UART.
+    for (int i = 1; i < UART_BATCH_MAX; i++) {
+        uartBatch[i - 1] = uartBatch[i];
+    }
+    uartBatch[UART_BATCH_MAX - 1] = hex_data;
+
+    // Flush when saturated, but don't hammer the server on repeated errors.
+    if (wifi_is_connected() &&
+        millis() - lastUartBatchAt >= UART_BATCH_INTERVAL_MS) {
+        flush_uart_batch();
+    }
+}
+
+static void flush_uart_batch() {
+    if (uartBatchCount <= 0 || !wifi_is_connected()) return;
+
+    String body;
+    body.reserve(128 + uartBatchCount * 280);
+    body = "{\"board_id\":\"" + board_id + "\"";
+    if (board_uid.length() > 0) {
+        body += ",\"uid\":\"" + board_uid + "\"";
+    }
+    body += ",\"entries\":[";
+    for (int i = 0; i < uartBatchCount; i++) {
+        if (i > 0) body += ",";
+        body += "{\"raw_hex\":\"" + uartBatch[i] +
+                "\",\"direction\":\"RX\"}";
+    }
+    body += "]}";
+
+    const int code = http_post("/api/v1/data/uart/batch", body);
+    lastUartBatchAt = millis();
+    if (httpOk(code)) {
+        uartBatchCount = 0;
+    }
 }
 
 void wifi_send_temperature(float temp_celsius) {
