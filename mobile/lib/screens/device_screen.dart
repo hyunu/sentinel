@@ -103,6 +103,8 @@ class _DeviceScreenState extends State<DeviceScreen>
   List<String> _uartLogs = [];
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
+  String? _boardProtoId;
+  bool _protocolOverrideEnabled = false;
   final List<String> _pendingParse = [];
   final Set<String> _pendingParseSet = {};
   final Map<String, Map<String, String>> _parsedFrames = {};
@@ -138,7 +140,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           state == SentinelBleState.online;
       _boardServer = state == SentinelBleState.online;
     }
-    _tabCtrl = TabController(length: 4, vsync: this);
+    _tabCtrl = TabController(length: 3, vsync: this);
     _onboardingProfiler.addListener(_onProfilerUpdated);
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
       c.addListener(_onFieldChanged);
@@ -616,6 +618,9 @@ class _DeviceScreenState extends State<DeviceScreen>
     try {
       final base = _baseUrl;
       final bleMac = widget.device.remoteId.str;
+      final wifiNorm = _wifiMac?.replaceAll(':', '').toLowerCase();
+      final adv = widget.advertisementData;
+      final advUid = adv == null ? null : BleScanner.parseUidFromAdData(adv);
       final res = await http
           .get(Uri.parse('$base/api/v1/boards'))
           .timeout(const Duration(seconds: 5));
@@ -623,14 +628,30 @@ class _DeviceScreenState extends State<DeviceScreen>
 
       for (final raw in json.decode(res.body) as List) {
         if (raw is! Map) continue;
-        if (raw['mac_address']?.toString() != bleMac) continue;
+        final boardBle = raw['mac_address']?.toString() ?? '';
+        final boardWifi = raw['wifi_mac']?.toString() ?? '';
+        final boardWifiNorm = boardWifi.replaceAll(':', '').toLowerCase();
+        final boardUid = raw['uid']?.toString();
+        final bleMatch = boardBle.isNotEmpty && boardBle == bleMac;
+        final wifiMatch =
+            wifiNorm != null &&
+            wifiNorm.isNotEmpty &&
+            boardWifiNorm.isNotEmpty &&
+            boardWifiNorm == wifiNorm;
+        final uidMatch =
+            advUid != null &&
+            advUid.isNotEmpty &&
+            boardUid != null &&
+            boardUid == advUid;
+        if (!bleMatch && !wifiMatch && !uidMatch) continue;
         final protocolId = raw['protocol_id']?.toString();
         setState(() {
-          if (protocolId != null &&
-              protocolId.isNotEmpty &&
-              protocolId != _selectedProtoId) {
-            _selectedProtoId = protocolId;
-            _resetParsedFrames();
+          if (protocolId != null && protocolId.isNotEmpty) {
+            _boardProtoId = protocolId;
+            if (!_protocolOverrideEnabled && protocolId != _selectedProtoId) {
+              _selectedProtoId = protocolId;
+              _resetParsedFrames();
+            }
           }
         });
         break;
@@ -1054,16 +1075,35 @@ class _DeviceScreenState extends State<DeviceScreen>
       actionLabel: 'View Logs',
       onAction: () {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        _tabCtrl.animateTo(3);
+        _tabCtrl.animateTo(2);
       },
     );
   }
 
   void _onProtocolChanged(String? id) {
+    if (_boardProtoId != null && !_protocolOverrideEnabled) return;
     setState(() {
       _selectedProtoId = id;
       _resetParsedFrames();
     });
+  }
+
+  void _setProtocolOverride(bool enabled) {
+    setState(() {
+      _protocolOverrideEnabled = enabled;
+      if (!enabled && _boardProtoId != null) {
+        _selectedProtoId = _boardProtoId;
+      }
+      _resetParsedFrames();
+    });
+  }
+
+  String _protocolName(String? id) {
+    if (id == null || id.isEmpty) return 'Not assigned';
+    for (final p in _protocols) {
+      if (p.id == id) return '${p.name} v${p.version}';
+    }
+    return id;
   }
 
   _Protocol? get _selectedProtocol {
@@ -1210,7 +1250,6 @@ class _DeviceScreenState extends State<DeviceScreen>
               children: [
                 _buildControlTab(cs),
                 _buildDataTab(cs),
-                _buildMonitorTab(cs),
                 _buildLogsTab(cs),
               ],
             ),
@@ -1397,7 +1436,6 @@ class _DeviceScreenState extends State<DeviceScreen>
         tabs: const [
           Tab(text: 'Control'),
           Tab(text: 'Data'),
-          Tab(text: 'Monitor'),
           Tab(text: 'Logs'),
         ],
       ),
@@ -1451,7 +1489,50 @@ class _DeviceScreenState extends State<DeviceScreen>
             const SizedBox(height: 16),
             _buildFormGroupLabel(cs, 'Protocol'),
             const SizedBox(height: 8),
-            if (_protocols.isEmpty)
+            if (_boardProtoId != null)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.surface.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: cs.outline.withValues(alpha: 0.25),
+                    width: 0.5,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.lock_outline_rounded,
+                      size: 16,
+                      color: cs.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _protocolName(_boardProtoId),
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          Text(
+                            'Applied at onboarding · temporary override in Data',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: cs.onSurfaceVariant.withValues(
+                                    alpha: 0.6,
+                                  ),
+                                  fontSize: 10,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_protocols.isEmpty)
               Text(
                 'Load protocols from the server URL above.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -2181,68 +2262,129 @@ class _DeviceScreenState extends State<DeviceScreen>
     final showParsed =
         selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
-    if (_protocols.isEmpty && !_scanningUart) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: cs.primary.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  Icons.analytics_outlined,
-                  size: 24,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No data yet',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Start the UART stream to\nview parsed data',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                  height: 1.4,
-                ),
-              ),
-            ],
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: _uartLogs.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return _buildDataHeader(cs, selectedProto, showParsed);
+        }
+        final packetIndex = index - 1;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          child: _buildPacketTile(
+            cs,
+            _uartLogs[packetIndex],
+            packetIndex,
+            selectedProto,
+            showParsed,
           ),
-        ),
-      );
-    }
+        );
+      },
+    );
+  }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+  Widget _buildDataHeader(
+    ColorScheme cs,
+    _Protocol selectedProto,
+    bool showParsed,
+  ) {
+    final boardProto = _boardProtoId;
+    final activeName = _protocolName(boardProto ?? _selectedProtoId);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_protocols.isNotEmpty) ...[
-            _buildSectionHeader(cs, 'Protocol', Icons.category_outlined),
-            const SizedBox(height: 12),
-            _buildGlassCard(cs, [
-              DropdownButton<String>(
-                value: _selectedProtoId,
-                hint: Text(
-                  'Select protocol',
-                  style: TextStyle(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+          _buildSectionHeader(cs, 'Parsing protocol', Icons.rule_rounded),
+          const SizedBox(height: 12),
+          _buildGlassCard(cs, [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    boardProto != null && !_protocolOverrideEnabled
+                        ? Icons.lock_outline_rounded
+                        : Icons.rule_rounded,
+                    size: 17,
+                    color: cs.primary,
                   ),
                 ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        boardProto != null
+                            ? _protocolOverrideEnabled
+                                  ? 'Temporary parser override (display only)'
+                                  : 'Applied to this board at onboarding'
+                            : 'Select a protocol for onboarding',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (boardProto != null) ...[
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: _protocolOverrideEnabled,
+                onChanged: _setProtocolOverride,
+                title: Text(
+                  'Temporary parser override',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  'Display only — does not change board/server protocol',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ],
+            if (boardProto == null || _protocolOverrideEnabled) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: ValueKey(_selectedProtoId),
+                initialValue: _selectedProtoId,
                 isExpanded: true,
-                dropdownColor: cs.surfaceContainerHigh,
-                underline: const SizedBox(),
+                decoration: InputDecoration(
+                  labelText: 'Parse with',
+                  filled: true,
+                  fillColor: cs.surface.withValues(alpha: 0.45),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
                 items: _protocols
                     .map(
                       (p) => DropdownMenuItem(
@@ -2251,62 +2393,59 @@ class _DeviceScreenState extends State<DeviceScreen>
                           p.fields.isNotEmpty
                               ? '${p.name} v${p.version} · ${p.fields.length} fields'
                               : '${p.name} v${p.version}',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     )
                     .toList(),
                 onChanged: _onProtocolChanged,
               ),
-              if (showParsed) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: cs.surface.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: selectedProto.fields
-                        .map(
-                          (f) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 3),
-                            child: Row(
-                              children: [
-                                Text(
-                                  f.name,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: cs.onSurfaceVariant.withValues(
-                                      alpha: 0.7,
-                                    ),
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '${f.type}${f.unit != null ? " (${f.unit})" : ""}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontFamily: 'monospace',
-                                    color: cs.primary.withValues(alpha: 0.6),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
+            ],
+            if (showParsed) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.surface.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-              ],
-            ]),
-          ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: selectedProto.fields
+                      .map(
+                        (f) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(
+                            children: [
+                              Text(
+                                f.name,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant.withValues(
+                                    alpha: 0.7,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '${f.type}${f.unit != null ? " (${f.unit})" : ""}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontFamily: 'monospace',
+                                  color: cs.primary.withValues(alpha: 0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ],
+          ]),
           const SizedBox(height: 16),
-          _buildSectionHeader(cs, 'UART Stream', Icons.cell_tower_rounded),
+          _buildSectionHeader(cs, 'UART stream', Icons.cell_tower_rounded),
           const SizedBox(height: 12),
           _buildGlassCard(cs, [
             Row(
@@ -2367,6 +2506,164 @@ class _DeviceScreenState extends State<DeviceScreen>
               ],
             ),
           ]),
+          if (_uartLogs.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Text(
+                  '${_uartLogs.length} packets',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => setState(() => _uartLogs.clear()),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.delete_sweep,
+                          size: 14,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Clear',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Text(
+              'No packets yet. Start the UART stream above.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPacketTile(
+    ColorScheme cs,
+    String hex,
+    int packetIndex,
+    _Protocol selectedProto,
+    bool showParsed,
+  ) {
+    final parsed = showParsed
+        ? _parseHex(hex, selectedProto)
+        : <String, String>{};
+    final dir = hex.startsWith('01')
+        ? 'RX'
+        : hex.startsWith('02')
+        ? 'TX'
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.2),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (dir != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: dir == 'RX'
+                        ? cs.secondary.withValues(alpha: 0.12)
+                        : cs.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    dir,
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: dir == 'RX' ? cs.secondary : cs.primary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              Text(
+                'PKT #${_uartLogs.length - packetIndex}',
+                style: TextStyle(
+                  fontSize: 9,
+                  fontFamily: 'monospace',
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            hex.replaceAll('01 ', '').replaceAll('02 ', ''),
+            style: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: dir == 'RX' ? cs.secondary : cs.primary,
+              height: 1.3,
+            ),
+          ),
+          if (parsed.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: cs.surface.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 4,
+                children: parsed.entries
+                    .map(
+                      (e) => Text(
+                        '${e.key}: ${e.value}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2538,228 +2835,6 @@ class _DeviceScreenState extends State<DeviceScreen>
                     );
                   },
                 ),
-        ),
-      ],
-    );
-  }
-
-  /* ── Monitor Tab ────────────────────────────────────────────────── */
-
-  Widget _buildMonitorTab(ColorScheme cs) {
-    final selectedProto = _protocols.firstWhere(
-      (p) => p.id == _selectedProtoId,
-      orElse: () => _protocols.isNotEmpty
-          ? _protocols.first
-          : _Protocol.fromJson({
-              'id': '',
-              'name': '',
-              'version': '',
-              'fields': [],
-            }),
-    );
-    final showParsed =
-        selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
-
-    if (_uartLogs.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: cs.primary.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  Icons.terminal_rounded,
-                  size: 24,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Monitor',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: cs.onSurface.withValues(alpha: 0.6),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Start the UART stream from\nthe Data tab to monitor traffic',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-          child: Row(
-            children: [
-              Text(
-                '${_uartLogs.length} packets',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => setState(() => _uartLogs.clear()),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.delete_sweep,
-                        size: 14,
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Clear',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            itemCount: _uartLogs.length,
-            itemBuilder: (_, i) {
-              final hex = _uartLogs[i];
-              final parsed = showParsed
-                  ? _parseHex(hex, selectedProto)
-                  : <String, String>{};
-              final dir = hex.startsWith('01')
-                  ? 'RX'
-                  : hex.startsWith('02')
-                  ? 'TX'
-                  : null;
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: cs.outline.withValues(alpha: 0.2),
-                      width: 0.5,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          if (dir != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: dir == 'RX'
-                                    ? cs.secondary.withValues(alpha: 0.12)
-                                    : cs.primary.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                dir,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  color: dir == 'RX'
-                                      ? cs.secondary
-                                      : cs.primary,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                          const Spacer(),
-                          Text(
-                            'PKT #${_uartLogs.length - i}',
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontFamily: 'monospace',
-                              color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        hex.replaceAll('01 ', '').replaceAll('02 ', ''),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontFamily: 'monospace',
-                          color: dir == 'RX' ? cs.secondary : cs.primary,
-                          height: 1.3,
-                        ),
-                      ),
-                      if (parsed.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: cs.surface.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Wrap(
-                            spacing: 12,
-                            runSpacing: 4,
-                            children: parsed.entries
-                                .map(
-                                  (e) => Text(
-                                    '${e.key}: ${e.value}',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: cs.onSurfaceVariant.withValues(
-                                        alpha: 0.7,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
         ),
       ],
     );
