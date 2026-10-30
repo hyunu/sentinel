@@ -7,6 +7,8 @@ void wifi_init();
 void wifi_connect(const String &ssid, const String &password);
 bool wifi_send_heartbeat();
 void wifi_send_uart_data(const String &hex_data);
+void wifi_send_uart_data_at(const String &hex_data, uint32_t captured_tick_ms, int64_t captured_epoch_ms);
+int64_t wifi_current_epoch_ms();
 void wifi_send_temperature(float temp_celsius);
 bool wifi_is_connected();
 void wifi_loop();

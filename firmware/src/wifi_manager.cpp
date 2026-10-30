@@ -2,6 +2,7 @@
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <esp_mac.h>
+#include <sys/time.h>
 
 #include "wifi_manager.h"
 #include "config.h"
@@ -29,9 +30,26 @@ static const char *NVS_NS = "sentinel";
 // overflows and the huge per-frame HTTP overhead.
 static const int UART_BATCH_MAX = 32;
 static const unsigned long UART_BATCH_INTERVAL_MS = 500;
-static String uartBatch[UART_BATCH_MAX];
+
+struct UartBatchEntry {
+    String hex;
+    uint32_t capturedTickMs;
+    int64_t capturedEpochMs;
+};
+
+static UartBatchEntry uartBatch[UART_BATCH_MAX];
 static int uartBatchCount = 0;
 static unsigned long lastUartBatchAt = 0;
+static unsigned long uartBatchRetryAt = 0;
+static unsigned long lastTimeSyncAttempt = 0;
+
+static int64_t current_epoch_ms() {
+    struct timeval tv;
+    if (gettimeofday(&tv, nullptr) != 0) return 0;
+    // Reject the ESP32 boot epoch (1970) until SNTP has synchronized.
+    if (tv.tv_sec < 1600000000) return 0;
+    return (int64_t)tv.tv_sec * 1000 + (int64_t)(tv.tv_usec / 1000);
+}
 
 static void nvs_save_string(const char *key, const String &val) {
     Preferences prefs;
@@ -161,7 +179,14 @@ void wifi_loop() {
         AppLog.println("[WiFi] Connection timed out; waiting for new onboarding config");
     }
 
+    if (wifi_is_connected() && current_epoch_ms() == 0 &&
+        (lastTimeSyncAttempt == 0 || millis() - lastTimeSyncAttempt >= 30000)) {
+        lastTimeSyncAttempt = millis();
+        configTime(0, 0, "pool.ntp.org", "time.google.com");
+    }
+
     if (wifi_is_connected() && uartBatchCount > 0 &&
+        millis() >= uartBatchRetryAt &&
         (millis() - lastUartBatchAt >= UART_BATCH_INTERVAL_MS ||
          uartBatchCount >= UART_BATCH_MAX)) {
         flush_uart_batch();
@@ -336,9 +361,19 @@ bool wifi_send_heartbeat() {
     return ok;
 }
 
-void wifi_send_uart_data(const String &hex_data) {
+int64_t wifi_current_epoch_ms() {
+    return current_epoch_ms();
+}
+
+void wifi_send_uart_data_at(const String &hex_data, uint32_t captured_tick_ms,
+                            int64_t captured_epoch_ms) {
+    UartBatchEntry entry;
+    entry.hex = hex_data;
+    entry.capturedTickMs = captured_tick_ms;
+    entry.capturedEpochMs = captured_epoch_ms;
+
     if (uartBatchCount < UART_BATCH_MAX) {
-        uartBatch[uartBatchCount++] = hex_data;
+        uartBatch[uartBatchCount++] = entry;
         return;
     }
 
@@ -346,13 +381,10 @@ void wifi_send_uart_data(const String &hex_data) {
     for (int i = 1; i < UART_BATCH_MAX; i++) {
         uartBatch[i - 1] = uartBatch[i];
     }
-    uartBatch[UART_BATCH_MAX - 1] = hex_data;
+    uartBatch[UART_BATCH_MAX - 1] = entry;
 
-    // Flush when saturated, but don't hammer the server on repeated errors.
-    if (wifi_is_connected() &&
-        millis() - lastUartBatchAt >= UART_BATCH_INTERVAL_MS) {
-        flush_uart_batch();
-    }
+    // wifi_loop() owns flushing. Keeping HTTP out of this path prevents a
+    // slow network from filling the UART capture queue.
 }
 
 static void flush_uart_batch() {
@@ -365,18 +397,43 @@ static void flush_uart_batch() {
         body += ",\"uid\":\"" + board_uid + "\"";
     }
     body += ",\"entries\":[";
+    const uint32_t firstTick = uartBatch[0].capturedTickMs;
     for (int i = 0; i < uartBatchCount; i++) {
         if (i > 0) body += ",";
-        body += "{\"raw_hex\":\"" + uartBatch[i] +
-                "\",\"direction\":\"RX\"}";
+        body += "{\"raw_hex\":\"" + uartBatch[i].hex +
+                "\",\"direction\":\"RX\"";
+        if (uartBatch[i].capturedEpochMs > 0) {
+            char timestampBuf[32];
+            snprintf(timestampBuf, sizeof(timestampBuf), "%lld",
+                     (long long)uartBatch[i].capturedEpochMs);
+            body += ",\"timestamp_ms\":";
+            body += timestampBuf;
+        }
+        char offsetBuf[24];
+        snprintf(offsetBuf, sizeof(offsetBuf), "%lu",
+                 (unsigned long)(uartBatch[i].capturedTickMs - firstTick));
+        body += ",\"offset_ms\":";
+        body += offsetBuf;
+        body += "}";
     }
     body += "]}";
 
-    const int code = http_post("/api/v1/data/uart/batch", body);
+    String response;
+    const int code = http_post("/api/v1/data/uart/batch", body, &response);
     lastUartBatchAt = millis();
     if (httpOk(code)) {
         uartBatchCount = 0;
+        uartBatchRetryAt = 0;
+    } else {
+        uartBatchRetryAt = millis() + 5000;
+        String shortResponse = response.substring(0, 300);
+        AppLog.printf("[HTTP] UART batch failed code=%d body=%s\n",
+                      code, shortResponse.c_str());
     }
+}
+
+void wifi_send_uart_data(const String &hex_data) {
+    wifi_send_uart_data_at(hex_data, millis(), current_epoch_ms());
 }
 
 void wifi_send_temperature(float temp_celsius) {

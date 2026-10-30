@@ -595,15 +595,49 @@ func (h *Handler) IngestUART(c *gin.Context) {
 	c.JSON(http.StatusCreated, data)
 }
 
+type uartBatchEntry struct {
+	RawHex      string    `json:"raw_hex" binding:"required"`
+	Direction   string    `json:"direction" binding:"required"`
+	Timestamp   time.Time `json:"timestamp"`
+	TimestampMs int64     `json:"timestamp_ms,omitempty"`
+	OffsetMs    int64     `json:"offset_ms,omitempty"`
+}
+
+// resolveUartBatchTimestamps gives every frame a distinct capture time.
+// Firmware sends timestamp_ms when NTP is available, and offset_ms relative to
+// the first frame in the batch as a fallback. Older firmware sends neither;
+// in that case we at least keep entries distinct instead of collapsing a whole
+// batch onto one timestamp (which produces vertical spikes in the chart).
+func resolveUartBatchTimestamps(entries []uartBatchEntry, receivedAt time.Time) []time.Time {
+	out := make([]time.Time, len(entries))
+	var maxOffsetMs int64
+	for _, entry := range entries {
+		if entry.OffsetMs > maxOffsetMs {
+			maxOffsetMs = entry.OffsetMs
+		}
+	}
+	for i, entry := range entries {
+		ts := entry.Timestamp
+		if ts.IsZero() && entry.TimestampMs > 0 {
+			ts = time.UnixMilli(entry.TimestampMs).UTC()
+		}
+		if ts.IsZero() {
+			if maxOffsetMs > 0 {
+				ts = receivedAt.Add(-time.Duration(maxOffsetMs-entry.OffsetMs) * time.Millisecond)
+			} else {
+				ts = receivedAt.Add(-time.Duration(len(entries)-1-i) * time.Millisecond)
+			}
+		}
+		out[i] = ts
+	}
+	return out
+}
+
 func (h *Handler) IngestUARTBatch(c *gin.Context) {
 	var req struct {
-		BoardID string `json:"board_id"`
-		UID     string `json:"uid"`
-		Entries []struct {
-			RawHex    string    `json:"raw_hex" binding:"required"`
-			Direction string    `json:"direction" binding:"required"`
-			Timestamp time.Time `json:"timestamp"`
-		} `json:"entries" binding:"required,min=1"`
+		BoardID string           `json:"board_id"`
+		UID     string           `json:"uid"`
+		Entries []uartBatchEntry `json:"entries" binding:"required,min=1"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -620,13 +654,11 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 	}
 
 	now := time.Now()
+	timestamps := resolveUartBatchTimestamps(req.Entries, now)
 	docs := make([]interface{}, len(req.Entries))
 	samples := make([]models.UartData, len(req.Entries))
 	for i, e := range req.Entries {
-		ts := e.Timestamp
-		if ts.IsZero() {
-			ts = now
-		}
+		ts := timestamps[i]
 		doc := models.UartData{
 			ID:        uuid.New().String(),
 			BoardID:   boardID,

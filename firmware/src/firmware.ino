@@ -15,31 +15,50 @@
 #include "temp_sensor.h"
 #include "display_manager.h"
 #include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
 #include "logger.h"
 
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastTemp = 0;
-static String frameHexBuffer;
 
-// Called from uart_sniffer when a complete frame is received
-void on_frame_received(const uint8_t *data, int len) {
-    char hex_str[2048];
-    int pos = 0;
-    for (int i = 0; i < len && pos < (int)sizeof(hex_str) - 3; i++) {
-        pos += snprintf(hex_str + pos, sizeof(hex_str) - pos, "%02X", data[i]);
+struct CapturedFrame {
+    uint32_t capturedTickMs;
+    int64_t capturedEpochMs;
+    char hex[260];
+};
+
+static QueueHandle_t capturedFrameQueue = nullptr;
+
+static void uart_capture_task(void *) {
+    for (;;) {
+        uart_sniffer_loop();
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
-    hex_str[pos] = 0;
-    String hex = String(hex_str);
+}
 
-#if ENABLE_TEST_SENSOR_DATA
-    // Queue for the server first; BLE notification must not delay ingestion.
-    wifi_send_uart_data(hex);
-
-    // Send over BLE notify only when a client is subscribed to UART data.
-    ble_send_uart_data(hex);
-#else
-    (void)hex;
-#endif
+// Called from the high-priority UART capture task. Only queue the frame here;
+// HTTP and BLE work stays in loop() so a slow network cannot make a burst of
+// frames look like they arrived at the same instant.
+void on_frame_received(const uint8_t *data, int len) {
+    CapturedFrame frame{};
+    frame.capturedTickMs = millis();
+    frame.capturedEpochMs = wifi_current_epoch_ms();
+    int pos = 0;
+    for (int i = 0; i < len && pos < (int)sizeof(frame.hex) - 3; i++) {
+        pos += snprintf(frame.hex + pos, sizeof(frame.hex) - pos, "%02X", data[i]);
+    }
+    frame.hex[pos] = 0;
+    if (capturedFrameQueue != nullptr) {
+        if (xQueueSend(capturedFrameQueue, &frame, 0) != pdTRUE) {
+            static uint32_t dropped;
+            if ((++dropped % 100) == 1) {
+                AppLog.printf("[UART] capture queue full/drop=%lu\n",
+                              (unsigned long)dropped);
+            }
+        }
+    }
 }
 
 // Called from ble_service when WiFi credentials arrive
@@ -56,6 +75,11 @@ void setup() {
                   UART_BAUD_RATE, UART_MONITOR_TX, UART_MONITOR_RX);
 
     uart_sniffer_init();
+    capturedFrameQueue = xQueueCreate(256, sizeof(CapturedFrame));
+    BaseType_t uartTaskCreated = xTaskCreate(
+        uart_capture_task, "uart_capture", 4096, nullptr, 10, nullptr);
+    AppLog.printf("[UART] capture queue=%p task=%d\n",
+                  capturedFrameQueue, (int)uartTaskCreated);
     display_init();
     // wifi_init must run before ble_init so WiFi.macAddress() is valid for
     // the BLE MAC characteristic (6e400004).
@@ -70,8 +94,17 @@ void setup() {
 }
 
 void loop() {
-    // Process incoming UART bytes (frame detection)
-    uart_sniffer_loop();
+    // Move captured frames out of the UART task without doing network I/O
+    // on that task. Timestamps were recorded at UART frame completion.
+    CapturedFrame frame;
+    while (capturedFrameQueue != nullptr &&
+           xQueueReceive(capturedFrameQueue, &frame, 0) == pdTRUE) {
+        String hex(frame.hex);
+#if ENABLE_TEST_SENSOR_DATA
+        wifi_send_uart_data_at(hex, frame.capturedTickMs, frame.capturedEpochMs);
+        ble_send_uart_data(hex);
+#endif
+    }
 
     // Handle WiFi connection state
     wifi_loop();
