@@ -7,8 +7,8 @@
 #define UART_MONITOR_RX     20   // ESP32-C3 GPIO20 (sniffer RX = target TX)
 #define UART_MONITOR_TX     21   // ESP32-C3 GPIO21 (sniffer TX = target RX)
 
-#define HEARTBEAT_INTERVAL_MS  30000
-#define TEMP_INTERVAL_MS       10000
+#define HEARTBEAT_INTERVAL_MS  10000
+#define TEMP_INTERVAL_MS       3000
 
 #define BACKEND_URL             "http://192.168.0.9:5050"
 #define BOARD_ID_PREFIX         "sentinel"
