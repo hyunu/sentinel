@@ -97,6 +97,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _connecting = false;
   bool _boardWifi = false;
   bool _boardServer = false;
+  String? _wifiMac;
   bool _wifiConfigured = false;
   bool _sendingWifi = false;
   List<String> _uartLogs = [];
@@ -461,6 +462,22 @@ class _DeviceScreenState extends State<DeviceScreen>
     });
   }
 
+  Future<void> _loadWifiMac() async {
+    try {
+      final mac = await _scanner.readWifiMac(widget.device);
+      final normalized = mac?.trim();
+      if (!mounted ||
+          normalized == null ||
+          normalized.isEmpty ||
+          RegExp(r'^[0:]+$').hasMatch(normalized)) {
+        return;
+      }
+      setState(() => _wifiMac = normalized.toUpperCase());
+    } catch (_) {
+      // Older firmware may not expose the WiFi MAC characteristic.
+    }
+  }
+
   Future<void> _startBoardLogStream() async {
     await _logSub?.cancel();
     _logSub = null;
@@ -525,6 +542,7 @@ class _DeviceScreenState extends State<DeviceScreen>
 
     _scanner.clearCache();
     await _startBoardLogStream();
+    await _loadWifiMac();
 
     await _connSub?.cancel();
     _scanner.clearCache();
@@ -1234,6 +1252,15 @@ class _DeviceScreenState extends State<DeviceScreen>
                           fontFamily: 'monospace',
                         ),
                       ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'WiFi MAC: ${_wifiMac ?? '—'}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                          fontFamily: 'monospace',
+                          fontSize: 9,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1274,33 +1301,44 @@ class _DeviceScreenState extends State<DeviceScreen>
     bool active,
     String tooltip,
   ) {
-    final color = active
-        ? cs.primary
-        : cs.onSurfaceVariant.withValues(alpha: 0.45);
+    // AP uses the WiFi/success color; SVR shares the Connected/BLE color.
+    final accent = label == 'AP' ? cs.secondary : cs.primary;
+    final color = active ? accent : cs.onSurfaceVariant.withValues(alpha: 0.45);
     return Tooltip(
       message: tooltip,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
         decoration: BoxDecoration(
           color: active
-              ? cs.primary.withValues(alpha: 0.1)
+              ? accent.withValues(alpha: 0.1)
               : cs.onSurfaceVariant.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: active
-                ? cs.primary.withValues(alpha: 0.25)
+                ? accent.withValues(alpha: 0.25)
                 : cs.outline.withValues(alpha: 0.2),
             width: 0.5,
           ),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.3,
-            color: color,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+                color: color,
+              ),
+            ),
+          ],
         ),
       ),
     );
