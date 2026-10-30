@@ -310,6 +310,18 @@ void ble_init() {
 
 void ble_send_uart_data(const String &hex_str) {
     if (!pUartNotifyChar || !deviceConnected) return;
-    pUartNotifyChar->setValue(hex_str.c_str());
-    pUartNotifyChar->notify();
+
+    // Keep each notification below the ATT MTU. The app accumulates chunks
+    // until the newline terminator, so a long 129-byte UART frame is not
+    // truncated by BLE.
+    const String payload = hex_str + "\n";
+    const size_t chunkSize = 180;
+    for (size_t offset = 0; offset < payload.length(); offset += chunkSize) {
+        size_t end = offset + chunkSize;
+        if (end > payload.length()) end = payload.length();
+        String chunk = payload.substring(offset, end);
+        pUartNotifyChar->setValue(chunk.c_str());
+        pUartNotifyChar->notify();
+        delay(2);
+    }
 }

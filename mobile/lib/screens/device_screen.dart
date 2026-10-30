@@ -117,6 +117,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   final List<_DeviceLogEntry> _deviceLogs = [];
   final ScrollController _logScrollCtrl = ScrollController();
   String _logRxBuffer = '';
+  String _uartRxBuffer = '';
   bool _scanningUart = false;
   List<OnboardingProfile> _onboardingProfiles = [];
   String? _selectedProfileId;
@@ -1017,18 +1018,40 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   Future<void> _startUartStream() async {
     if (_uartSub != null) return;
+    _uartRxBuffer = '';
     try {
       final stream = await _scanner.subscribeToUartData(widget.device);
       if (mounted) setState(() => _scanningUart = true);
       _uartSub = stream.listen((data) {
         if (!mounted) return;
-        final hex = data
+        _uartRxBuffer += data
             .map((b) => b.toRadixString(16).padLeft(2, '0'))
             .join(' ');
-        setState(() {
-          _uartLogs.add(_UartPacket(DateTime.now(), hex));
-          if (_uartLogs.length > 500) _uartLogs = _uartLogs.sublist(-500);
-        });
+
+        while (true) {
+          final newline = _uartRxBuffer.indexOf('\n');
+          if (newline < 0) break;
+          final line = _uartRxBuffer
+              .substring(0, newline)
+              .replaceAll('\r', '')
+              .trim()
+              .toUpperCase();
+          _uartRxBuffer = _uartRxBuffer.substring(newline + 1);
+
+          if (line.isEmpty || line.startsWith('EVENT:')) continue;
+          if (!RegExp(r'^[0-9A-F ]+$').hasMatch(line)) continue;
+
+          setState(() {
+            _uartLogs.add(_UartPacket(DateTime.now(), line));
+            if (_uartLogs.length > 500) {
+              _uartLogs = _uartLogs.sublist(-500);
+            }
+          });
+        }
+
+        if (_uartRxBuffer.length > 8192) {
+          _uartRxBuffer = '';
+        }
       });
     } catch (e) {
       if (mounted) _showError('Failed to start the UART stream.');
@@ -2148,6 +2171,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                           onPressed: () {
                             _uartSub?.cancel();
                             _uartSub = null;
+                            _uartRxBuffer = '';
                             setState(() => _scanningUart = false);
                           },
                           icon: const Icon(Icons.stop_rounded, size: 16),
