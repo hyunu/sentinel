@@ -243,6 +243,60 @@ func (h *Handler) queryVizSeriesRaw(
 	}, nil
 }
 
+// coalesceVizPointsByTimestamp merges frames that share an exact timestamp.
+// Historical batches recorded before per-frame timestamps existed can contain
+// dozens of frames at one timestamp; leaving them separate makes a chart draw
+// vertical spikes at the same x position.
+const vizLegacyBurstWindow = 30 * time.Millisecond
+
+func coalesceVizPointsByTimestamp(points []vizDataPoint) []vizDataPoint {
+	if len(points) < 2 {
+		return points
+	}
+	type accumulator struct {
+		sums   map[string]float64
+		counts map[string]int
+	}
+	out := make([]vizDataPoint, 0, len(points))
+	var current *accumulator
+	var currentTS time.Time
+	flush := func() {
+		if current == nil {
+			return
+		}
+		values := make(map[string]interface{}, len(current.sums))
+		for label, sum := range current.sums {
+			if current.counts[label] > 0 {
+				values[label] = sum / float64(current.counts[label])
+			}
+		}
+		if len(values) > 0 {
+			out = append(out, vizDataPoint{Timestamp: currentTS, Values: values})
+		}
+		current = nil
+	}
+	for _, point := range points {
+		if current == nil || point.Timestamp.Sub(currentTS) > vizLegacyBurstWindow {
+			flush()
+			currentTS = point.Timestamp
+			current = &accumulator{
+				sums:   make(map[string]float64, len(point.Values)),
+				counts: make(map[string]int, len(point.Values)),
+			}
+		}
+		for label, raw := range point.Values {
+			value, ok := extractVizValue(raw)
+			if !ok {
+				continue
+			}
+			current.sums[label] += value
+			current.counts[label]++
+		}
+	}
+	flush()
+	return out
+}
+
 func (h *Handler) queryVizSeries(
 	ctx context.Context,
 	filter bson.M,
@@ -295,10 +349,11 @@ func (h *Handler) queryVizSeries(
 			return nil, vizQueryMeta{}, err
 		}
 
+		results = coalesceVizPointsByTimestamp(results)
 		meta := vizQueryMeta{
 			TotalMatched: total,
 			Returned:     len(results),
-			Downsampled:  false,
+			Downsampled:  total > int64(len(results)),
 		}
 		return results, meta, nil
 	}

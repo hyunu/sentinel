@@ -74,6 +74,29 @@ func TestExpandBucketAverageOnePointPerBucket(t *testing.T) {
 	}
 }
 
+func TestCoalesceVizPointsByTimestamp(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 10, 30, 7, 18, 0, 0, time.UTC)
+	points := []vizDataPoint{
+		{Timestamp: ts, Values: map[string]interface{}{"rpm": 100.0, "temp": 20.0}},
+		{Timestamp: ts, Values: map[string]interface{}{"rpm": 300.0}},
+		{Timestamp: ts.Add(time.Second), Values: map[string]interface{}{"rpm": 500.0}},
+	}
+	got := coalesceVizPointsByTimestamp(points)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 coalesced points, got %d: %+v", len(got), got)
+	}
+	if rpm := got[0].Values["rpm"].(float64); rpm != 200 {
+		t.Fatalf("first rpm = %v, want 200", rpm)
+	}
+	if temp := got[0].Values["temp"].(float64); temp != 20 {
+		t.Fatalf("first temp = %v, want 20", temp)
+	}
+	if rpm := got[1].Values["rpm"].(float64); rpm != 500 {
+		t.Fatalf("second rpm = %v, want 500", rpm)
+	}
+}
+
 func TestBuildVizProjection(t *testing.T) {
 	t.Parallel()
 
