@@ -31,11 +31,15 @@ void on_frame_received(const uint8_t *data, int len) {
     hex_str[pos] = 0;
     String hex = String(hex_str);
 
+#if ENABLE_TEST_SENSOR_DATA
     // Queue for the server first; BLE notification must not delay ingestion.
     wifi_send_uart_data(hex);
 
     // Send over BLE notify only when a client is subscribed to UART data.
     ble_send_uart_data(hex);
+#else
+    (void)hex;
+#endif
 }
 
 // Called from ble_service when WiFi credentials arrive
@@ -94,6 +98,7 @@ void loop() {
         }
     }
 
+#if ENABLE_TEST_SENSOR_DATA
     // Periodic temperature
     if (now - lastTemp >= TEMP_INTERVAL_MS) {
         lastTemp = now;
@@ -102,4 +107,7 @@ void loop() {
             wifi_send_temperature(t);
         }
     }
+#else
+    (void)lastTemp;
+#endif
 }
