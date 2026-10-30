@@ -1217,8 +1217,9 @@ class _DeviceScreenState extends State<DeviceScreen>
   String _formatParsedValue(dynamic value) {
     if (value == null) return 'null';
     if (value is double) {
+      if (!value.isFinite) return value.toString();
       if (value == value.roundToDouble()) return value.toStringAsFixed(0);
-      return value.toString();
+      return value.toStringAsFixed(2);
     }
     if (value is num || value is bool) return value.toString();
     if (value is List) return value.map(_formatParsedValue).join(', ');
@@ -1228,6 +1229,21 @@ class _DeviceScreenState extends State<DeviceScreen>
           .join(', ');
     }
     return value.toString();
+  }
+
+  Map<String, String> _displayParsedFields(Map<String, String> parsed) {
+    const ignored = {'stx', 'length', 'fid', 'seq_no', 'attr', 'crc16', 'etx'};
+    final result = <String, String>{};
+    for (final entry in parsed.entries) {
+      final key = entry.key.replaceFirst(RegExp(r'^payload\.'), '');
+      if (ignored.contains(key)) continue;
+      final value = entry.value
+          .replaceAll(RegExp(r'[\u0000-\u001F\u007F]'), '')
+          .trim();
+      if (value.isEmpty) continue;
+      result.putIfAbsent(key, () => value);
+    }
+    return result;
   }
 
   Map<String, String> _parseHex(String hex, _Protocol proto) {
@@ -2607,6 +2623,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       }
     }
 
+    final display = _displayParsedFields(latest);
     return _buildGlassCard(cs, [
       Row(
         children: [
@@ -2623,9 +2640,12 @@ class _DeviceScreenState extends State<DeviceScreen>
         ],
       ),
       const SizedBox(height: 8),
-      if (latest.isEmpty)
+      if (display.isEmpty)
         Text(
-          _parseError ?? 'Waiting for decoded values from the parser...',
+          _parseError ??
+              (latest.isEmpty
+                  ? 'Waiting for decoded values from the parser...'
+                  : 'No displayable payload fields'),
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: _parseError == null
                 ? cs.onSurfaceVariant.withValues(alpha: 0.65)
@@ -2634,21 +2654,33 @@ class _DeviceScreenState extends State<DeviceScreen>
           ),
         )
       else
-        Wrap(
-          spacing: 12,
-          runSpacing: 6,
-          children: latest.entries
-              .map(
-                (e) => Text(
-                  '${e.key}: ${e.value}',
+        ...display.entries.map(
+          (entry) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    entry.key,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  entry.value,
                   style: TextStyle(
                     fontSize: 11,
                     fontFamily: 'monospace',
                     color: cs.onSurface,
                   ),
                 ),
-              )
-              .toList(),
+              ],
+            ),
+          ),
         ),
     ]);
   }
@@ -2661,7 +2693,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     bool showParsed,
   ) {
     final parsed = showParsed
-        ? _parseHex(hex, selectedProto)
+        ? _displayParsedFields(_parseHex(hex, selectedProto))
         : <String, String>{};
     final dir = hex.startsWith('01')
         ? 'RX'
