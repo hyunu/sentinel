@@ -14,6 +14,7 @@
 #include "wifi_manager.h"
 #include "temp_sensor.h"
 #include "display_manager.h"
+#include <esp_system.h>
 #include "logger.h"
 
 static unsigned long lastHeartbeat = 0;
@@ -30,13 +31,11 @@ void on_frame_received(const uint8_t *data, int len) {
     hex_str[pos] = 0;
     String hex = String(hex_str);
 
-    Serial.printf("[FRAME] %d bytes: %s\n", len, hex_str);
-
-    // Send over BLE notify
-    ble_send_uart_data(hex);
-
-    // Send over WiFi HTTP
+    // Queue for the server first; BLE notification must not delay ingestion.
     wifi_send_uart_data(hex);
+
+    // Send over BLE notify only when a client is subscribed to UART data.
+    ble_send_uart_data(hex);
 }
 
 // Called from ble_service when WiFi credentials arrive
@@ -46,6 +45,7 @@ void on_wifi_credentials_received(const String &ssid, const String &password) {
 
 void setup() {
     AppLog.begin(115200);
+    AppLog.printf("[SYS] reset_reason=%d\n", (int)esp_reset_reason());
     AppLog.println();
     AppLog.println("=== Sentinel UART Monitor ===");
     AppLog.printf("Monitor UART: %d bps on GPIO TX:%d RX:%d\n",

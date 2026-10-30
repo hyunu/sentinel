@@ -18,6 +18,7 @@ static NimBLECharacteristic *pUartWriteChar = nullptr;
 static NimBLECharacteristic *pMacChar = nullptr;
 static NimBLECharacteristic *pLogChar = nullptr;
 static bool deviceConnected = false;
+static bool uartNotifySubscribed = false;
 
 static uint8_t gStatusFlags = 0;
 static char gUidStr[8] = {0};
@@ -141,6 +142,14 @@ static long _extract_json_number(const String &json, const char *key, long fallb
     return json.substring(idx, end).toInt();
 }
 
+class UartNotifyCallbacks : public NimBLECharacteristicCallbacks {
+    void onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
+        (void)pCharacteristic;
+        (void)connInfo;
+        uartNotifySubscribed = subValue != 0;
+    }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         (void)pServer; (void)connInfo;
@@ -150,6 +159,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
         (void)pServer; (void)connInfo; (void)reason;
         deviceConnected = false;
+        uartNotifySubscribed = false;
         AppLog.println("[BLE] Disconnected");
         ble_refresh_advertising();
     }
@@ -269,6 +279,7 @@ void ble_init() {
         NimBLEUUID(UART_NOTIFY_CHAR_UUID),
         NIMBLE_PROPERTY::NOTIFY
     );
+    pUartNotifyChar->setCallbacks(new UartNotifyCallbacks());
 
     pUartWriteChar = pService->createCharacteristic(
         NimBLEUUID(UART_WRITE_CHAR_UUID),
@@ -309,8 +320,7 @@ void ble_init() {
 }
 
 void ble_send_uart_data(const String &hex_str) {
-    Serial.println(hex_str);
-    if (!pUartNotifyChar || !deviceConnected) return;
+    if (!pUartNotifyChar || !deviceConnected || !uartNotifySubscribed) return;
     pUartNotifyChar->setValue(hex_str.c_str());
     pUartNotifyChar->notify();
 }
