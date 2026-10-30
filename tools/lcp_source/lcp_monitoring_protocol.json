@@ -1,0 +1,442 @@
+{
+  "name": "LCP Monitoring",
+  "version": "1.0",
+  "description": "LCP → OSP monitoring/status packet (AA [LEN:2 BE] CA [SEQ:2 BE] ATTR payload CRC16 BB).",
+  "parse_rules": {
+    "_meta": {
+      "name": "LCP Monitoring",
+      "version": "1.0",
+      "frame": "AA [LEN:2 BE] CA [SEQ:2 BE] ATTR [STATUS...] CRC16 BB"
+    },
+    "fields": [
+      {
+        "name": "stx",
+        "type": "Validate",
+        "validate_expr": "value == 0xAA",
+        "inner": {
+          "name": "",
+          "type": "U8"
+        }
+      },
+      {
+        "name": "length",
+        "type": "U16",
+        "endian": "big"
+      },
+      {
+        "name": "fid",
+        "type": "Validate",
+        "validate_expr": "value == 0xCA",
+        "inner": {
+          "name": "",
+          "type": "U8"
+        }
+      },
+      {
+        "name": "seq_no",
+        "type": "U16",
+        "endian": "big"
+      },
+      {
+        "name": "attr",
+        "type": "U8"
+      },
+      {
+        "name": "aquavalve_ison",
+        "type": "U8"
+      },
+      {
+        "name": "autodispenser_ison",
+        "type": "U8"
+      },
+      {
+        "name": "autodispenser_isdirectionccw",
+        "type": "U8"
+      },
+      {
+        "name": "autodispenser_getdetergentpulse",
+        "type": "U8"
+      },
+      {
+        "name": "autodispenser_iscompletecheckingstatus",
+        "type": "U8"
+      },
+      {
+        "name": "autodispenser_getautodispenserstatus",
+        "type": "U8"
+      },
+      {
+        "name": "autoopendoor_ismotorstatus",
+        "type": "U8"
+      },
+      {
+        "name": "detergentrefill_isempty",
+        "type": "U8"
+      },
+      {
+        "name": "dispenser_ison",
+        "type": "U8"
+      },
+      {
+        "name": "doorlatch_isopen",
+        "type": "U8"
+      },
+      {
+        "name": "doorlatch1_isopen_doorlatch",
+        "type": "U8"
+      },
+      {
+        "name": "doorlatch2_isopen_doorlatch",
+        "type": "U8"
+      },
+      {
+        "name": "drainmotor_getcurrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "drainmotor_gettarrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "drainmotor_getrequestrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "drainmotor_getmotorcurrent",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "drainmotor_getmotorwatt",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "drainmotor_ison",
+        "type": "U8"
+      },
+      {
+        "name": "drainmotor_isdirectionccw",
+        "type": "U8"
+      },
+      {
+        "name": "drainmotor_getmotoraveragecurrent",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "flowmeter_getwatersupplypulse",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "flowmeter_gettotalwatersupplypulse",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "heatdrydoor_isopen",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryfan_ison",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryfan_getcurrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "heatdryfan_gettarduty",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryfan_islockdetecting",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryfan_isretrystatusafterlock",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryfan_lockretrycount",
+        "type": "U8"
+      },
+      {
+        "name": "heatdryheater_ison",
+        "type": "U8"
+      },
+      {
+        "name": "powerrelay_ison",
+        "type": "U8"
+      },
+      {
+        "name": "regenvalve_ison",
+        "type": "U8"
+      },
+      {
+        "name": "rinserefill_isempty",
+        "type": "U8"
+      },
+      {
+        "name": "saltrefill_isempty",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_dclink_getdclinkvolt",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "sensor_dclink_getdclinkvolt_max",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "sensor_dclink_getdclinkvolt_min",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "sensor_dclink_iscompleteacvoltage",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_heatdrytemperature_getvalue",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_heatdrytemperature_gettemperature",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_heatdrytemperature_gettemperature_max",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_ipmtemperature_gettemp",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_ipmtemperature_gettemp_max",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_steamtemperature_getvalue",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_steamtemperature_gettemperature",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_sumptemperature_getvalue",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_sumptemperature_getsumptemp",
+        "type": "U8"
+      },
+      {
+        "name": "sensor_sumptemperature_getsumptemp_max",
+        "type": "U8"
+      },
+      {
+        "name": "steamheater_ison",
+        "type": "U8"
+      },
+      {
+        "name": "steamvalve_ison",
+        "type": "U8"
+      },
+      {
+        "name": "steamwater_issteamwater",
+        "type": "U8"
+      },
+      {
+        "name": "sumpheater_ison",
+        "type": "U8"
+      },
+      {
+        "name": "tublamp_ison",
+        "type": "U8"
+      },
+      {
+        "name": "turbiditysensor_getntuvalue",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "turbiditysensor_iscompleteturbidityvalue",
+        "type": "U8"
+      },
+      {
+        "name": "turbiditysensor_getturbidityvalue",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "turbiditysensor_isfault_communication",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getstate",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getcurrequest",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getcurvarioposition",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_gettarvarioposition",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_iscomplete_findbasepoint",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_iscomplete_movetargetpos",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_isfault_movetargetpos",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_ison",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getswitchstate",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getvarioswcheckcount",
+        "type": "U8"
+      },
+      {
+        "name": "variomotor_getfirstvarioinittime",
+        "type": "U8"
+      },
+      {
+        "name": "washmotor_gettarrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "washmotor_getcurrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "washmotor_getrequestrpm",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "washmotor_getmotorcurrent",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "washmotor_getmotorwatt",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "washmotor_ison",
+        "type": "U8"
+      },
+      {
+        "name": "washmotor_isleflagset",
+        "type": "U8"
+      },
+      {
+        "name": "washmotor_getmotoraveragecurrent",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "waterjacketvalve_ison",
+        "type": "U8"
+      },
+      {
+        "name": "lib_energymonitoring_ison",
+        "type": "U8"
+      },
+      {
+        "name": "lib_energymonitoring_getenergyusagewatthour",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "main_sw_pno",
+        "type": "U32",
+        "endian": "little"
+      },
+      {
+        "name": "main_sw_checksum",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "main_sw_version",
+        "type": "U8"
+      },
+      {
+        "name": "inverter_sw_pno",
+        "type": "U32",
+        "endian": "little"
+      },
+      {
+        "name": "inverter_sw_checksum",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "inverter_sw_safety_crc",
+        "type": "U16",
+        "endian": "little"
+      },
+      {
+        "name": "inverter_sw_version",
+        "type": "U8"
+      },
+      {
+        "name": "local_info",
+        "type": "U8"
+      },
+      {
+        "name": "product_info",
+        "type": "U8"
+      },
+      {
+        "name": "software_option_reserved",
+        "type": "U8"
+      },
+      {
+        "name": "crc16",
+        "type": "U16",
+        "endian": "big"
+      },
+      {
+        "name": "etx",
+        "type": "Validate",
+        "validate_expr": "value == 0xBB",
+        "inner": {
+          "name": "",
+          "type": "U8"
+        }
+      }
+    ]
+  }
+}
