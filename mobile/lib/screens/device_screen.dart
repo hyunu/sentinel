@@ -1274,16 +1274,9 @@ class _DeviceScreenState extends State<DeviceScreen>
                     ],
                   ),
                 ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    _buildStatusBadge(cs),
-                    const SizedBox(height: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: _buildBoardFlags(cs),
-                    ),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: _buildConnectionFlags(cs),
                 ),
               ],
             ),
@@ -1294,17 +1287,26 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
   }
 
-  Widget _buildBoardFlags(ColorScheme cs) {
+  Widget _buildConnectionFlags(ColorScheme cs) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildFlagChip(cs, 'AP', _boardWifi, 'WiFi AP connected'),
+        _buildFlagChip(
+          cs,
+          'BLE',
+          _connected,
+          'Bluetooth LE connected',
+          cs.primary,
+        ),
+        const SizedBox(width: 4),
+        _buildFlagChip(cs, 'AP', _boardWifi, 'WiFi AP connected', cs.secondary),
         const SizedBox(width: 4),
         _buildFlagChip(
           cs,
-          'SERVER',
+          'SVR',
           _boardServer,
           'Server heartbeat registered',
+          cs.secondary,
         ),
       ],
     );
@@ -1315,11 +1317,8 @@ class _DeviceScreenState extends State<DeviceScreen>
     String label,
     bool active,
     String tooltip,
+    Color accent,
   ) {
-    // AP and SERVER share the WiFi/success color; Connected remains BLE indigo.
-    final accent = (label == 'AP' || label == 'SERVER')
-        ? cs.secondary
-        : cs.primary;
     final color = active ? accent : cs.onSurfaceVariant.withValues(alpha: 0.45);
     return Tooltip(
       message: tooltip,
@@ -1357,46 +1356,6 @@ class _DeviceScreenState extends State<DeviceScreen>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildStatusBadge(ColorScheme cs) {
-    final (Color bg, Color dot, String label) = _connected
-        ? (cs.primary.withValues(alpha: 0.1), cs.primary, 'Connected')
-        : _connecting
-        ? (cs.tertiary.withValues(alpha: 0.1), cs.tertiary, 'Connecting')
-        : (
-            cs.onSurfaceVariant.withValues(alpha: 0.06),
-            cs.onSurfaceVariant.withValues(alpha: 0.3),
-            'Offline',
-          );
-
-    return Container(
-      margin: const EdgeInsets.only(right: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: dot,
-            ),
-          ),
-        ],
       ),
     );
   }
