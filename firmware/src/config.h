@@ -11,7 +11,7 @@
 #define TEMP_INTERVAL_MS       3000
 
 // Set to 1 to transmit test UART/temperature sensor data.
-#define ENABLE_TEST_SENSOR_DATA 0
+#define ENABLE_TEST_SENSOR_DATA 1
 
 #define BACKEND_URL             "http://192.168.0.9:5050"
 #define BOARD_ID_PREFIX         "sentinel"
