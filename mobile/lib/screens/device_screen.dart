@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
@@ -74,6 +75,12 @@ class _DeviceLogEntry {
   const _DeviceLogEntry(this.at, this.text, {this.fromBoard = false});
 }
 
+class _UartPacket {
+  final DateTime receivedAt;
+  final String hex;
+  const _UartPacket(this.receivedAt, this.hex);
+}
+
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
   final AdvertisementData? advertisementData;
@@ -100,17 +107,10 @@ class _DeviceScreenState extends State<DeviceScreen>
   String? _wifiMac;
   bool _wifiConfigured = false;
   bool _sendingWifi = false;
-  List<String> _uartLogs = [];
+  List<_UartPacket> _uartLogs = [];
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
   String? _boardProtoId;
-  bool _protocolOverrideEnabled = false;
-  final List<String> _pendingParse = [];
-  final Set<String> _pendingParseSet = {};
-  final Map<String, Map<String, String>> _parsedFrames = {};
-  String? _parseError;
-  Timer? _parseTimer;
-  bool _parsingBatch = false;
   StreamSubscription? _uartSub;
   StreamSubscription? _connSub;
   StreamSubscription<String>? _logSub;
@@ -148,10 +148,6 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
     _loadSaved();
     _connect();
-    _parseTimer = Timer.periodic(
-      const Duration(milliseconds: 700),
-      (_) => _flushParseBatch(),
-    );
   }
 
   void _onFieldChanged() {
@@ -168,7 +164,6 @@ class _DeviceScreenState extends State<DeviceScreen>
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
       c.removeListener(_onFieldChanged);
     }
-    _parseTimer?.cancel();
     _uartSub?.cancel();
     _connSub?.cancel();
     _logSub?.cancel();
@@ -646,18 +641,12 @@ class _DeviceScreenState extends State<DeviceScreen>
             boardUid == advUid;
         if (!bleMatch && !wifiMatch && !uidMatch) continue;
         final protocolId = raw['protocol_id']?.toString();
-        var protocolChanged = false;
         setState(() {
           if (protocolId != null && protocolId.isNotEmpty) {
             _boardProtoId = protocolId;
-            if (!_protocolOverrideEnabled && protocolId != _selectedProtoId) {
-              _selectedProtoId = protocolId;
-              _resetParsedFrames();
-              protocolChanged = true;
-            }
+            _selectedProtoId = protocolId;
           }
         });
-        if (protocolChanged) _reparseBufferedFrames();
         break;
       }
     } catch (_) {}
@@ -1037,10 +1026,9 @@ class _DeviceScreenState extends State<DeviceScreen>
             .map((b) => b.toRadixString(16).padLeft(2, '0'))
             .join(' ');
         setState(() {
-          _uartLogs.add(hex);
+          _uartLogs.add(_UartPacket(DateTime.now(), hex));
           if (_uartLogs.length > 500) _uartLogs = _uartLogs.sublist(-500);
         });
-        _enqueueParse(hex);
       });
     } catch (e) {
       if (mounted) _showError('Failed to start the UART stream.');
@@ -1085,23 +1073,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   }
 
   void _onProtocolChanged(String? id) {
-    if (_boardProtoId != null && !_protocolOverrideEnabled) return;
-    setState(() {
-      _selectedProtoId = id;
-      _resetParsedFrames();
-    });
-    _reparseBufferedFrames();
-  }
-
-  void _setProtocolOverride(bool enabled) {
-    setState(() {
-      _protocolOverrideEnabled = enabled;
-      if (!enabled && _boardProtoId != null) {
-        _selectedProtoId = _boardProtoId;
-      }
-      _resetParsedFrames();
-    });
-    _reparseBufferedFrames();
+    setState(() => _selectedProtoId = id);
   }
 
   String _protocolName(String? id) {
@@ -1110,173 +1082,6 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (p.id == id) return '${p.name} v${p.version}';
     }
     return id;
-  }
-
-  _Protocol? get _selectedProtocol {
-    if (_selectedProtoId == null) return null;
-    for (final protocol in _protocols) {
-      if (protocol.id == _selectedProtoId) return protocol;
-    }
-    return null;
-  }
-
-  void _resetParsedFrames() {
-    _pendingParse.clear();
-    _pendingParseSet.clear();
-    _parsedFrames.clear();
-  }
-
-  void _reparseBufferedFrames() {
-    _resetParsedFrames();
-    _parseError = null;
-    for (final hex in _uartLogs) {
-      _enqueueParse(hex);
-    }
-  }
-
-  void _enqueueParse(String hex) {
-    final protocol = _selectedProtocol;
-    if (protocol == null || !protocol.hasParseRules) return;
-    if (_parsedFrames.containsKey(hex) || _pendingParseSet.contains(hex))
-      return;
-    if (_pendingParse.length >= 200) return;
-    _pendingParse.add(hex);
-    _pendingParseSet.add(hex);
-  }
-
-  Future<void> _flushParseBatch() async {
-    if (_parsingBatch || _pendingParse.isEmpty) return;
-    final protocol = _selectedProtocol;
-    if (protocol == null || !protocol.hasParseRules) {
-      _pendingParse.clear();
-      _pendingParseSet.clear();
-      return;
-    }
-
-    final batch = _pendingParse.take(100).toList();
-    _pendingParse.removeRange(0, batch.length);
-    _pendingParseSet.removeAll(batch);
-    _parsingBatch = true;
-
-    try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/api/v1/protocols/parse/batch'),
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({'protocol_id': protocol.id, 'frames': batch}),
-          )
-          .timeout(const Duration(seconds: 4));
-
-      if (response.statusCode != 200) {
-        if (mounted) {
-          setState(() => _parseError = 'Parser HTTP ${response.statusCode}');
-        }
-        return;
-      }
-      final decoded = json.decode(response.body);
-      final results = decoded is Map ? decoded['results'] : null;
-      if (results is! List) {
-        if (mounted) setState(() => _parseError = 'Parser returned no results');
-        return;
-      }
-
-      final parsedBatch = <String, Map<String, String>>{};
-      String? firstError;
-      for (final raw in results) {
-        if (raw is! Map) continue;
-        final hex = raw['raw_hex']?.toString() ?? '';
-        final fields = raw['parsed_fields'];
-        if (hex.isEmpty) continue;
-        if (fields is! Map) {
-          firstError ??= raw['error']?.toString();
-          continue;
-        }
-        parsedBatch[hex] = {
-          for (final entry in fields.entries)
-            entry.key.toString(): _formatParsedValue(entry.value),
-        };
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _parseError = firstError;
-        for (final entry in parsedBatch.entries) {
-          _parsedFrames[entry.key] = entry.value;
-        }
-        while (_parsedFrames.length > 500) {
-          _parsedFrames.remove(_parsedFrames.keys.first);
-        }
-      });
-    } catch (_) {
-      // Keep raw data visible when the server is unreachable.
-    } finally {
-      _parsingBatch = false;
-    }
-  }
-
-  String _formatParsedValue(dynamic value) {
-    if (value == null) return 'null';
-    if (value is double) {
-      if (!value.isFinite) return value.toString();
-      if (value == value.roundToDouble()) return value.toStringAsFixed(0);
-      return value.toStringAsFixed(2);
-    }
-    if (value is num || value is bool) return value.toString();
-    if (value is List) return value.map(_formatParsedValue).join(', ');
-    if (value is Map) {
-      return value.entries
-          .map((entry) => '${entry.key}=${_formatParsedValue(entry.value)}')
-          .join(', ');
-    }
-    return value.toString();
-  }
-
-  Map<String, String> _displayParsedFields(Map<String, String> parsed) {
-    const ignored = {'stx', 'length', 'fid', 'seq_no', 'attr', 'crc16', 'etx'};
-    final result = <String, String>{};
-    for (final entry in parsed.entries) {
-      final key = entry.key.replaceFirst(RegExp(r'^payload\.'), '');
-      if (ignored.contains(key)) continue;
-      final value = entry.value
-          .replaceAll(RegExp(r'[\u0000-\u001F\u007F]'), '')
-          .trim();
-      if (value.isEmpty) continue;
-      result.putIfAbsent(key, () => value);
-    }
-    return result;
-  }
-
-  Map<String, String> _parseHex(String hex, _Protocol proto) {
-    if (proto.hasParseRules) {
-      if (proto.id != _selectedProtoId) return <String, String>{};
-      return _parsedFrames[hex] ?? <String, String>{};
-    }
-    final bytes = <int>[];
-    final clean = hex.replaceAll(' ', '');
-    for (var i = 0; i < clean.length - 1; i += 2) {
-      bytes.add(int.parse(clean.substring(i, i + 2), radix: 16));
-    }
-    final result = <String, String>{};
-    for (final f in proto.fields) {
-      if (f.offset + f.length > bytes.length) continue;
-      final slice = bytes.sublist(f.offset, f.offset + f.length);
-      String value;
-      switch (f.type) {
-        case 'uint8':
-          value = '${slice[0]}';
-          break;
-        case 'uint16':
-          value = '${(slice[0] << 8) | slice[1]}';
-          break;
-        case 'ascii':
-          value = String.fromCharCodes(slice);
-          break;
-        default:
-          value = slice.map((b) => b.toRadixString(16)).join(' ');
-      }
-      result[f.name] = '$value${f.unit ?? ''}';
-    }
-    return result;
   }
 
   @override
@@ -2292,208 +2097,27 @@ class _DeviceScreenState extends State<DeviceScreen>
   /* ── Data Tab ───────────────────────────────────────────────────── */
 
   Widget _buildDataTab(ColorScheme cs) {
-    final selectedProto = _protocols.firstWhere(
-      (p) => p.id == _selectedProtoId,
-      orElse: () => _protocols.isNotEmpty
-          ? _protocols.first
-          : _Protocol.fromJson({
-              'id': '',
-              'name': '',
-              'version': '',
-              'fields': [],
-            }),
-    );
-    final showParsed =
-        selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
-
     return ListView.builder(
       padding: EdgeInsets.zero,
       itemCount: _uartLogs.length + 1,
       itemBuilder: (context, index) {
-        if (index == 0) {
-          return _buildDataHeader(cs, selectedProto, showParsed);
-        }
+        if (index == 0) return _buildDataHeader(cs);
         final packetIndex = index - 1;
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-          child: _buildPacketTile(
-            cs,
-            _uartLogs[packetIndex],
-            packetIndex,
-            selectedProto,
-            showParsed,
-          ),
+          child: _buildPacketTile(cs, _uartLogs[packetIndex], packetIndex),
         );
       },
     );
   }
 
-  Widget _buildDataHeader(
-    ColorScheme cs,
-    _Protocol selectedProto,
-    bool showParsed,
-  ) {
-    final boardProto = _boardProtoId;
-    final activeName = _protocolName(boardProto ?? _selectedProtoId);
-
+  Widget _buildDataHeader(ColorScheme cs) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildSectionHeader(cs, 'Parsing protocol', Icons.rule_rounded),
-          const SizedBox(height: 12),
-          _buildGlassCard(cs, [
-            Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    boardProto != null && !_protocolOverrideEnabled
-                        ? Icons.lock_outline_rounded
-                        : Icons.rule_rounded,
-                    size: 17,
-                    color: cs.primary,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        activeName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Text(
-                        boardProto != null
-                            ? _protocolOverrideEnabled
-                                  ? 'Temporary parser override (display only)'
-                                  : 'Applied to this board at onboarding'
-                            : 'Select a protocol for onboarding',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            if (boardProto != null) ...[
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                value: _protocolOverrideEnabled,
-                onChanged: _setProtocolOverride,
-                title: Text(
-                  'Temporary parser override',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
-                ),
-                subtitle: Text(
-                  'Display only — does not change board/server protocol',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ],
-            if (boardProto == null || _protocolOverrideEnabled) ...[
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                key: ValueKey(_selectedProtoId),
-                initialValue: _selectedProtoId,
-                isExpanded: true,
-                decoration: InputDecoration(
-                  labelText: 'Parse with',
-                  filled: true,
-                  fillColor: cs.surface.withValues(alpha: 0.45),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                items: _protocols
-                    .map(
-                      (p) => DropdownMenuItem(
-                        value: p.id,
-                        child: Text(
-                          p.fields.isNotEmpty
-                              ? '${p.name} v${p.version} · ${p.fields.length} fields'
-                              : '${p.name} v${p.version}',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _onProtocolChanged,
-              ),
-            ],
-            if (showParsed) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.surface.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: selectedProto.fields
-                      .map(
-                        (f) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(
-                            children: [
-                              Text(
-                                f.name,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: cs.onSurfaceVariant.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                '${f.type}${f.unit != null ? " (${f.unit})" : ""}',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'monospace',
-                                  color: cs.primary.withValues(alpha: 0.6),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
-            ],
-          ]),
-          if (showParsed && _uartLogs.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _buildLatestParsedCard(cs, selectedProto),
-          ],
-          const SizedBox(height: 16),
-          _buildSectionHeader(cs, 'UART stream', Icons.cell_tower_rounded),
+          _buildSectionHeader(cs, 'Raw UART', Icons.terminal_rounded),
           const SizedBox(height: 12),
           _buildGlassCard(cs, [
             Row(
@@ -2509,7 +2133,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                       Text(
                         _scanningUart
                             ? '${_uartLogs.length} packets received'
-                            : 'Start the stream to capture data',
+                            : 'Start the stream to capture raw data',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                         ),
@@ -2559,7 +2183,7 @@ class _DeviceScreenState extends State<DeviceScreen>
             Row(
               children: [
                 Text(
-                  '${_uartLogs.length} packets',
+                  '${_uartLogs.length} packets · long press to copy',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
@@ -2613,178 +2237,94 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
   }
 
-  Widget _buildLatestParsedCard(ColorScheme cs, _Protocol selectedProto) {
-    Map<String, String> latest = <String, String>{};
-    for (var i = _uartLogs.length - 1; i >= 0; i--) {
-      final parsed = _parseHex(_uartLogs[i], selectedProto);
-      if (parsed.isNotEmpty) {
-        latest = parsed;
-        break;
-      }
-    }
+  String _formatPacketTime(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(time.hour)}:${two(time.minute)}:${two(time.second)}.'
+        '${time.millisecond.toString().padLeft(3, '0')}';
+  }
 
-    final display = _displayParsedFields(latest);
-    return _buildGlassCard(cs, [
-      Row(
-        children: [
-          Icon(Icons.data_object_rounded, size: 16, color: cs.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Latest parsed values',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-            ),
+  Widget _buildPacketTile(ColorScheme cs, _UartPacket packet, int packetIndex) {
+    final displayHex = packet.hex.replaceAll('01 ', '').replaceAll('02 ', '');
+    final dir = packet.hex.startsWith('01')
+        ? 'RX'
+        : packet.hex.startsWith('02')
+        ? 'TX'
+        : null;
+
+    return GestureDetector(
+      onLongPress: () async {
+        await Clipboard.setData(ClipboardData(text: displayHex));
+        if (mounted) AppToast.success(context, 'Packet copied');
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: cs.outline.withValues(alpha: 0.2),
+            width: 0.5,
           ),
-        ],
-      ),
-      const SizedBox(height: 8),
-      if (display.isEmpty)
-        Text(
-          _parseError ??
-              (latest.isEmpty
-                  ? 'Waiting for decoded values from the parser...'
-                  : 'No displayable payload fields'),
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _parseError == null
-                ? cs.onSurfaceVariant.withValues(alpha: 0.65)
-                : cs.error,
-            height: 1.35,
-          ),
-        )
-      else
-        ...display.entries.map(
-          (entry) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Expanded(
-                  child: Text(
-                    entry.key,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                if (dir != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: dir == 'RX'
+                          ? cs.secondary.withValues(alpha: 0.12)
+                          : cs.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      dir,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: dir == 'RX' ? cs.secondary : cs.primary,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
+                const Spacer(),
                 Text(
-                  entry.value,
+                  _formatPacketTime(packet.receivedAt),
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 9,
                     fontFamily: 'monospace',
-                    color: cs.onSurface,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'PKT #${_uartLogs.length - packetIndex}',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontFamily: 'monospace',
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.3),
                   ),
                 ),
               ],
             ),
-          ),
-        ),
-    ]);
-  }
-
-  Widget _buildPacketTile(
-    ColorScheme cs,
-    String hex,
-    int packetIndex,
-    _Protocol selectedProto,
-    bool showParsed,
-  ) {
-    final parsed = showParsed
-        ? _displayParsedFields(_parseHex(hex, selectedProto))
-        : <String, String>{};
-    final dir = hex.startsWith('01')
-        ? 'RX'
-        : hex.startsWith('02')
-        ? 'TX'
-        : null;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: cs.outline.withValues(alpha: 0.2),
-          width: 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (dir != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: dir == 'RX'
-                        ? cs.secondary.withValues(alpha: 0.12)
-                        : cs.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    dir,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      color: dir == 'RX' ? cs.secondary : cs.primary,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-              const Spacer(),
-              Text(
-                'PKT #${_uartLogs.length - packetIndex}',
-                style: TextStyle(
-                  fontSize: 9,
-                  fontFamily: 'monospace',
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            hex.replaceAll('01 ', '').replaceAll('02 ', ''),
-            style: TextStyle(
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: dir == 'RX' ? cs.secondary : cs.primary,
-              height: 1.3,
-            ),
-          ),
-          if (parsed.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: cs.surface.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Wrap(
-                spacing: 12,
-                runSpacing: 4,
-                children: parsed.entries
-                    .map(
-                      (e) => Text(
-                        '${e.key}: ${e.value}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-                        ),
-                      ),
-                    )
-                    .toList(),
+            const SizedBox(height: 6),
+            Text(
+              displayHex,
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: dir == 'RX' ? cs.secondary : cs.primary,
+                height: 1.3,
               ),
             ),
           ],
-        ],
+        ),
       ),
     );
   }
