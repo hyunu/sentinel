@@ -27,11 +27,28 @@ class AppToast {
     _show(context, message: message, type: AppToastType.info);
   }
 
+  static void action(
+    BuildContext context,
+    String message, {
+    required String actionLabel,
+    required VoidCallback onAction,
+  }) {
+    _show(
+      context,
+      message: message,
+      type: AppToastType.error,
+      actionLabel: actionLabel,
+      onAction: onAction,
+    );
+  }
+
   static void _show(
     BuildContext context, {
     required String message,
     required AppToastType type,
     bool persistent = false,
+    String? actionLabel,
+    VoidCallback? onAction,
   }) {
     final cs = Theme.of(context).colorScheme;
     final (icon, accent) = switch (type) {
@@ -45,7 +62,9 @@ class AppToast {
         backgroundColor: cs.surfaceContainerHigh,
         elevation: 0,
         behavior: SnackBarBehavior.floating,
-        duration: persistent ? const Duration(days: 1) : const Duration(seconds: 3),
+        duration: persistent
+            ? const Duration(days: 1)
+            : const Duration(seconds: 3),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(_radius),
@@ -68,14 +87,20 @@ class AppToast {
               child: Text(
                 message,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurface,
-                      height: 1.35,
-                    ),
+                  color: cs.onSurface,
+                  height: 1.35,
+                ),
               ),
             ),
           ],
         ),
-        action: persistent
+        action: actionLabel != null && onAction != null
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: cs.primary,
+                onPressed: onAction,
+              )
+            : persistent
             ? SnackBarAction(
                 label: 'Dismiss',
                 textColor: cs.onSurfaceVariant,

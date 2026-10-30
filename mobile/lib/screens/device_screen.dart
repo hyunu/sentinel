@@ -95,6 +95,8 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   bool _connected = false;
   bool _connecting = false;
+  bool _boardWifi = false;
+  bool _boardServer = false;
   bool _wifiConfigured = false;
   bool _sendingWifi = false;
   List<String> _uartLogs = [];
@@ -127,6 +129,14 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   void initState() {
     super.initState();
+    final adData = widget.advertisementData;
+    if (adData != null) {
+      final state = BleScanner.parseStateFromAdData(adData);
+      _boardWifi =
+          state == SentinelBleState.registering ||
+          state == SentinelBleState.online;
+      _boardServer = state == SentinelBleState.online;
+    }
     _tabCtrl = TabController(length: 4, vsync: this);
     _onboardingProfiler.addListener(_onProfilerUpdated);
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
@@ -411,11 +421,44 @@ class _DeviceScreenState extends State<DeviceScreen>
       final line = _logRxBuffer.substring(0, newline);
       _logRxBuffer = _logRxBuffer.substring(newline + 1);
       _addLog(line, fromBoard: true);
+      _updateBoardFlagsFromLog(line);
     }
     // Guard against a malformed peer that never sends a newline.
     if (_logRxBuffer.length > 4096) {
       _logRxBuffer = _logRxBuffer.substring(_logRxBuffer.length - 2048);
     }
+  }
+
+  void _updateBoardFlagsFromLog(String line) {
+    final upper = line.toUpperCase();
+    bool? wifi;
+    bool? server;
+
+    if (line.contains('[WiFi] Connected') ||
+        upper.contains('EVENT:WIFI_CONNECTED')) {
+      wifi = true;
+    }
+    if (line.contains('Connection timed out') ||
+        upper.contains('WIFI_FAILED')) {
+      wifi = false;
+      server = false;
+    }
+    if (line.contains('Heartbeat result code: 200') ||
+        upper.contains('EVENT:HEARTBEAT_OK')) {
+      wifi = true;
+      server = true;
+    }
+    if (upper.contains('HEARTBEAT_FAILED') ||
+        line.contains('Heartbeat result code: -1') ||
+        line.contains('Heartbeat: all attempts failed')) {
+      server = false;
+    }
+
+    if (!mounted || (wifi == null && server == null)) return;
+    setState(() {
+      if (wifi != null) _boardWifi = wifi;
+      if (server != null) _boardServer = server;
+    });
   }
 
   Future<void> _startBoardLogStream() async {
@@ -721,7 +764,9 @@ class _DeviceScreenState extends State<DeviceScreen>
           note: '$pingError',
         );
         if (mounted) {
-          _showError('Cannot reach the server. Check the server URL.');
+          _showOnboardingFailure(
+            'Cannot reach the server. Check the server URL.',
+          );
         }
         return;
       }
@@ -778,6 +823,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         _onboardingProfiler.completeStep('ble_subscribed');
         logSub = logStream.listen((msg) {
           debugPrint('[BLE LOG] $msg');
+          _updateBoardFlagsFromLog(msg);
           _onboardingProfiler.markBleEvent(msg);
           if (msg.contains('EVENT:WIFI_FAILED')) wifiFailed = true;
           if (!configSent) return;
@@ -897,7 +943,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (!_onboardingProfiler.hasFailed) {
         _onboardingProfiler.finishFailure('board_ready', note: '$e');
       }
-      if (mounted) _showError(_onboardingErrorMessage(e));
+      if (mounted) {
+        _showOnboardingFailure(_onboardingErrorMessage(e));
+      }
       _addLog('Onboarding failed: $e');
     } finally {
       if (mounted) setState(() => _sendingWifi = false);
@@ -948,6 +996,18 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   void _showError(String message) {
     AppToast.error(context, message);
+  }
+
+  void _showOnboardingFailure(String message) {
+    AppToast.action(
+      context,
+      '$message Open Logs for board details.',
+      actionLabel: 'View Logs',
+      onAction: () {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        _tabCtrl.animateTo(3);
+      },
+    );
   }
 
   void _onProtocolChanged(String? id) {
@@ -1177,11 +1237,70 @@ class _DeviceScreenState extends State<DeviceScreen>
                     ],
                   ),
                 ),
-                _buildStatusBadge(cs),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _buildStatusBadge(cs),
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: _buildBoardFlags(cs),
+                    ),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 8),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBoardFlags(ColorScheme cs) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildFlagChip(cs, 'AP', _boardWifi, 'WiFi AP connected'),
+        const SizedBox(width: 4),
+        _buildFlagChip(cs, 'SVR', _boardServer, 'Server heartbeat registered'),
+      ],
+    );
+  }
+
+  Widget _buildFlagChip(
+    ColorScheme cs,
+    String label,
+    bool active,
+    String tooltip,
+  ) {
+    final color = active
+        ? cs.primary
+        : cs.onSurfaceVariant.withValues(alpha: 0.45);
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: active
+              ? cs.primary.withValues(alpha: 0.1)
+              : cs.onSurfaceVariant.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: active
+                ? cs.primary.withValues(alpha: 0.25)
+                : cs.outline.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+            color: color,
+          ),
         ),
       ),
     );
@@ -1368,66 +1487,6 @@ class _DeviceScreenState extends State<DeviceScreen>
             const SizedBox(height: 12),
             _buildOnboardingProfileCard(cs),
           ],
-          const SizedBox(height: 16),
-          _buildSectionHeader(cs, 'Connection', Icons.bluetooth_rounded),
-          const SizedBox(height: 12),
-          _buildGlassCard(cs, [
-            Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: _connected
-                        ? cs.primary.withValues(alpha: 0.1)
-                        : cs.onSurfaceVariant.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    _connected
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
-                    size: 18,
-                    color: _connected
-                        ? cs.primary
-                        : cs.onSurfaceVariant.withValues(alpha: 0.3),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Bluetooth LE',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      Text(
-                        _connected ? 'Connected and ready' : 'Not connected',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (!_connected && !_connecting)
-                  TextButton(
-                    onPressed: _connect,
-                    child: const Text(
-                      'Reconnect',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ),
-                if (_connecting)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-          ]),
         ],
       ),
     );
