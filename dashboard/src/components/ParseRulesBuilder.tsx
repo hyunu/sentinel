@@ -30,6 +30,20 @@ import {
 } from '../lib/ruleBuilderUtils';
 import '../styles/ruleBuilder.css';
 
+function switchCaseHex(key: string): string | null {
+  const value = Number(key.trim());
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return `0x${value.toString(16).toUpperCase()}`;
+}
+
+function switchCaseLabel(key: string): string {
+  const hex = switchCaseHex(key);
+  if (hex == null) return key;
+  return `${Number(key.trim())} (${hex})`;
+}
+
 type CollapseCtx = {
   bulkTick: number;
   bulkOpen: boolean | null;
@@ -376,7 +390,7 @@ function NestedChildren({
           {switchCaseEntries(rule).map(({ key, rules: caseRules }) => (
             <CollapsiblePanel
               key={key}
-              title={`Case ${key}`}
+              title={`Case ${switchCaseLabel(key)}`}
               summary={`${caseRules.length} fields`}
               defaultOpen={depth < 1}
               actions={
@@ -398,6 +412,9 @@ function NestedChildren({
                   onChange={e => onChange({ cases: setSwitchCase(rule, key, e.target.value, caseRules).cases })}
                   placeholder="207"
                 />
+                {switchCaseHex(key) != null && (
+                  <span className="rb-inline-tag mono">{switchCaseHex(key)}</span>
+                )}
               </div>
               <FieldRulesEditor
                 rules={caseRules.length ? caseRules : [emptyField()]}
