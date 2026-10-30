@@ -440,6 +440,11 @@ class _DeviceScreenState extends State<DeviceScreen>
     bool? wifi;
     bool? server;
 
+    if (line.contains('[WiFi] Connecting') ||
+        line.contains('Auto-connect to stored network')) {
+      wifi = false;
+      server = false;
+    }
     if (line.contains('[WiFi] Connected') ||
         upper.contains('EVENT:WIFI_CONNECTED')) {
       wifi = true;
@@ -506,7 +511,11 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   Future<void> _connect() async {
     _addLog('Connecting to ${widget.device.remoteId.str}...');
-    setState(() => _connecting = true);
+    setState(() {
+      _connecting = true;
+      _boardWifi = false;
+      _boardServer = false;
+    });
     Object? lastError;
     for (var attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -555,7 +564,11 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (mounted) {
         setState(() {
           _connected = s == BluetoothConnectionState.connected;
-          if (!_connected) _connecting = false;
+          if (!_connected) {
+            _connecting = false;
+            _boardWifi = false;
+            _boardServer = false;
+          }
         });
         _addLog('BLE state: ${s.name}');
       }
@@ -757,7 +770,11 @@ class _DeviceScreenState extends State<DeviceScreen>
     if (ssid.isEmpty) return;
 
     _onboardingProfiler.begin();
-    setState(() => _sendingWifi = true);
+    setState(() {
+      _sendingWifi = true;
+      _boardWifi = false;
+      _boardServer = false;
+    });
     try {
       final baud = int.tryParse(_baudCtrl.text.trim());
       final baseUrl = _baseUrl;
@@ -1336,25 +1353,14 @@ class _DeviceScreenState extends State<DeviceScreen>
             width: 0.5,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 4,
-              height: 4,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
-                color: color,
-              ),
-            ),
-          ],
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+            color: color,
+          ),
         ),
       ),
     );
