@@ -459,9 +459,18 @@ class _DeviceScreenState extends State<DeviceScreen>
       wifi = true;
       server = true;
     }
+    if (line.contains('Heartbeat result code:') &&
+        !line.contains('Heartbeat result code: 200')) {
+      server = false;
+    }
     if (upper.contains('HEARTBEAT_FAILED') ||
-        line.contains('Heartbeat result code: -1') ||
         line.contains('Heartbeat: all attempts failed')) {
+      server = false;
+    }
+    if (line.contains('Board registration cleared') ||
+        line.contains('Server deleted this board') ||
+        upper.contains('BOARD_DELETED')) {
+      wifi = false;
       server = false;
     }
 
@@ -1340,7 +1349,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     return Tooltip(
       message: tooltip,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
           color: active
               ? accent.withValues(alpha: 0.1)
@@ -1356,7 +1365,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 9,
+            fontSize: 10.5,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.3,
             color: color,
