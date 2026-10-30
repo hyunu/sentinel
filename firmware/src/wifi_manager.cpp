@@ -27,7 +27,7 @@ static const char *NVS_NS = "sentinel";
 // UART frames arrive faster than one HTTP request can be completed. Queue a
 // short burst and send it through the batch endpoint to avoid serial RX
 // overflows and the huge per-frame HTTP overhead.
-static const int UART_BATCH_MAX = 24;
+static const int UART_BATCH_MAX = 128;
 static const unsigned long UART_BATCH_INTERVAL_MS = 500;
 static String uartBatch[UART_BATCH_MAX];
 static int uartBatchCount = 0;

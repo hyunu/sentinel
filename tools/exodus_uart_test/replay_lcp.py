@@ -6,14 +6,14 @@ The CSV is produced by the exodus UART capture tool and uses:
     Time,Dir,Raw
 
 Only rows where the sender is LCP are sent. By default the replay loops
-forever, sending one packet every 200 ms.
+forever, sending one packet every 100 ms.
 
 Example:
     python replay_lcp.py \
         --csv LCP_TEST_M8_2026-06-22_17-29-45.CSV \
         --port /dev/cu.usbserial-0001 \
         --baud 19200 \
-        --interval-ms 200
+        --interval-ms 100
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def main() -> int:
     )
     parser.add_argument("--port", default="/dev/cu.usbserial-0001")
     parser.add_argument("--baud", type=int, default=19200)
-    parser.add_argument("--interval-ms", type=float, default=200.0)
+    parser.add_argument("--interval-ms", type=float, default=100.0)
     parser.add_argument(
         "--sender",
         default="LCP",
