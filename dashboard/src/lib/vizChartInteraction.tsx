@@ -358,7 +358,7 @@ export function normalizeWheelDeltaY(e: WheelEvent): number {
 }
 
 /** exp scale: negative deltaY = zoom in (factor < 1). */
-const WHEEL_ZOOM_EXP_SCALE = 0.004;
+const WHEEL_ZOOM_EXP_SCALE = 0.003;
 const WHEEL_DELTA_DEAD_ZONE = 0.5;
 const WHEEL_DELTA_CLAMP = 400;
 const WHEEL_FACTOR_MIN = 0.3;

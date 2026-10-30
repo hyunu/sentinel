@@ -6,6 +6,7 @@ import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
 import ChartSeriesGroup from '../components/ChartSeriesGroup';
+import VizFieldPicker from '../components/VizFieldPicker';
 import { buildCursorValueRows } from '../components/ChartCursorValues';
 import VizCanvasChart, { type VizCanvasChartHandle } from '../components/VizCanvasChart';
 import PageHeader from '../components/PageHeader';
@@ -579,7 +580,6 @@ export default function VizDashboardPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [itemFieldSearch, setItemFieldSearch] = useState('');
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
-  const [addFieldPick, setAddFieldPick] = useState('');
   const itemFieldSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [chartManualOpen, setChartManualOpen] = useState(false);
@@ -588,12 +588,19 @@ export default function VizDashboardPage() {
   const liveFollowRef = useRef(true);
   const liveSpanMsRef = useRef<number | null>(null);
   const reloadLiveTailRef = useRef<() => Promise<void>>(async () => {});
+  const autoQueryRef = useRef<() => void>(() => {});
+  const autoQueryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
   const chartCanvasRef = useRef<VizCanvasChartHandle | null>(null);
   const chartCardRef = useRef<HTMLDivElement | null>(null);
-  const chartZoomRef = useRef<ChartZoomRange | null>(null);
-  chartZoomRef.current = chartZoom;
+  const chartZoomRef = useRef<ChartZoomRange | null>(chartZoom);
+  // Do not assign chartZoomRef.current on every render. Interaction code updates
+  // it imperatively during pan/wheel; an unrelated React render (hover, polling,
+  // resize, etc.) must not snap the viewport back to the last committed state.
+  useEffect(() => {
+    chartZoomRef.current = chartZoom;
+  }, [chartZoom]);
   const chartDataLengthRef = useRef(0);
   chartDataLengthRef.current = chartData.length;
   const chartDataRef = useRef(chartData);
@@ -615,11 +622,17 @@ export default function VizDashboardPage() {
   const panSessionRef = useRef<{
     pointerId: number;
     startX: number;
-    zoomStart: number;
-    zoomEnd: number;
-    startTs?: string;
-    endTs?: string;
-    span: number;
+    /** Viewport at pointer-down. Pan deltas are applied to this fixed range,
+     *  not to the previous animation frame (which double-counted movement). */
+    baseStartMs: number;
+    baseEndMs: number;
+  } | null>(null);
+  /** Wheel input is accumulated and applied once per animation frame. */
+  const wheelRafRef = useRef<number | null>(null);
+  const pendingWheelRef = useRef<{
+    panDeltaX: number;
+    zoomDeltaY: number;
+    clientX: number;
   } | null>(null);
   const activeChartPointerRef = useRef<number | null>(null);
   const isChartSelectingRef = useRef(false);
@@ -682,6 +695,9 @@ export default function VizDashboardPage() {
     if (viewportFinishTimerRef.current) clearTimeout(viewportFinishTimerRef.current);
     viewportFinishTimerRef.current = setTimeout(() => {
       viewportFinishTimerRef.current = null;
+      // Keep Y/overlays stable while the user is actively dragging. The
+      // pointer-up path flushes the final viewport explicitly.
+      if (panSessionRef.current) return;
       chartCanvasRef.current?.syncViewportFinish();
     }, VIEWPORT_FINISH_DEBOUNCE_MS);
   }, []);
@@ -860,7 +876,14 @@ export default function VizDashboardPage() {
     chartZoomRef.current = nextRange;
     updateLiveFollowFromZoom(nextRange);
     if (inMemoryFullRef.current) {
-      chartCanvasRef.current?.setWindowByIndex(nextRange.start, nextRange.end, { syncY: true });
+      // Keep Y-scale computation out of the gesture loop. It is flushed once
+      // when the viewport settles, same as the downsampled/detail path.
+      chartCanvasRef.current?.setWindowByIndex(
+        nextRange.start,
+        nextRange.end,
+        { syncY: false, lightweight: true },
+      );
+      scheduleViewportFinishRef.current();
     } else if (nextRange.startTs && nextRange.endTs) {
       const startMs = Date.parse(nextRange.startTs);
       const endMs = Date.parse(nextRange.endTs);
@@ -877,6 +900,9 @@ export default function VizDashboardPage() {
       if (zoomCommitTimerRef.current) clearTimeout(zoomCommitTimerRef.current);
       zoomCommitTimerRef.current = setTimeout(() => {
         zoomCommitTimerRef.current = null;
+        // A slow drag must not commit a new React window (and start detail
+        // fetches) halfway through the gesture. pointer-up flushes it.
+        if (panSessionRef.current) return;
         syncReactChartZoomFromRef();
       }, ZOOM_COMMIT_DEBOUNCE_MS);
     };
@@ -1266,32 +1292,13 @@ export default function VizDashboardPage() {
       if (plotWidth <= 0 || len === 0 || data.length === 0) return;
 
       const fullSpan = fullChartTimeSpan(data);
-      const current = inMemoryFullRef.current
-        ? resolveChartZoomTimeRange(
-          data,
-          {
-            start: session.zoomStart,
-            end: session.zoomEnd,
-            startTs: session.startTs,
-            endTs: session.endTs,
-          },
-          len,
-        )
-        : (chartCanvasRef.current?.getXScaleMs()
-          ?? resolveChartZoomTimeRange(
-            data,
-            {
-              start: session.zoomStart,
-              end: session.zoomEnd,
-              startTs: session.startTs,
-              endTs: session.endTs,
-            },
-            len,
-          ));
-      if (!fullSpan || !current) return;
+      if (!fullSpan) return;
 
+      // Always apply the total pointer delta to the viewport captured at
+      // pointer-down. Using the previous animation frame here double-counts
+      // movement and makes panning accelerate/overshoot.
       const next = computePanTimeRange(
-        current,
+        { startMs: session.baseStartMs, endMs: session.baseEndMs },
         deltaX,
         plotWidth,
         fullSpan.startMs,
@@ -1411,19 +1418,25 @@ export default function VizDashboardPage() {
 
       {
         const len = chartDataLengthRef.current;
-        if (len === 0) return;
+        const data = chartDataRef.current;
+        if (len === 0 || data.length === 0) return;
         const zoom = chartZoomRef.current;
-        const zoomStart = zoom?.start ?? 0;
-        const zoomEnd = zoom?.end ?? len - 1;
+        const fullSpan = fullChartTimeSpan(data);
+        const baseRange = chartCanvasRef.current?.getXScaleMs()
+          ?? resolveChartZoomTimeRange(data, zoom, len)
+          ?? fullSpan;
+        if (
+          !baseRange
+          || !fullSpan
+          || isFullChartTimeRange(baseRange, fullSpan.startMs, fullSpan.endMs)
+        ) return;
         panSessionRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
-          zoomStart,
-          zoomEnd,
-          startTs: zoom?.startTs,
-          endTs: zoom?.endTs,
-          span: zoomEnd - zoomStart + 1,
+          baseStartMs: baseRange.startMs,
+          baseEndMs: baseRange.endMs,
         };
+        liveFollowRef.current = false;
         isChartSelectingRef.current = false;
         refAreaLeftRef.current = null;
         refAreaRightRef.current = null;
@@ -1663,35 +1676,73 @@ export default function VizDashboardPage() {
       liveFollowRef.current = false;
     };
 
+    const flushWheelGesture = () => {
+      wheelRafRef.current = null;
+      const gesture = pendingWheelRef.current;
+      pendingWheelRef.current = null;
+      if (!gesture) return;
+
+      // Pan first, then compute the zoom anchor against the panned viewport.
+      if (gesture.panDeltaX !== 0) {
+        applyWheelPan(gesture.panDeltaX);
+      }
+      if (gesture.zoomDeltaY !== 0 && wheelDeltaToZoomFactor(gesture.zoomDeltaY) != null) {
+        const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(gesture.clientX) ?? null;
+        const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(
+          el,
+          chartPlotBoundsRef.current,
+        );
+        const focusRatio = focusMs != null
+          ? 0.5
+          : wheelFocusRatioFromClientX(
+            gesture.clientX,
+            plotLeft,
+            Math.max(plotWidth, el.clientWidth),
+          );
+        applyWheelZoom(gesture.zoomDeltaY, focusRatio, focusMs);
+      }
+    };
+
     const onWheel = (e: WheelEvent) => {
       if (chartDataLengthRef.current === 0) return;
 
       e.preventDefault();
       e.stopPropagation();
 
+      const pending = pendingWheelRef.current ?? {
+        panDeltaX: 0,
+        zoomDeltaY: 0,
+        clientX: e.clientX,
+      };
+      pending.clientX = e.clientX;
+
       if (isWheelHorizontalPan(e)) {
         if (!isViewportZoomed()) return;
         const absX = Math.abs(e.deltaX);
         const absY = Math.abs(e.deltaY);
-        const panDelta = e.shiftKey && absY >= absX ? e.deltaY : e.deltaX;
-        applyWheelPan(panDelta);
-        return;
+        pending.panDeltaX += e.shiftKey && absY >= absX
+          ? normalizeWheelDeltaY(e)
+          : e.deltaX;
+      } else {
+        const deltaY = normalizeWheelDeltaY(e);
+        if (wheelDeltaToZoomFactor(deltaY) == null) return;
+        pending.zoomDeltaY += deltaY;
       }
 
-      const deltaY = normalizeWheelDeltaY(e);
-      if (wheelDeltaToZoomFactor(deltaY) == null) return;
-
-      const focusMs = chartCanvasRef.current?.getWheelFocusMsFromClientX(e.clientX) ?? null;
-      const { plotLeft, plotWidth } = getChartPlotMetricsFromViewport(el, chartPlotBoundsRef.current);
-      const focusRatio = focusMs != null
-        ? 0.5
-        : wheelFocusRatioFromClientX(e.clientX, plotLeft, Math.max(plotWidth, el.clientWidth));
-      applyWheelZoom(deltaY, focusRatio, focusMs);
+      pendingWheelRef.current = pending;
+      if (wheelRafRef.current == null) {
+        wheelRafRef.current = requestAnimationFrame(flushWheelGesture);
+      }
     };
 
     el.addEventListener('wheel', onWheel, { passive: false, capture: true });
     return () => {
       el.removeEventListener('wheel', onWheel, { capture: true });
+      if (wheelRafRef.current != null) {
+        cancelAnimationFrame(wheelRafRef.current);
+        wheelRafRef.current = null;
+      }
+      pendingWheelRef.current = null;
       if (panRafRef.current != null) {
         cancelAnimationFrame(panRafRef.current);
         panRafRef.current = null;
@@ -2053,6 +2104,12 @@ export default function VizDashboardPage() {
   }, [runVizQuery, buildTimeRange, chartQueryTimeRange, timeRangePresetId, customStart, customEnd]);
 
   useEffect(() => {
+    autoQueryRef.current = () => {
+      if (!liveModeRef.current) void fetchAll();
+    };
+  }, [fetchAll]);
+
+  useEffect(() => {
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
       if (shouldIgnoreVizKeyboardShortcut(e.target, chartManualOpen)) return;
 
@@ -2241,6 +2298,10 @@ export default function VizDashboardPage() {
     overviewAbortRef.current?.abort();
     detailAbortRef.current?.abort();
     liveAbortRef.current?.abort();
+    if (autoQueryTimerRef.current) {
+      clearTimeout(autoQueryTimerRef.current);
+      autoQueryTimerRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -2266,16 +2327,29 @@ export default function VizDashboardPage() {
     [boardProtocol],
   );
 
+  const scheduleAutoQuery = useCallback(() => {
+    if (liveModeRef.current) return;
+    if (autoQueryTimerRef.current) clearTimeout(autoQueryTimerRef.current);
+    autoQueryTimerRef.current = setTimeout(() => {
+      autoQueryTimerRef.current = null;
+      autoQueryRef.current();
+    }, 120);
+  }, []);
+
   const addAllFields = () => {
     if (!boardProtocol) return;
-    const usedShortLabels = new Set(items.map(i => chartLabel(i)));
-    const newItems = protocolFieldPaths
-      .filter(name => !existingFieldLabels.has(name))
-      .map((name, i) => ({
-        ...makeItem(boardProtocol.id, name, items.length + i, usedShortLabels),
-        visible: i < 5,
-      }));
-    if (newItems.length) setItems(prev => [...prev, ...newItems]);
+    setItems(prev => {
+      const usedShortLabels = new Set(prev.map(i => chartLabel(i)));
+      const existing = new Set(prev.map(i => i.label));
+      const newItems = protocolFieldPaths
+        .filter(name => !existing.has(name))
+        .map((name, i) => ({
+          ...makeItem(boardProtocol.id, name, prev.length + i, usedShortLabels),
+          visible: i < 5,
+        }));
+      return newItems.length ? [...prev, ...newItems] : prev;
+    });
+    scheduleAutoQuery();
   };
 
   const availableFields = useMemo(
@@ -2285,10 +2359,12 @@ export default function VizDashboardPage() {
 
   const addField = useCallback((fieldName: string) => {
     if (!boardProtocol || !fieldName) return;
-    const usedShortLabels = new Set(items.map(i => chartLabel(i)));
-    setItems(prev => [...prev, makeItem(boardProtocol.id, fieldName, prev.length, usedShortLabels)]);
-    setAddFieldPick('');
-  }, [boardProtocol, items]);
+    setItems(prev => {
+      const usedShortLabels = new Set(prev.map(i => chartLabel(i)));
+      return [...prev, makeItem(boardProtocol.id, fieldName, prev.length, usedShortLabels)];
+    });
+    scheduleAutoQuery();
+  }, [boardProtocol, scheduleAutoQuery]);
 
   const toggleVisibility = (id: string) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, visible: !i.visible } : i));
@@ -3293,25 +3369,15 @@ export default function VizDashboardPage() {
                 {t('viz.addAllFields')}
               </button>
               <div className="viz-add-field-group">
-                <select
-                  value={addFieldPick}
-                  onChange={e => setAddFieldPick(e.target.value)}
+                <VizFieldPicker
+                  fields={availableFields}
                   disabled={!boardProtocol || availableFields.length === 0}
-                  aria-label={t('viz.addField')}
-                >
-                  <option value="">{t('viz.addField')}</option>
-                  {availableFields.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn-sm"
-                  onClick={() => addField(addFieldPick)}
-                  disabled={!addFieldPick}
-                >
-                  +
-                </button>
+                  placeholder={t('viz.searchFieldPlaceholder')}
+                  ariaLabel={t('viz.searchFields')}
+                  clearLabel={t('viz.clear')}
+                  noResultsLabel={query => t('viz.noFieldMatch', { query })}
+                  onAdd={addField}
+                />
               </div>
             </div>
             <div className="viz-items-header-right">
