@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -285,10 +286,12 @@ func TestAIToolsIntegration(t *testing.T) {
 		if len(points) != 2 || !meta.Downsampled {
 			t.Fatalf("points=%#v meta=%#v", points, meta)
 		}
-		if points[0].Values["temperature"].(float64) != 18 {
+		// Each rollup group contributes one averaged point. The first group
+		// covers 20/31/35 and the second covers 22/40/18.
+		if got := points[0].Values["temperature"].(float64); math.Abs(got-(86.0/3.0)) > 1e-9 {
 			t.Fatalf("first point = %#v", points[0])
 		}
-		if points[len(points)-1].Values["temperature"].(float64) != 40 {
+		if got := points[len(points)-1].Values["temperature"].(float64); math.Abs(got-(80.0/3.0)) > 1e-9 {
 			t.Fatalf("last point = %#v", points[len(points)-1])
 		}
 	})

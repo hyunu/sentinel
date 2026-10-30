@@ -18,7 +18,7 @@ export type VizChartPoint = { timeKey: string } & Record<string, string | number
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
 import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
-import { shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
+import { chartSessionGapThresholdSec, shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
 import { filterChartPointsByTimeRange } from '../lib/vizChartZoomTime';
 import { computeYAxisDomain } from '../lib/vizDashboardUtils';
 
@@ -226,6 +226,7 @@ function buildSeriesConfig(
   resolveYScale: (item: VizItem) => typeof PRIMARY_SCALE | typeof SECONDARY_SCALE,
   maxVisibleSeries: number,
   getSessionBreakTimesSec: () => readonly number[],
+  getGapThresholdSec: () => number,
 ): Series[] {
   let visibleRank = 0;
   // spanGaps must stay false so uPlot invokes this refiner (spanGaps: true skips gaps entirely).
@@ -236,10 +237,11 @@ function buildSeriesConfig(
     const xs = u.data[0];
     if (!xs) return gaps;
     const breakTimes = getSessionBreakTimesSec();
+    const gapThresholdSec = getGapThresholdSec();
     const from = Math.min(idx0, idx1);
     const to = Math.max(idx0, idx1);
     for (let i = from; i < to; i++) {
-      if (!shouldGapLineSegment(xs[i], xs[i + 1], breakTimes)) continue;
+      if (!shouldGapLineSegment(xs[i], xs[i + 1], breakTimes, gapThresholdSec)) continue;
       const fromPx = u.valToPos(xs[i], 'x', true);
       const toPx = u.valToPos(xs[i + 1], 'x', true);
       gaps.push([fromPx, toPx]);
@@ -359,6 +361,12 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     return points;
   }, [points, xWindowTimeKeys, fullTimeline, filterPointsToXWindow]);
   pointsRef.current = plotPoints;
+  const gapThresholdSecRef = useRef(30);
+  const gapThresholdSec = useMemo(
+    () => chartSessionGapThresholdSec(plotPoints.map(point => point.timeKey)),
+    [plotPoints],
+  );
+  gapThresholdSecRef.current = gapThresholdSec;
   const fullTimelineRef = useRef(fullTimeline);
   fullTimelineRef.current = fullTimeline;
   const chartItemsRef = useRef(chartItems);
@@ -435,6 +443,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     () => sessionBreakTimesRef.current,
     [],
   );
+  const getGapThresholdSec = useCallback(() => gapThresholdSecRef.current, []);
 
   const syncYScalesToVisibleWindow = useCallback((u: uPlot, startSec: number, endSec: number) => {
     const points = pointsRef.current;
@@ -741,6 +750,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         item => resolveYScaleRef.current(item),
         maxVisibleSeries,
         getSessionBreakTimesSec,
+        getGapThresholdSec,
       ),
       hooks: {
         drawAxes: [(u) => drawXAxisGridBehind(u, gridColor)],
@@ -848,7 +858,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec]);
+  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec, getGapThresholdSec]);
 
   useEffect(() => {
     const u = plotRef.current;

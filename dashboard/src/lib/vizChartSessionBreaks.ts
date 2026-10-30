@@ -57,6 +57,26 @@ export function spectrumBinsForSessionGaps(spanMs: number, maxBins = 2000, minBi
   return Math.min(maxBins, Math.max(minBins, needed));
 }
 
+/**
+ * Gap threshold for line segments in the currently plotted data.
+ * Downsampled series can legitimately be 60s apart; using the fixed 30s
+ * session threshold would break every segment and turn the chart into dots.
+ */
+export function chartSessionGapThresholdSec(timeKeys: readonly string[]): number {
+  const intervals: number[] = [];
+  for (let i = 0; i < timeKeys.length - 1; i++) {
+    const a = Date.parse(timeKeys[i]) / 1000;
+    const b = Date.parse(timeKeys[i + 1]) / 1000;
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    const delta = b - a;
+    if (delta > 0) intervals.push(delta);
+  }
+  if (intervals.length === 0) return VIZ_SESSION_GAP_SECONDS;
+  intervals.sort((a, b) => a - b);
+  const median = intervals[Math.floor(intervals.length / 2)];
+  return Math.max(VIZ_SESSION_GAP_SECONDS, median * 2.5);
+}
+
 export function hasSessionBreakBetween(
   fromSec: number,
   toSec: number,

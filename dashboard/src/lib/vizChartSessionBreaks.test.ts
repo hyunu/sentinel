@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  chartSessionGapThresholdSec,
   findSessionBreakTimesFromSpectrum,
   findSessionBreakTimesSec,
   shouldGapLineSegment,
@@ -51,6 +52,30 @@ describe('findSessionBreakTimesFromSpectrum', () => {
       true, true, true, true,
     ];
     expect(findSessionBreakTimesFromSpectrum(start, end, present)).toHaveLength(0);
+  });
+});
+
+describe('chartSessionGapThresholdSec', () => {
+  it('does not gap normal 60s downsampled spacing', () => {
+    const keys = [
+      '2025-08-21T00:00:00.000Z',
+      '2025-08-21T00:01:00.000Z',
+      '2025-08-21T00:02:00.000Z',
+    ];
+    const threshold = chartSessionGapThresholdSec(keys);
+    expect(threshold).toBeGreaterThanOrEqual(150);
+    const from = Date.parse(keys[0]) / 1000;
+    const to = Date.parse(keys[1]) / 1000;
+    expect(shouldGapLineSegment(from, to, [], threshold)).toBe(false);
+  });
+
+  it('keeps the 30s floor for dense raw data', () => {
+    const keys = [
+      '2025-08-21T00:00:00.000Z',
+      '2025-08-21T00:00:00.100Z',
+      '2025-08-21T00:00:00.200Z',
+    ];
+    expect(chartSessionGapThresholdSec(keys)).toBe(30);
   });
 });
 

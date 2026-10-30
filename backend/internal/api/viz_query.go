@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"math"
 	"sort"
 	"time"
 
@@ -98,134 +97,58 @@ func vizValuesFromDoc(d *vizSampleDoc, items []models.VizItem) map[string]interf
 	return vals
 }
 
-func vizValuesFromParsed(parsed map[string]interface{}, items []models.VizItem) map[string]interface{} {
-	vals := make(map[string]interface{})
-	if parsed == nil {
-		return vals
-	}
-	for _, item := range items {
-		if v, ok := parsed[item.FieldRef.FieldName]; ok {
-			if fv, ok := extractVizValue(v); ok {
-				vals[item.Label] = fv
-			}
-		}
-	}
-	return vals
-}
-
-func rowMaxField(parsed map[string]interface{}, items []models.VizItem) (float64, bool) {
-	max := -math.MaxFloat64
-	found := false
-	for _, item := range items {
-		if v, ok := parsed[item.FieldRef.FieldName]; ok {
-			if fv, ok := extractVizValue(v); ok {
-				found = true
-				if fv > max {
-					max = fv
-				}
-			}
-		}
-	}
-	if !found {
-		return 0, false
-	}
-	return max, true
-}
-
-func rowMinField(parsed map[string]interface{}, items []models.VizItem) (float64, bool) {
-	min := math.MaxFloat64
-	found := false
-	for _, item := range items {
-		if v, ok := parsed[item.FieldRef.FieldName]; ok {
-			if fv, ok := extractVizValue(v); ok {
-				found = true
-				if fv < min {
-					min = fv
-				}
-			}
-		}
-	}
-	if !found {
-		return 0, false
-	}
-	return min, true
-}
-
-func expandBucketMinMax(docs []vizBucketDocEntry, items []models.VizItem) []vizDataPoint {
+func expandBucketAverage(docs []vizBucketDocEntry, items []models.VizItem) []vizDataPoint {
 	if len(docs) == 0 {
 		return nil
 	}
 
-	type pick struct {
-		ts   time.Time
-		vals map[string]interface{}
+	type accumulator struct {
+		sum   float64
+		count int
 	}
 
-	picks := make([]pick, 0, 4)
-	seen := make(map[int64]struct{}, 4)
+	accumulators := make(map[string]*accumulator, len(items))
+	start := docs[0].Timestamp
+	end := docs[0].Timestamp
 
-	addEntry := func(entry vizBucketDocEntry) {
-		key := entry.Timestamp.UnixNano()
-		if _, ok := seen[key]; ok {
-			return
+	for _, doc := range docs {
+		if doc.Timestamp.Before(start) {
+			start = doc.Timestamp
 		}
-		vals := vizValuesFromParsed(entry.ParsedFields, items)
-		if len(vals) == 0 {
-			return
+		if doc.Timestamp.After(end) {
+			end = doc.Timestamp
 		}
-		seen[key] = struct{}{}
-		picks = append(picks, pick{ts: entry.Timestamp, vals: vals})
-	}
-
-	addEntry(docs[0])
-	if len(docs) > 1 {
-		addEntry(docs[len(docs)-1])
-	}
-
-	peakIdx := 0
-	valleyIdx := 0
-	peakScore := -math.MaxFloat64
-	valleyScore := math.MaxFloat64
-	hasPeak := false
-	hasValley := false
-
-	for i, doc := range docs {
-		if maxV, ok := rowMaxField(doc.ParsedFields, items); ok {
-			if !hasPeak || maxV > peakScore {
-				peakScore = maxV
-				peakIdx = i
-				hasPeak = true
+		for _, item := range items {
+			fieldName := item.FieldRef.FieldName
+			if fieldName == "" || item.Label == "" {
+				continue
 			}
-		}
-		if minV, ok := rowMinField(doc.ParsedFields, items); ok {
-			if !hasValley || minV < valleyScore {
-				valleyScore = minV
-				valleyIdx = i
-				hasValley = true
+			value, ok := extractVizValue(doc.ParsedFields[fieldName])
+			if !ok {
+				continue
 			}
+			acc := accumulators[item.Label]
+			if acc == nil {
+				acc = &accumulator{}
+				accumulators[item.Label] = acc
+			}
+			acc.sum += value
+			acc.count++
 		}
 	}
 
-	if hasPeak {
-		addEntry(docs[peakIdx])
+	values := make(map[string]interface{}, len(accumulators))
+	for label, acc := range accumulators {
+		if acc.count > 0 {
+			values[label] = acc.sum / float64(acc.count)
+		}
 	}
-	if hasValley {
-		addEntry(docs[valleyIdx])
-	}
-
-	if len(picks) == 0 {
+	if len(values) == 0 {
 		return nil
 	}
 
-	sort.Slice(picks, func(i, j int) bool {
-		return picks[i].ts.Before(picks[j].ts)
-	})
-
-	out := make([]vizDataPoint, len(picks))
-	for i, p := range picks {
-		out[i] = vizDataPoint{Timestamp: p.ts, Values: p.vals}
-	}
-	return out
+	mid := start.Add(end.Sub(start) / 2)
+	return []vizDataPoint{{Timestamp: mid, Values: values}}
 }
 
 func vizMaxBucketsForLimit(limit int) int {
@@ -428,7 +351,7 @@ func (h *Handler) queryVizSeries(
 		if err := cursor.Decode(&group); err != nil {
 			continue
 		}
-		bucketPoints := expandBucketMinMax(group.Docs, items)
+		bucketPoints := expandBucketAverage(group.Docs, items)
 		results = append(results, bucketPoints...)
 	}
 	if err := cursor.Err(); err != nil {

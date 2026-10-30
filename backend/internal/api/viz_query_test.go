@@ -43,7 +43,7 @@ func TestVizMaxBucketsForLimit(t *testing.T) {
 	}
 }
 
-func TestExpandBucketMinMaxPreservesSpike(t *testing.T) {
+func TestExpandBucketAverageOnePointPerBucket(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -58,20 +58,19 @@ func TestExpandBucketMinMaxPreservesSpike(t *testing.T) {
 		{Timestamp: base.Add(3 * time.Minute), ParsedFields: map[string]interface{}{"rpm": 110.0}},
 	}
 
-	points := expandBucketMinMax(docs, items)
-	if len(points) < 2 {
-		t.Fatalf("expected at least 2 points, got %d", len(points))
+	points := expandBucketAverage(docs, items)
+	if len(points) != 1 {
+		t.Fatalf("expected exactly one point per bucket, got %d: %+v", len(points), points)
 	}
 
-	foundSpike := false
-	for _, p := range points {
-		if v, ok := p.Values["rpm"].(float64); ok && math.Abs(v-9999.0) < 1e-9 {
-			foundSpike = true
-			break
-		}
+	want := (100.0 + 120.0 + 9999.0 + 110.0) / 4
+	got, ok := points[0].Values["rpm"].(float64)
+	if !ok || math.Abs(got-want) > 1e-9 {
+		t.Fatalf("average = %v, want %v", got, want)
 	}
-	if !foundSpike {
-		t.Fatalf("spike value 9999 not preserved in bucket output: %+v", points)
+	wantTS := base.Add(90 * time.Second)
+	if !points[0].Timestamp.Equal(wantTS) {
+		t.Fatalf("timestamp = %s, want %s", points[0].Timestamp, wantTS)
 	}
 }
 
@@ -153,5 +152,15 @@ func TestChooseVizRollupGranularity(t *testing.T) {
 	gran, use = chooseVizRollupGranularity(10000, 8000, start, true, end, true)
 	if use || gran != 0 {
 		t.Fatalf("expected raw path for small overflow, got gran=%d use=%v", gran, use)
+	}
+
+	gran, use = chooseVizRollupGranularity(33633, 8000, time.Time{}, false, time.Time{}, false)
+	if !use || gran != 10 {
+		t.Fatalf("expected 10s buckets for moderate all-range query, got gran=%d use=%v", gran, use)
+	}
+
+	gran, use = chooseVizRollupGranularity(500000, 8000, time.Time{}, false, time.Time{}, false)
+	if !use || gran != 60 {
+		t.Fatalf("expected 60s buckets for large all-range query, got gran=%d use=%v", gran, use)
 	}
 }
