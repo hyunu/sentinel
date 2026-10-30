@@ -12,7 +12,7 @@ Example:
     python replay_lcp.py \
         --csv LCP_TEST_M8_2026-06-22_17-29-45.CSV \
         --port /dev/cu.usbserial-0001 \
-        --baud 115200 \
+        --baud 19200 \
         --interval-ms 200
 """
 
@@ -94,7 +94,7 @@ def main() -> int:
         default=Path(__file__).with_name("LCP_TEST_M8_2026-06-22_17-29-45.CSV"),
     )
     parser.add_argument("--port", default="/dev/cu.usbserial-0001")
-    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--baud", type=int, default=19200)
     parser.add_argument("--interval-ms", type=float, default=200.0)
     parser.add_argument(
         "--sender",
