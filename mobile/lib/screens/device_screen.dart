@@ -99,6 +99,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _sendingWifi = false;
   bool _obscurePassword = true;
   bool _showValidation = false;
+  bool _profileDetailsExpanded = true;
   List<String> _uartLogs = [];
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
@@ -124,6 +125,11 @@ class _DeviceScreenState extends State<DeviceScreen>
     return StorageService.normalizeServerUrl(
       raw.isEmpty ? kDefaultServerUrl : raw,
     );
+  }
+
+  String _shortUrl(String url) {
+    if (url.isEmpty) return 'No server';
+    return url.replaceFirst(RegExp(r'^https?://'), '');
   }
 
   String? get _ssidError {
@@ -233,6 +239,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     setState(() {
       _onboardingProfiles = profiles;
       _selectedProfileId = selected?.id;
+      _profileDetailsExpanded = selected == null;
     });
 
     if (selected != null) {
@@ -251,6 +258,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     _urlCtrl.text = StorageService.normalizeServerUrl(profile.serverUrl);
     _baudCtrl.text = profile.baudRate?.toString() ?? '19200';
     _showValidation = false;
+    _profileDetailsExpanded = false;
     if (notify && mounted) {
       setState(() => _selectedProfileId = profile.id);
     }
@@ -307,7 +315,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     await _loadOnboardingProfiles(selectId: profile.id);
   }
 
-  Future<void> _promptSaveProfile() async {
+  Future<void> _promptSaveProfile({bool asNew = false}) async {
     final ssid = _ssidCtrl.text.trim();
     if (ssid.isEmpty) {
       AppToast.error(
@@ -318,7 +326,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       return;
     }
 
-    final nameCtrl = TextEditingController(text: ssid);
+    final nameCtrl = TextEditingController(
+      text: asNew ? '' : (_selectedProfile?.name ?? ssid),
+    );
     final saved = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -351,7 +361,10 @@ class _DeviceScreenState extends State<DeviceScreen>
     final name = nameCtrl.text.trim().isEmpty ? ssid : nameCtrl.text.trim();
     nameCtrl.dispose();
 
-    final profile = _profileFromFields(id: _selectedProfileId, name: name);
+    final profile = _profileFromFields(
+      id: asNew ? null : _selectedProfileId,
+      name: name,
+    );
     await _storage.saveOnboardingProfile(profile);
     if (_urlCtrl.text.trim().isNotEmpty) {
       await _storage.setServerUrl(_urlCtrl.text.trim());
@@ -1280,114 +1293,10 @@ class _DeviceScreenState extends State<DeviceScreen>
                 const SizedBox(height: 12),
                 _buildOnboardingProfilesSection(cs),
                 const SizedBox(height: 12),
-                _buildGlassCard(cs, [
-                  _buildFormGroupLabel(cs, 'WiFi network'),
-                  const SizedBox(height: 8),
-                  _buildTextField(
-                    cs,
-                    _ssidCtrl,
-                    'WiFi SSID',
-                    Icons.wifi_rounded,
-                    placeholder: 'e.g. rLGE',
-                    errorText: _showValidation ? _ssidError : null,
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 10),
-                  _buildTextField(
-                    cs,
-                    _passCtrl,
-                    'WiFi password',
-                    Icons.lock_rounded,
-                    obscure: _obscurePassword,
-                    showObscureToggle: true,
-                    errorText: _showValidation ? _passwordError : null,
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 16),
-                  _buildFormGroupLabel(cs, 'Device'),
-                  const SizedBox(height: 8),
-                  _buildTextField(
-                    cs,
-                    _baudCtrl,
-                    'Baud rate',
-                    Icons.speed_rounded,
-                    placeholder: '19200',
-                    errorText: _showValidation ? _baudError : null,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 16),
-                  _buildFormGroupLabel(cs, 'Server'),
-                  const SizedBox(height: 8),
-                  _buildTextField(
-                    cs,
-                    _urlCtrl,
-                    'Server URL',
-                    Icons.dns_rounded,
-                    placeholder: kDefaultServerUrl,
-                    errorText: _showValidation ? _urlError : null,
-                    helperText: 'ESP32 heartbeat and onboarding endpoint',
-                    keyboardType: TextInputType.url,
-                    textInputAction: TextInputAction.done,
-                  ),
-                  const SizedBox(height: 16),
-                  _buildFormGroupLabel(cs, 'Protocol'),
-                  const SizedBox(height: 8),
-                  if (_protocols.isEmpty)
-                    Text(
-                      'Load protocols from the server URL above.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                      ),
-                    )
-                  else
-                    DropdownButtonFormField<String>(
-                      key: ValueKey(_selectedProtoId),
-                      initialValue: _selectedProtoId,
-                      decoration: InputDecoration(
-                        labelText: 'UART parse protocol',
-                        filled: true,
-                        fillColor: cs.surface.withValues(alpha: 0.45),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      items: _protocols
-                          .map(
-                            (p) => DropdownMenuItem(
-                              value: p.id,
-                              child: Text(
-                                '${p.name} v${p.version}',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _onProtocolChanged,
-                    ),
-                  if (_protocols.isEmpty) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: _loadProtocols,
-                        icon: const Icon(Icons.refresh_rounded, size: 16),
-                        label: const Text('Reload protocols'),
-                      ),
-                    ),
-                  ],
-                  if (_selectedProtoId != null &&
-                      _selectedProtoId!.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Saved on the server for this board. ESP32 does not need the protocol ID.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
-                ]),
+                if (_selectedProfile != null && !_profileDetailsExpanded)
+                  _buildSelectedProfileSummary(cs, _selectedProfile!)
+                else
+                  _buildConnectionFormCard(cs),
                 if (_onboardingProfiler.steps.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _buildSectionHeader(
@@ -1408,6 +1317,254 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
   }
 
+  Widget _buildSelectedProfileSummary(
+    ColorScheme cs,
+    OnboardingProfile profile,
+  ) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.wifi_rounded, size: 18, color: cs.primary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      profile.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      profile.ssid,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() => _profileDetailsExpanded = true);
+                },
+                icon: const Icon(Icons.edit_outlined, size: 15),
+                label: const Text('Edit'),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 22),
+          _buildProfileSummaryRow(cs, 'Server', _shortUrl(profile.serverUrl)),
+          const SizedBox(height: 6),
+          _buildProfileSummaryRow(
+            cs,
+            'Baud',
+            profile.baudRate?.toString() ?? 'Default',
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Ready to send this profile. Press Send below to apply it to the board.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileSummaryRow(ColorScheme cs, String label, String value) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 58,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: cs.onSurface,
+              fontFamily: 'monospace',
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConnectionFormCard(ColorScheme cs) {
+    return _buildGlassCard(cs, [
+      if (_selectedProfile != null) ...[
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Connection details',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _profileDetailsExpanded = false);
+              },
+              icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 16),
+              label: const Text('Hide'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+      ],
+      _buildFormGroupLabel(cs, 'WiFi network'),
+      const SizedBox(height: 8),
+      _buildTextField(
+        cs,
+        _ssidCtrl,
+        'WiFi SSID',
+        Icons.wifi_rounded,
+        placeholder: 'e.g. rLGE',
+        errorText: _showValidation ? _ssidError : null,
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: 10),
+      _buildTextField(
+        cs,
+        _passCtrl,
+        'WiFi password',
+        Icons.lock_rounded,
+        obscure: _obscurePassword,
+        showObscureToggle: true,
+        errorText: _showValidation ? _passwordError : null,
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: 16),
+      _buildFormGroupLabel(cs, 'Device'),
+      const SizedBox(height: 8),
+      _buildTextField(
+        cs,
+        _baudCtrl,
+        'Baud rate',
+        Icons.speed_rounded,
+        placeholder: '19200',
+        errorText: _showValidation ? _baudError : null,
+        keyboardType: TextInputType.number,
+        textInputAction: TextInputAction.next,
+      ),
+      const SizedBox(height: 16),
+      _buildFormGroupLabel(cs, 'Server'),
+      const SizedBox(height: 8),
+      _buildTextField(
+        cs,
+        _urlCtrl,
+        'Server URL',
+        Icons.dns_rounded,
+        placeholder: kDefaultServerUrl,
+        errorText: _showValidation ? _urlError : null,
+        helperText: 'ESP32 heartbeat and onboarding endpoint',
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.done,
+      ),
+      const SizedBox(height: 16),
+      _buildFormGroupLabel(cs, 'Protocol'),
+      const SizedBox(height: 8),
+      if (_protocols.isEmpty)
+        Text(
+          'Load protocols from the server URL above.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+          ),
+        )
+      else
+        DropdownButtonFormField<String>(
+          key: ValueKey(_selectedProtoId),
+          initialValue: _selectedProtoId,
+          decoration: InputDecoration(
+            labelText: 'UART parse protocol',
+            filled: true,
+            fillColor: cs.surface.withValues(alpha: 0.45),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          items: _protocols
+              .map(
+                (p) => DropdownMenuItem(
+                  value: p.id,
+                  child: Text(
+                    '${p.name} v${p.version}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: _onProtocolChanged,
+        ),
+      if (_protocols.isEmpty) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _loadProtocols,
+            icon: const Icon(Icons.refresh_rounded, size: 16),
+            label: const Text('Reload protocols'),
+          ),
+        ),
+      ],
+      if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(
+          'Saved on the server for this board. ESP32 does not need the protocol ID.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+            height: 1.35,
+          ),
+        ),
+      ],
+    ]);
+  }
+
   Widget _buildControlActionBar(ColorScheme cs) {
     final busy = _sendingWifi || _connecting;
     final hasError = _formError != null;
@@ -1422,7 +1579,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         ? (_showValidation
               ? 'Check the highlighted fields'
               : 'Enter WiFi credentials')
-        : 'Changes are sent over BLE';
+        : (_selectedProfile != null && !_profileDetailsExpanded
+              ? 'Ready to send selected profile'
+              : 'Changes are sent over BLE');
 
     return SafeArea(
       top: false,
@@ -1537,6 +1696,16 @@ class _DeviceScreenState extends State<DeviceScreen>
                     color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
                 ),
+              IconButton(
+                tooltip: 'New profile',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _promptSaveProfile(asNew: true),
+                icon: Icon(
+                  Icons.add_rounded,
+                  size: 18,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -1640,7 +1809,7 @@ class _DeviceScreenState extends State<DeviceScreen>
             ),
             const SizedBox(height: 6),
             Text(
-              'Selecting a profile fills the fields below. Edit a field and press Send to use it.',
+              'Select a profile and press Send, or tap Edit to change its details.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant.withValues(alpha: 0.6),
                 height: 1.35,
