@@ -5,6 +5,8 @@
 
 void ble_init();
 void ble_send_uart_data(const String &hex_str);
+void ble_send_log(const String &text);
+void ble_loop();
 void ble_preload_uid(const String &uid);
 void ble_set_uid(const String &uid);
 void ble_set_wifi_mac(const String &mac);

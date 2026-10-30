@@ -6,6 +6,7 @@
 #include "wifi_manager.h"
 #include "config.h"
 #include "ble_service.h"
+#include "logger.h"
 
 static String board_id;
 static unsigned long lastHeartbeat = 0;
@@ -73,8 +74,8 @@ void wifi_init() {
     // WiFi.mode() must precede getBoardId(): before the station interface is
     // initialized WiFi.macAddress() can return a placeholder MAC.
     board_id = getBoardId();
-    Serial.printf("[WiFi] Board ID: %s\n", board_id.c_str());
-    Serial.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
+    AppLog.printf("[WiFi] Board ID: %s\n", board_id.c_str());
+    AppLog.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(false);
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
@@ -85,13 +86,13 @@ void wifi_init() {
     if (storedUid.length() > 0) {
         board_uid = storedUid;
         ble_preload_uid(storedUid);
-        Serial.printf("[WiFi] Restored UID: %s\n", board_uid.c_str());
+        AppLog.printf("[WiFi] Restored UID: %s\n", board_uid.c_str());
     }
 
     const String storedUrl = nvs_load_string("url");
     if (storedUrl.length() > 0) {
         backend_url = storedUrl;
-        Serial.printf("[WiFi] Restored backend URL: %s\n", backend_url.c_str());
+        AppLog.printf("[WiFi] Restored backend URL: %s\n", backend_url.c_str());
     }
 }
 
@@ -99,7 +100,7 @@ void wifi_startup() {
     const String ssid = nvs_load_string("ssid");
     const String pass = nvs_load_string("pass");
     if (ssid.length() > 0 && pass.length() > 0) {
-        Serial.printf("[WiFi] Auto-connect to stored network: %s\n", ssid.c_str());
+        AppLog.printf("[WiFi] Auto-connect to stored network: %s\n", ssid.c_str());
         wifi_connect(ssid, pass);
     }
 }
@@ -114,7 +115,7 @@ void wifi_connect(const String &ssid, const String &password) {
     nvs_save_string("pass", password);
 
     connecting = true;
-    Serial.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
+    AppLog.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
     WiFi.disconnect(false);
     delay(100);
     WiFi.begin(ssid.c_str(), password.c_str());
@@ -133,7 +134,7 @@ void wifi_loop() {
         // The STA netif may finalize its locally-administered MAC only after
         // association. Keep the BLE-readable MAC in sync with heartbeats.
         ble_set_wifi_mac(WiFi.macAddress());
-        Serial.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+        AppLog.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
         ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
     }
@@ -145,13 +146,13 @@ void wifi_loop() {
         WiFi.disconnect(false);
         ble_set_wifi_connected(false);
         ble_send_uart_data(String("EVENT:WIFI_FAILED"));
-        Serial.println("[WiFi] Connection timed out; waiting for new onboarding config");
+        AppLog.println("[WiFi] Connection timed out; waiting for new onboarding config");
     }
 
     if (pendingInitialHeartbeat && millis() - wifiConnectedAt >= 2500) {
         pendingInitialHeartbeat = false;
         if (!waitForWifiReady(15000)) {
-            Serial.println("[WiFi] Network not stable before initial heartbeat");
+            AppLog.println("[WiFi] Network not stable before initial heartbeat");
             ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
             return;
         }
@@ -171,14 +172,14 @@ void wifi_set_server_url(const String &url) {
     if (url.length() == 0) return;
     backend_url = url;
     nvs_save_string("url", url);
-    Serial.printf("[WiFi] Backend URL updated: %s\n", backend_url.c_str());
+    AppLog.printf("[WiFi] Backend URL updated: %s\n", backend_url.c_str());
 }
 
 void wifi_set_uid(const String &uid) {
     if (uid.length() == 0) return;
     board_uid = uid;
     nvs_save_string("uid", uid);
-    Serial.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
+    AppLog.printf("[WiFi] UID updated: %s\n", board_uid.c_str());
     ble_set_uid(uid);
 }
 
@@ -204,7 +205,7 @@ void wifi_clear_board_registration() {
     WiFi.setAutoReconnect(false);
     WiFi.disconnect(false);
     ble_set_wifi_connected(false);
-    Serial.println("[WiFi] Board registration cleared (server deleted)");
+    AppLog.println("[WiFi] Board registration cleared (server deleted)");
 }
 
 static String extract_json_string_field(const String &json, const char *key) {
@@ -229,12 +230,12 @@ static int http_post(const String &path, const String &body, String *responseOut
 
     int code = http.POST(body);
     if (code > 0) {
-        Serial.printf("[HTTP] POST %s: %d\n", path.c_str(), code);
+        AppLog.printf("[HTTP] POST %s: %d\n", path.c_str(), code);
         if (responseOut) {
             *responseOut = http.getString();
         }
     } else {
-        Serial.printf("[HTTP] POST %s failed: %d\n", path.c_str(), code);
+        AppLog.printf("[HTTP] POST %s failed: %d\n", path.c_str(), code);
     }
 
     http.end();
@@ -267,27 +268,27 @@ bool wifi_send_heartbeat() {
     // Keep onboarding's BLE identity aligned with the board_id used below.
     ble_set_wifi_mac(WiFi.macAddress());
     const String body = buildHeartbeatBody();
-    Serial.printf("[HTTP] Heartbeat body: %s\n", body.c_str());
+    AppLog.printf("[HTTP] Heartbeat body: %s\n", body.c_str());
 
     const int maxAttempts = 5;
     unsigned long backoffMs[] = {500, 1000, 2000, 3000, 4000};
     bool ok = false;
     for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
         if (!waitForWifiReady(5000)) {
-            Serial.printf("[HTTP] Heartbeat attempt %d/%d skipped: WiFi not ready\n", attempt, maxAttempts);
+            AppLog.printf("[HTTP] Heartbeat attempt %d/%d skipped: WiFi not ready\n", attempt, maxAttempts);
         } else {
-            Serial.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
-            Serial.printf("[HTTP] WiFi.status=%d, IP=%s\n", WiFi.status(), WiFi.localIP().toString().c_str());
+            AppLog.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
+            AppLog.printf("[HTTP] WiFi.status=%d, IP=%s\n", WiFi.status(), WiFi.localIP().toString().c_str());
             String response;
             int code = http_post("/api/v1/heartbeat", body, &response);
             ok = httpOk(code);
-            Serial.printf("[HTTP] Heartbeat result code: %d\n", code);
+            AppLog.printf("[HTTP] Heartbeat result code: %d\n", code);
             if (ok) {
                 const String action = extract_json_string_field(response, "action");
                 if (action == "deleted") {
                     wifi_clear_board_registration();
                     ble_send_uart_data(String("EVENT:BOARD_DELETED"));
-                    Serial.println("[HTTP] Server deleted this board — registration cleared");
+                    AppLog.println("[HTTP] Server deleted this board — registration cleared");
                 }
                 break;
             }
@@ -297,7 +298,7 @@ bool wifi_send_heartbeat() {
 
     lastHeartbeat = millis();
     if (!ok) {
-        Serial.println("[HTTP] Heartbeat: all attempts failed");
+        AppLog.println("[HTTP] Heartbeat: all attempts failed");
     }
     return ok;
 }

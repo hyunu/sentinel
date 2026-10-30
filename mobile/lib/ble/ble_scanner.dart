@@ -6,6 +6,7 @@ const String kUartServiceUuid = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartNotifyCharUuid = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartWriteCharUuid = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 const String kUartMacCharUuid = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
+const String kUartLogCharUuid = '6e400005-b5a3-f393-e0a9-e50e24dcca9e';
 
 enum SentinelBleState {
   unregistered,
@@ -42,7 +43,10 @@ class BleScanner {
 
   static String? parseUidFromAdData(AdvertisementData data) {
     final name = data.advName;
-    final nameMatch = RegExp(r'Sentinel-(\d+)', caseSensitive: false).firstMatch(name);
+    final nameMatch = RegExp(
+      r'Sentinel-(\d+)',
+      caseSensitive: false,
+    ).firstMatch(name);
     if (nameMatch != null) return nameMatch.group(1);
 
     final mfg = data.manufacturerData[mfgCompanyId];
@@ -108,13 +112,13 @@ class BleScanner {
   static bool isSentinelDevice(ScanResult r) {
     // Prefer advertisement local name when available (more up-to-date after adv change)
     final advName = r.advertisementData.advName;
-    final name = advName.isNotEmpty
-        ? advName
-        : r.device.platformName;
+    final name = advName.isNotEmpty ? advName : r.device.platformName;
     return name.toLowerCase().startsWith('sentinel');
   }
 
-  Future<List<BluetoothService>> discoverServices(BluetoothDevice device) async {
+  Future<List<BluetoothService>> discoverServices(
+    BluetoothDevice device,
+  ) async {
     if (_cachedServices != null) return _cachedServices!;
     if (_discoveryInProgress != null) return _discoveryInProgress!;
     _discoveryInProgress = device.discoverServices();
@@ -179,6 +183,25 @@ class BleScanner {
     );
   }
 
+  Future<Stream<String>> subscribeToDeviceLogs(BluetoothDevice device) async {
+    final ch = await _findChar(device, kUartLogCharUuid);
+    if (ch == null) throw Exception('Board log characteristic not found');
+    await ch.setNotifyValue(true);
+    return ch.onValueReceived.transform(
+      StreamTransformer<List<int>, String>.fromHandlers(
+        handleData: (data, sink) {
+          sink.add(String.fromCharCodes(data));
+        },
+      ),
+    );
+  }
+
+  Future<void> requestLogHistory(BluetoothDevice device) async {
+    final ch = await _findChar(device, kUartLogCharUuid);
+    if (ch == null) return;
+    await ch.write('HISTORY'.codeUnits, withoutResponse: false);
+  }
+
   Future<String?> readWifiMac(BluetoothDevice device) async {
     final macCh = await _findChar(device, kUartMacCharUuid);
     if (macCh == null) return null;
@@ -201,7 +224,8 @@ class BleScanner {
     try {
       final writeCh = await _findChar(device, kUartWriteCharUuid);
 
-      if (writeCh == null) throw Exception('WiFi config/write characteristic not found');
+      if (writeCh == null)
+        throw Exception('WiFi config/write characteristic not found');
 
       final json = StringBuffer('{');
       json.write('"ssid":"${_escapeJson(ssid)}",');
@@ -226,7 +250,8 @@ class BleScanner {
           return true;
         } catch (e) {
           lastError = e;
-          if (attempt < 3) await Future.delayed(const Duration(milliseconds: 500));
+          if (attempt < 3)
+            await Future.delayed(const Duration(milliseconds: 500));
         }
       }
       throw lastError ?? Exception('BLE write failed');

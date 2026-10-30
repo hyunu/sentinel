@@ -25,6 +25,7 @@
 #define UART_NOTIFY_CHAR_UUID   "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define UART_WRITE_CHAR_UUID    "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define UART_MAC_CHAR_UUID      "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
+#define UART_LOG_CHAR_UUID      "6e400005-b5a3-f393-e0a9-e50e24dcca9e"
 
 // legacy single-characteristic names kept for compatibility (not used)
 #define UART_DATA_CHAR_UUID     UART_NOTIFY_CHAR_UUID

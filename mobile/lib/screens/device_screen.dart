@@ -41,7 +41,9 @@ class _Protocol {
 
   bool get hasParseRules {
     final rules = parseRules;
-    return rules != null && rules['fields'] is List && (rules['fields'] as List).isNotEmpty;
+    return rules != null &&
+        rules['fields'] is List &&
+        (rules['fields'] as List).isNotEmpty;
   }
 
   factory _Protocol.fromJson(Map<String, dynamic> j) {
@@ -63,6 +65,13 @@ class _Protocol {
       parseRules,
     );
   }
+}
+
+class _DeviceLogEntry {
+  final DateTime at;
+  final String text;
+  final bool fromBoard;
+  const _DeviceLogEntry(this.at, this.text, {this.fromBoard = false});
 }
 
 class DeviceScreen extends StatefulWidget {
@@ -98,6 +107,10 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _parsingBatch = false;
   StreamSubscription? _uartSub;
   StreamSubscription? _connSub;
+  StreamSubscription<String>? _logSub;
+  final List<_DeviceLogEntry> _deviceLogs = [];
+  final ScrollController _logScrollCtrl = ScrollController();
+  String _logRxBuffer = '';
   bool _scanningUart = false;
   List<OnboardingProfile> _onboardingProfiles = [];
   String? _selectedProfileId;
@@ -114,14 +127,17 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(length: 4, vsync: this);
     _onboardingProfiler.addListener(_onProfilerUpdated);
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
       c.addListener(_onFieldChanged);
     }
     _loadSaved();
     _connect();
-    _parseTimer = Timer.periodic(const Duration(milliseconds: 700), (_) => _flushParseBatch());
+    _parseTimer = Timer.periodic(
+      const Duration(milliseconds: 700),
+      (_) => _flushParseBatch(),
+    );
   }
 
   void _onFieldChanged() {
@@ -141,6 +157,8 @@ class _DeviceScreenState extends State<DeviceScreen>
     _parseTimer?.cancel();
     _uartSub?.cancel();
     _connSub?.cancel();
+    _logSub?.cancel();
+    _logScrollCtrl.dispose();
     _ssidCtrl.dispose();
     _passCtrl.dispose();
     _baudCtrl.dispose();
@@ -363,7 +381,66 @@ class _DeviceScreenState extends State<DeviceScreen>
     if (mounted) AppToast.info(context, 'Profile deleted');
   }
 
+  void _addLog(String text, {bool fromBoard = false}) {
+    final line = text.replaceAll('\r', '').trimRight();
+    if (line.isEmpty || !mounted) return;
+    setState(() {
+      _deviceLogs.add(
+        _DeviceLogEntry(DateTime.now(), line, fromBoard: fromBoard),
+      );
+      if (_deviceLogs.length > 1000) {
+        _deviceLogs.removeRange(0, _deviceLogs.length - 1000);
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollCtrl.hasClients) {
+        _logScrollCtrl.animateTo(
+          _logScrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _onBoardLogChunk(String chunk) {
+    _logRxBuffer += chunk;
+    while (true) {
+      final newline = _logRxBuffer.indexOf('\n');
+      if (newline < 0) break;
+      final line = _logRxBuffer.substring(0, newline);
+      _logRxBuffer = _logRxBuffer.substring(newline + 1);
+      _addLog(line, fromBoard: true);
+    }
+    // Guard against a malformed peer that never sends a newline.
+    if (_logRxBuffer.length > 4096) {
+      _logRxBuffer = _logRxBuffer.substring(_logRxBuffer.length - 2048);
+    }
+  }
+
+  Future<void> _startBoardLogStream() async {
+    await _logSub?.cancel();
+    _logSub = null;
+    _logRxBuffer = '';
+    try {
+      final stream = await _scanner.subscribeToDeviceLogs(widget.device);
+      _logSub = stream.listen(
+        _onBoardLogChunk,
+        onError: (Object error) => _addLog('Board log stream error: $error'),
+      );
+      _addLog('Board log stream connected.');
+      try {
+        await _scanner.requestLogHistory(widget.device);
+      } catch (e) {
+        _addLog('Could not request log history: $e');
+      }
+    } catch (e) {
+      _addLog('Board log stream unavailable: $e');
+    }
+  }
+
   Future<void> _connect() async {
+    _addLog('Connecting to ${widget.device.remoteId.str}...');
     setState(() => _connecting = true);
     Object? lastError;
     for (var attempt = 1; attempt <= 3; attempt++) {
@@ -381,20 +458,30 @@ class _DeviceScreenState extends State<DeviceScreen>
             _connecting = false;
           });
         }
+        _addLog('BLE connected.');
         break;
       } catch (e) {
         lastError = e;
+        _addLog('BLE connect attempt $attempt/3 failed: $e');
         if (attempt < 3) await Future.delayed(const Duration(seconds: 1));
       }
     }
     if (!_connected) {
       if (mounted) {
         setState(() => _connecting = false);
+        _addLog('BLE connection failed after 3 attempts.');
         _showError('Could not connect to the device after 3 attempts.');
       }
       debugPrint('BLE connection failed: $lastError');
       return;
     }
+
+    try {
+      await widget.device.requestMtu(512);
+    } catch (_) {}
+
+    _scanner.clearCache();
+    await _startBoardLogStream();
 
     await _connSub?.cancel();
     _scanner.clearCache();
@@ -404,6 +491,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           _connected = s == BluetoothConnectionState.connected;
           if (!_connected) _connecting = false;
         });
+        _addLog('BLE state: ${s.name}');
       }
     });
 
@@ -450,7 +538,9 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (raw['mac_address']?.toString() != bleMac) continue;
         final protocolId = raw['protocol_id']?.toString();
         setState(() {
-          if (protocolId != null && protocolId.isNotEmpty && protocolId != _selectedProtoId) {
+          if (protocolId != null &&
+              protocolId.isNotEmpty &&
+              protocolId != _selectedProtoId) {
             _selectedProtoId = protocolId;
             _resetParsedFrames();
           }
@@ -605,6 +695,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     try {
       final baud = int.tryParse(_baudCtrl.text.trim());
       final baseUrl = _baseUrl;
+      _addLog('Onboarding started: $baseUrl');
 
       _onboardingProfiler.startStep('server_reachable');
       Object? pingError;
@@ -625,7 +716,10 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (attempt < 3) await Future.delayed(const Duration(seconds: 1));
       }
       if (!serverReachable) {
-        _onboardingProfiler.finishFailure('server_reachable', note: '$pingError');
+        _onboardingProfiler.finishFailure(
+          'server_reachable',
+          note: '$pingError',
+        );
         if (mounted) {
           _showError('Cannot reach the server. Check the server URL.');
         }
@@ -683,15 +777,15 @@ class _DeviceScreenState extends State<DeviceScreen>
         final logStream = await _scanner.subscribeToLogs(widget.device);
         _onboardingProfiler.completeStep('ble_subscribed');
         logSub = logStream.listen((msg) {
-           debugPrint('[BLE LOG] $msg');
-           _onboardingProfiler.markBleEvent(msg);
-           if (msg.contains('EVENT:WIFI_FAILED')) wifiFailed = true;
-           if (!configSent) return;
-           if (msg.contains('EVENT:HEARTBEAT_OK') &&
-               heartbeatOk != null &&
-               !heartbeatOk.isCompleted) {
-             heartbeatOk.complete();
-           }
+          debugPrint('[BLE LOG] $msg');
+          _onboardingProfiler.markBleEvent(msg);
+          if (msg.contains('EVENT:WIFI_FAILED')) wifiFailed = true;
+          if (!configSent) return;
+          if (msg.contains('EVENT:HEARTBEAT_OK') &&
+              heartbeatOk != null &&
+              !heartbeatOk.isCompleted) {
+            heartbeatOk.complete();
+          }
         });
       } catch (e) {
         _onboardingProfiler.finishFailure('ble_subscribed', note: '$e');
@@ -721,6 +815,8 @@ class _DeviceScreenState extends State<DeviceScreen>
           );
           configSent = true;
           _onboardingProfiler.completeStep('config_sent', note: claimedUid);
+          _addLog('Config sent (attempt $attempt/3): $ssid');
+          _addLog('Waiting for board heartbeat...');
           await _waitForBoardReady(
             baseUrl: baseUrl,
             uid: claimedUid,
@@ -733,6 +829,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           break;
         } catch (e) {
           onboardingError = e;
+          _addLog('Onboarding attempt $attempt/3 failed: $e');
           if (attempt < 3) {
             try {
               await _connect();
@@ -741,7 +838,8 @@ class _DeviceScreenState extends State<DeviceScreen>
           }
         }
       }
-      if (!boardReady) throw onboardingError ?? TimeoutException('board not ready');
+      if (!boardReady)
+        throw onboardingError ?? TimeoutException('board not ready');
       _onboardingProfiler.completeStep('board_ready');
       await logSub?.cancel();
 
@@ -788,6 +886,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       await _persistCurrentProfile();
 
       _onboardingProfiler.finishSuccess(uid: uid);
+      _addLog('Onboarding completed: uid=$uid');
 
       if (mounted) {
         setState(() => _wifiConfigured = true);
@@ -799,6 +898,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         _onboardingProfiler.finishFailure('board_ready', note: '$e');
       }
       if (mounted) _showError(_onboardingErrorMessage(e));
+      _addLog('Onboarding failed: $e');
     } finally {
       if (mounted) setState(() => _sendingWifi = false);
     }
@@ -874,7 +974,8 @@ class _DeviceScreenState extends State<DeviceScreen>
   void _enqueueParse(String hex) {
     final protocol = _selectedProtocol;
     if (protocol == null || !protocol.hasParseRules) return;
-    if (_parsedFrames.containsKey(hex) || _pendingParseSet.contains(hex)) return;
+    if (_parsedFrames.containsKey(hex) || _pendingParseSet.contains(hex))
+      return;
     if (_pendingParse.length >= 200) return;
     _pendingParse.add(hex);
     _pendingParseSet.add(hex);
@@ -895,14 +996,13 @@ class _DeviceScreenState extends State<DeviceScreen>
     _parsingBatch = true;
 
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/api/v1/protocols/parse/batch'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'protocol_id': protocol.id,
-          'frames': batch,
-        }),
-      ).timeout(const Duration(seconds: 4));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/v1/protocols/parse/batch'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'protocol_id': protocol.id, 'frames': batch}),
+          )
+          .timeout(const Duration(seconds: 4));
 
       if (response.statusCode != 200) return;
       final decoded = json.decode(response.body);
@@ -1002,6 +1102,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                 _buildControlTab(cs),
                 _buildDataTab(cs),
                 _buildMonitorTab(cs),
+                _buildLogsTab(cs),
               ],
             ),
           ),
@@ -1149,6 +1250,7 @@ class _DeviceScreenState extends State<DeviceScreen>
           Tab(text: 'Control'),
           Tab(text: 'Data'),
           Tab(text: 'Monitor'),
+          Tab(text: 'Logs'),
         ],
       ),
     );
@@ -1988,7 +2090,8 @@ class _DeviceScreenState extends State<DeviceScreen>
               'fields': [],
             }),
     );
-    final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
+    final showParsed =
+        selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
     if (_protocols.isEmpty && !_scanningUart) {
       return Center(
@@ -2181,6 +2284,177 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
   }
 
+  /* ── Logs Tab ───────────────────────────────────────────────────── */
+
+  String _formatLogTime(DateTime time) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+  }
+
+  Color _logColor(ColorScheme cs, _DeviceLogEntry entry) {
+    final text = entry.text.toUpperCase();
+    if (text.contains('FAIL') ||
+        text.contains('ERROR') ||
+        text.contains('TIMEOUT')) {
+      return cs.error;
+    }
+    if (!entry.fromBoard) return cs.onSurfaceVariant;
+    if (text.startsWith('[WIFI]')) return cs.primary;
+    if (text.startsWith('[HTTP]')) return cs.tertiary;
+    if (text.startsWith('[BLE]')) return cs.secondary;
+    return cs.onSurface;
+  }
+
+  Widget _buildLogsTab(ColorScheme cs) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 10, 6),
+          child: Row(
+            children: [
+              Icon(
+                Icons.terminal_rounded,
+                size: 16,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Board logs',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (_logSub != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'LIVE',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: cs.primary,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              Text(
+                '${_deviceLogs.length}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Clear logs',
+                visualDensity: VisualDensity.compact,
+                onPressed: _deviceLogs.isEmpty
+                    ? null
+                    : () => setState(() => _deviceLogs.clear()),
+                icon: Icon(
+                  Icons.delete_sweep_outlined,
+                  size: 18,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _deviceLogs.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(
+                            Icons.article_outlined,
+                            size: 24,
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No logs yet',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: cs.onSurface.withValues(alpha: 0.6),
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Connect to the board. Firmware serial logs\nwill stream here over BLE.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: cs.onSurfaceVariant.withValues(
+                                  alpha: 0.5,
+                                ),
+                                height: 1.4,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  controller: _logScrollCtrl,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+                  itemCount: _deviceLogs.length,
+                  itemBuilder: (_, i) {
+                    final entry = _deviceLogs[i];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _formatLogTime(entry.at),
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 10,
+                              height: 1.45,
+                              color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              entry.text,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                height: 1.45,
+                                color: _logColor(cs, entry),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
   /* ── Monitor Tab ────────────────────────────────────────────────── */
 
   Widget _buildMonitorTab(ColorScheme cs) {
@@ -2195,7 +2469,8 @@ class _DeviceScreenState extends State<DeviceScreen>
               'fields': [],
             }),
     );
-    final showParsed = selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
+    final showParsed =
+        selectedProto.hasParseRules || selectedProto.fields.isNotEmpty;
 
     if (_uartLogs.isEmpty) {
       return Center(

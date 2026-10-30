@@ -14,6 +14,7 @@
 #include "wifi_manager.h"
 #include "temp_sensor.h"
 #include "display_manager.h"
+#include "logger.h"
 
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastTemp = 0;
@@ -44,10 +45,10 @@ void on_wifi_credentials_received(const String &ssid, const String &password) {
 }
 
 void setup() {
-    Serial.begin(115200);
-    Serial.println();
-    Serial.println("=== Sentinel UART Monitor ===");
-    Serial.printf("Monitor UART: %d bps on GPIO TX:%d RX:%d\n",
+    AppLog.begin(115200);
+    AppLog.println();
+    AppLog.println("=== Sentinel UART Monitor ===");
+    AppLog.printf("Monitor UART: %d bps on GPIO TX:%d RX:%d\n",
                   UART_BAUD_RATE, UART_MONITOR_TX, UART_MONITOR_RX);
 
     uart_sniffer_init();
@@ -61,7 +62,7 @@ void setup() {
     lastHeartbeat = millis();
     lastTemp = millis();
 
-    Serial.println("System ready.");
+    AppLog.println("System ready.");
 }
 
 void loop() {
@@ -70,6 +71,9 @@ void loop() {
 
     // Handle WiFi connection state
     wifi_loop();
+
+    // Flush deferred BLE log history requests.
+    ble_loop();
 
     display_update(wifi_get_uid(), wifi_is_connected(), ble_is_server_registered());
 

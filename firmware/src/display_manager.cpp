@@ -2,6 +2,7 @@
 
 #include "display_manager.h"
 #include "config.h"
+#include "logger.h"
 
 static U8G2_SSD1306_72X40_ER_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
 static bool displayReady = false;
@@ -12,15 +13,15 @@ static bool lastServer = false;
 static bool hasRendered = false;
 
 void display_init() {
-    Serial.println("[DISPLAY] Init..."); Serial.flush();
+    AppLog.println("[DISPLAY] Init..."); AppLog.flush();
     u8g2.begin();
-    Serial.println("[DISPLAY] begin OK"); Serial.flush();
+    AppLog.println("[DISPLAY] begin OK"); AppLog.flush();
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_5x7_tr);
     u8g2.setCursor(0, 14);
     u8g2.print("Booting...");
     u8g2.sendBuffer();
-    Serial.println("[DISPLAY] Boot screen OK"); Serial.flush();
+    AppLog.println("[DISPLAY] Boot screen OK"); AppLog.flush();
     displayReady = true;
 }
 

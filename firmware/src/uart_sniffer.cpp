@@ -1,5 +1,6 @@
 #include "uart_sniffer.h"
 #include "config.h"
+#include "logger.h"
 
 #include <Preferences.h>
 
@@ -36,12 +37,12 @@ static void begin_uart(uint32_t baud) {
 void uart_sniffer_init() {
     current_baud = load_stored_baud();
     begin_uart(current_baud);
-    Serial.printf("[UART] Sniffer baud=%lu\n", (unsigned long)current_baud);
+    AppLog.printf("[UART] Sniffer baud=%lu\n", (unsigned long)current_baud);
 }
 
 void uart_sniffer_set_baud(uint32_t baud) {
     if (!is_valid_baud(baud)) {
-        Serial.printf("[UART] Ignoring invalid baud=%lu (valid %d..%d)\n",
+        AppLog.printf("[UART] Ignoring invalid baud=%lu (valid %d..%d)\n",
                       (unsigned long)baud, UART_BAUD_MIN, UART_BAUD_MAX);
         return;
     }
@@ -71,7 +72,7 @@ static void apply_pending_baud() {
         prefs.end();
     }
 
-    Serial.printf("[UART] Baud changed to %lu\n", (unsigned long)current_baud);
+    AppLog.printf("[UART] Baud changed to %lu\n", (unsigned long)current_baud);
 }
 
 static void process_byte(uint8_t b) {

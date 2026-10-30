@@ -4,9 +4,11 @@
 #include <esp_mac.h>
 #include <cstring>
 #include <vector>
+#include <deque>
 
 #include "ble_service.h"
 #include "config.h"
+#include "logger.h"
 #include "uart_sniffer.h"
 #include "wifi_manager.h"
 
@@ -14,11 +16,75 @@ static NimBLEServer *pServer = nullptr;
 static NimBLECharacteristic *pUartNotifyChar = nullptr;
 static NimBLECharacteristic *pUartWriteChar = nullptr;
 static NimBLECharacteristic *pMacChar = nullptr;
+static NimBLECharacteristic *pLogChar = nullptr;
 static bool deviceConnected = false;
 
 static uint8_t gStatusFlags = 0;
 static char gUidStr[8] = {0};
 static bool gServerRegistered = false;
+
+static const size_t kLogHistoryMax = 120;
+static std::deque<String> gLogHistory;
+static volatile bool gLogHistoryRequested = false;
+
+static void notify_log_line(const String &line) {
+    if (!pLogChar || !deviceConnected) return;
+
+    const String payload = line + "\n";
+    const size_t chunkSize = 180;
+    for (size_t offset = 0; offset < payload.length(); offset += chunkSize) {
+        size_t end = offset + chunkSize;
+        if (end > payload.length()) end = payload.length();
+        const String chunk = payload.substring(offset, end);
+        pLogChar->setValue(reinterpret_cast<const uint8_t *>(chunk.c_str()), chunk.length());
+        pLogChar->notify();
+        delay(2);
+    }
+}
+
+void ble_send_log(const String &text) {
+    if (text.length() == 0) return;
+
+    String normalized = text;
+    normalized.replace("\r", "");
+    int start = 0;
+    while (start <= (int)normalized.length()) {
+        const int end = normalized.indexOf('\n', start);
+        const String line = end < 0
+            ? normalized.substring(start)
+            : normalized.substring(start, end);
+        if (line.length() > 0) {
+            gLogHistory.push_back(line);
+            if (gLogHistory.size() > kLogHistoryMax) gLogHistory.pop_front();
+            notify_log_line(line);
+        }
+        if (end < 0) break;
+        start = end + 1;
+    }
+}
+
+void ble_loop() {
+    if (!gLogHistoryRequested || !deviceConnected) return;
+    gLogHistoryRequested = false;
+    const std::deque<String> history = gLogHistory;
+    for (const auto &line : history) {
+        notify_log_line(line);
+    }
+}
+
+class LogCharCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+        (void)connInfo;
+        std::string raw = pCharacteristic->getValue();
+        String command = String(raw.c_str());
+        command.trim();
+        if (command == "HISTORY") {
+            // Notifications cannot be queued reliably from the BLE write
+            // callback. Defer the history burst to the main loop.
+            gLogHistoryRequested = true;
+        }
+    }
+};
 
 extern void on_wifi_credentials_received(const String &ssid, const String &password);
 
@@ -79,12 +145,12 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         (void)pServer; (void)connInfo;
         deviceConnected = true;
-        Serial.println("[BLE] Connected");
+        AppLog.println("[BLE] Connected");
     }
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
         (void)pServer; (void)connInfo; (void)reason;
         deviceConnected = false;
-        Serial.println("[BLE] Disconnected");
+        AppLog.println("[BLE] Disconnected");
         ble_refresh_advertising();
     }
 };
@@ -95,7 +161,7 @@ class UartWriteCallback : public NimBLECharacteristicCallbacks {
         std::string val = pCharacteristic->getValue();
         String value = String(val.c_str());
         if (value.length() == 0) return;
-        Serial.printf("[BLE] Received write payload (%u bytes)\n", (unsigned)value.length());
+        AppLog.printf("[BLE] Received write payload (%u bytes)\n", (unsigned)value.length());
 
         String ssid = _extract_json_field(value, "ssid");
         String password = _extract_json_field(value, "password");
@@ -118,10 +184,10 @@ class UartWriteCallback : public NimBLECharacteristicCallbacks {
         }
 
         if (ssid.length() > 0 && password.length() > 0) {
-            Serial.printf("[BLE] WiFi credentials received. Connecting to: %s\n", ssid.c_str());
+            AppLog.printf("[BLE] WiFi credentials received. Connecting to: %s\n", ssid.c_str());
             on_wifi_credentials_received(ssid, password);
         } else {
-            Serial.printf("[BLE] WiFi credentials not found in payload\n");
+            AppLog.printf("[BLE] WiFi credentials not found in payload\n");
         }
     }
 };
@@ -159,7 +225,7 @@ void ble_refresh_advertising() {
     adv->setName(std::string(name));
     adv->start();
 
-    Serial.printf("[BLE] Advertising name=%s flags=0x%02X uid=%s\n", name, gStatusFlags, gUidStr);
+    AppLog.printf("[BLE] Advertising name=%s flags=0x%02X uid=%s\n", name, gStatusFlags, gUidStr);
 }
 
 void ble_preload_uid(const String &uid) {
@@ -175,7 +241,7 @@ void ble_set_uid(const String &uid) {
 void ble_set_wifi_mac(const String &mac) {
     if (!pMacChar || mac.length() == 0) return;
     pMacChar->setValue(reinterpret_cast<const uint8_t *>(mac.c_str()), mac.length());
-    Serial.printf("[BLE] WiFi MAC characteristic updated: %s\n", mac.c_str());
+    AppLog.printf("[BLE] WiFi MAC characteristic updated: %s\n", mac.c_str());
 }
 
 void ble_set_wifi_connected(bool connected) {
@@ -214,6 +280,12 @@ void ble_init() {
         NimBLEUUID(UART_MAC_CHAR_UUID),
         NIMBLE_PROPERTY::READ
     );
+
+    pLogChar = pService->createCharacteristic(
+        NimBLEUUID(UART_LOG_CHAR_UUID),
+        NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::WRITE
+    );
+    pLogChar->setCallbacks(new LogCharCallbacks());
     // Read the factory WiFi MAC from eFuse. WiFi.macAddress() can return zeros
     // before the WiFi driver is initialized (ble_init runs before wifi_init).
     char macStr[18];
@@ -233,7 +305,7 @@ void ble_init() {
     pAdvertising->addServiceUUID(NimBLEUUID(UART_SERVICE_UUID));
     ble_refresh_advertising();
 
-    Serial.printf("[BLE] NimBLE Initialized. Name: %s\n", BLE_DEVICE_NAME);
+    AppLog.printf("[BLE] NimBLE Initialized. Name: %s\n", BLE_DEVICE_NAME);
 }
 
 void ble_send_uart_data(const String &hex_str) {
