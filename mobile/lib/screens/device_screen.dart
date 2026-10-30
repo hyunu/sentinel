@@ -97,6 +97,8 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _connecting = false;
   bool _wifiConfigured = false;
   bool _sendingWifi = false;
+  bool _obscurePassword = true;
+  bool _showValidation = false;
   List<String> _uartLogs = [];
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
@@ -123,6 +125,41 @@ class _DeviceScreenState extends State<DeviceScreen>
       raw.isEmpty ? kDefaultServerUrl : raw,
     );
   }
+
+  String? get _ssidError {
+    return _ssidCtrl.text.trim().isEmpty ? 'WiFi SSID is required' : null;
+  }
+
+  String? get _passwordError {
+    return _passCtrl.text.trim().isEmpty ? 'WiFi password is required' : null;
+  }
+
+  String? get _baudError {
+    final raw = _baudCtrl.text.trim();
+    if (raw.isEmpty) return null;
+    final baud = int.tryParse(raw);
+    if (baud == null) return 'Baud rate must be a number';
+    if (baud < 300 || baud > 2000000) {
+      return 'Baud rate must be between 300 and 2,000,000';
+    }
+    return null;
+  }
+
+  String? get _urlError {
+    final raw = _urlCtrl.text.trim();
+    if (raw.isEmpty) return null;
+    final normalized = StorageService.normalizeServerUrl(raw);
+    final uri = Uri.tryParse(normalized);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      return 'Enter a valid http:// or https:// server URL';
+    }
+    return null;
+  }
+
+  String? get _formError =>
+      _ssidError ?? _passwordError ?? _baudError ?? _urlError;
 
   @override
   void initState() {
@@ -173,8 +210,6 @@ class _DeviceScreenState extends State<DeviceScreen>
   Future<void> _loadSaved() async {
     await _loadOnboardingProfiles();
     if (_onboardingProfiles.isEmpty) {
-      _ssidCtrl.text = 'hyunu_2.4Ghz';
-      _passCtrl.text = 'gusdn1006';
       _baudCtrl.text = '19200';
       _urlCtrl.text = kDefaultServerUrl;
     }
@@ -215,6 +250,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     _passCtrl.text = profile.password;
     _urlCtrl.text = StorageService.normalizeServerUrl(profile.serverUrl);
     _baudCtrl.text = profile.baudRate?.toString() ?? '19200';
+    _showValidation = false;
     if (notify && mounted) {
       setState(() => _selectedProfileId = profile.id);
     }
@@ -233,27 +269,6 @@ class _DeviceScreenState extends State<DeviceScreen>
     return null;
   }
 
-  bool get _profileDirty {
-    final selected = _selectedProfile;
-    final ssid = _ssidCtrl.text.trim();
-    final pass = _passCtrl.text.trim();
-    final url = _urlCtrl.text.trim();
-    final baud = int.tryParse(_baudCtrl.text.trim());
-    if (selected == null) {
-      return ssid.isNotEmpty || pass.isNotEmpty || url.isNotEmpty;
-    }
-    return selected.ssid != ssid ||
-        selected.password != pass ||
-        StorageService.normalizeServerUrl(selected.serverUrl) !=
-            StorageService.normalizeServerUrl(url) ||
-        selected.baudRate != baud;
-  }
-
-  String _shortUrl(String url) {
-    if (url.isEmpty) return 'No server';
-    return url.replaceFirst(RegExp(r'^https?://'), '');
-  }
-
   OnboardingProfile _profileFromFields({String? id, String? name}) {
     final baud = int.tryParse(_baudCtrl.text.trim());
     return OnboardingProfile(
@@ -265,18 +280,6 @@ class _DeviceScreenState extends State<DeviceScreen>
       baudRate: baud,
       updatedAt: DateTime.now(),
     );
-  }
-
-  Future<void> _updateCurrentProfile() async {
-    final selected = _selectedProfile;
-    if (selected == null) {
-      await _promptSaveProfile();
-      return;
-    }
-    await _persistCurrentProfile();
-    if (mounted) {
-      AppToast.success(context, 'Profile "${selected.name}" updated');
-    }
   }
 
   Future<void> _persistCurrentProfile() async {
@@ -688,6 +691,12 @@ class _DeviceScreenState extends State<DeviceScreen>
   Future<void> _sendWifi() async {
     final ssid = _ssidCtrl.text.trim();
     final pass = _passCtrl.text.trim();
+    final validationError = _formError;
+    if (validationError != null) {
+      setState(() => _showValidation = true);
+      AppToast.error(context, validationError, persistent: false);
+      return;
+    }
     if (ssid.isEmpty) return;
 
     _onboardingProfiler.begin();
@@ -1259,538 +1268,385 @@ class _DeviceScreenState extends State<DeviceScreen>
   /* ── Control Tab ────────────────────────────────────────────────── */
 
   Widget _buildControlTab(ColorScheme cs) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildSectionHeader(cs, 'Onboarding', Icons.tune_rounded),
-          const SizedBox(height: 12),
-          _buildOnboardingProfilesSection(cs),
-          const SizedBox(height: 12),
-          _buildGlassCard(cs, [
-            _buildFormGroupLabel(cs, 'Network'),
-            const SizedBox(height: 8),
-            _buildTextField(cs, _ssidCtrl, 'WiFi SSID', Icons.wifi_rounded),
-            const SizedBox(height: 10),
-            _buildTextField(
-              cs,
-              _passCtrl,
-              'WiFi Password',
-              Icons.lock_rounded,
-              obscure: true,
-            ),
-            const SizedBox(height: 16),
-            _buildFormGroupLabel(cs, 'Device'),
-            const SizedBox(height: 8),
-            _buildTextField(
-              cs,
-              _baudCtrl,
-              'Baud Rate',
-              Icons.speed_rounded,
-              placeholder: 'e.g. 115200',
-            ),
-            const SizedBox(height: 16),
-            _buildFormGroupLabel(cs, 'Server'),
-            const SizedBox(height: 8),
-            _buildTextField(
-              cs,
-              _urlCtrl,
-              'Server URL',
-              Icons.dns_rounded,
-              placeholder: kDefaultServerUrl,
-            ),
-            const SizedBox(height: 16),
-            _buildFormGroupLabel(cs, 'Protocol'),
-            const SizedBox(height: 8),
-            if (_protocols.isEmpty)
-              Text(
-                'Load protocols from the server URL above.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                ),
-              )
-            else
-              DropdownButtonFormField<String>(
-                value: _selectedProtoId,
-                decoration: InputDecoration(
-                  labelText: 'UART parse protocol',
-                  filled: true,
-                  fillColor: cs.surface.withValues(alpha: 0.45),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildSectionHeader(cs, 'Onboarding', Icons.tune_rounded),
+                const SizedBox(height: 12),
+                _buildOnboardingProfilesSection(cs),
+                const SizedBox(height: 12),
+                _buildGlassCard(cs, [
+                  _buildFormGroupLabel(cs, 'WiFi network'),
+                  const SizedBox(height: 8),
+                  _buildTextField(
+                    cs,
+                    _ssidCtrl,
+                    'WiFi SSID',
+                    Icons.wifi_rounded,
+                    placeholder: 'e.g. rLGE',
+                    errorText: _showValidation ? _ssidError : null,
+                    textInputAction: TextInputAction.next,
                   ),
-                ),
-                items: _protocols
-                    .map(
-                      (p) => DropdownMenuItem(
-                        value: p.id,
-                        child: Text(
-                          '${p.name} v${p.version}',
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                  const SizedBox(height: 10),
+                  _buildTextField(
+                    cs,
+                    _passCtrl,
+                    'WiFi password',
+                    Icons.lock_rounded,
+                    obscure: _obscurePassword,
+                    showObscureToggle: true,
+                    errorText: _showValidation ? _passwordError : null,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildFormGroupLabel(cs, 'Device'),
+                  const SizedBox(height: 8),
+                  _buildTextField(
+                    cs,
+                    _baudCtrl,
+                    'Baud rate',
+                    Icons.speed_rounded,
+                    placeholder: '19200',
+                    errorText: _showValidation ? _baudError : null,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildFormGroupLabel(cs, 'Server'),
+                  const SizedBox(height: 8),
+                  _buildTextField(
+                    cs,
+                    _urlCtrl,
+                    'Server URL',
+                    Icons.dns_rounded,
+                    placeholder: kDefaultServerUrl,
+                    errorText: _showValidation ? _urlError : null,
+                    helperText: 'ESP32 heartbeat and onboarding endpoint',
+                    keyboardType: TextInputType.url,
+                    textInputAction: TextInputAction.done,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildFormGroupLabel(cs, 'Protocol'),
+                  const SizedBox(height: 8),
+                  if (_protocols.isEmpty)
+                    Text(
+                      'Load protocols from the server URL above.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
                       ),
                     )
-                    .toList(),
-                onChanged: _onProtocolChanged,
-              ),
-            if (_protocols.isEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _loadProtocols,
-                  icon: const Icon(Icons.refresh_rounded, size: 16),
-                  label: const Text('Reload protocols'),
-                ),
-              ),
-            ],
-            if (_selectedProtoId != null && _selectedProtoId!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Saved on the server for this board. ESP32 does not need the protocol ID.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                  height: 1.35,
-                ),
-              ),
-            ],
-            if (_profileDirty) ...[
-              const SizedBox(height: 14),
-              _buildProfileDirtyBanner(cs),
-            ],
-            const SizedBox(height: 16),
-            _buildSendButton(cs),
-          ]),
-          if (_onboardingProfiler.steps.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildSectionHeader(cs, 'Step Timeline', Icons.timeline_rounded),
-            const SizedBox(height: 12),
-            _buildOnboardingProfileCard(cs),
-          ],
-          const SizedBox(height: 16),
-          _buildSectionHeader(cs, 'Connection', Icons.bluetooth_rounded),
-          const SizedBox(height: 12),
-          _buildGlassCard(cs, [
-            Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: _connected
-                        ? cs.primary.withValues(alpha: 0.1)
-                        : cs.onSurfaceVariant.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    _connected
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
-                    size: 18,
-                    color: _connected
-                        ? cs.primary
-                        : cs.onSurfaceVariant.withValues(alpha: 0.3),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Bluetooth LE',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      Text(
-                        _connected ? 'Connected and ready' : 'Not connected',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                  else
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(_selectedProtoId),
+                      initialValue: _selectedProtoId,
+                      decoration: InputDecoration(
+                        labelText: 'UART parse protocol',
+                        filled: true,
+                        fillColor: cs.surface.withValues(alpha: 0.45),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                if (!_connected && !_connecting)
-                  TextButton(
-                    onPressed: _connect,
-                    child: const Text(
-                      'Reconnect',
-                      style: TextStyle(fontSize: 12),
+                      items: _protocols
+                          .map(
+                            (p) => DropdownMenuItem(
+                              value: p.id,
+                              child: Text(
+                                '${p.name} v${p.version}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _onProtocolChanged,
                     ),
+                  if (_protocols.isEmpty) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _loadProtocols,
+                        icon: const Icon(Icons.refresh_rounded, size: 16),
+                        label: const Text('Reload protocols'),
+                      ),
+                    ),
+                  ],
+                  if (_selectedProtoId != null &&
+                      _selectedProtoId!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Saved on the server for this board. ESP32 does not need the protocol ID.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ]),
+                if (_onboardingProfiler.steps.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _buildSectionHeader(
+                    cs,
+                    'Step timeline',
+                    Icons.timeline_rounded,
                   ),
-                if (_connecting)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  const SizedBox(height: 12),
+                  _buildOnboardingProfileCard(cs),
+                ],
+                const SizedBox(height: 8),
               ],
             ),
-          ]),
-        ],
+          ),
+        ),
+        _buildControlActionBar(cs),
+      ],
+    );
+  }
+
+  Widget _buildControlActionBar(ColorScheme cs) {
+    final busy = _sendingWifi || _connecting;
+    final hasError = _formError != null;
+    final label = !_connected
+        ? 'Reconnect'
+        : _wifiConfigured
+        ? 'Update'
+        : 'Send';
+    final helper = !_connected
+        ? 'Board is not connected'
+        : hasError
+        ? (_showValidation
+              ? 'Check the highlighted fields'
+              : 'Enter WiFi credentials')
+        : 'Changes are sent over BLE';
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          border: Border(
+            top: BorderSide(
+              color: cs.outline.withValues(alpha: 0.25),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    !_connected
+                        ? 'BLE connection'
+                        : _wifiConfigured
+                        ? 'Configuration'
+                        : 'Onboarding',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    helper,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: busy ? null : (_connected ? _sendWifi : _connect),
+              icon: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      !_connected
+                          ? Icons.bluetooth_searching_rounded
+                          : Icons.send_rounded,
+                      size: 18,
+                    ),
+              label: Text(
+                busy ? (_connecting ? 'Connecting...' : 'Sending...') : label,
+              ),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 46),
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildOnboardingProfilesSection(ColorScheme cs) {
+    final selected = _selectedProfile;
     return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            cs.primary.withValues(alpha: 0.07),
-            cs.primary.withValues(alpha: 0.02),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: cs.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: cs.outline.withValues(alpha: 0.25),
+          color: cs.outline.withValues(alpha: 0.3),
           width: 0.5,
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: cs.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.layers_rounded, size: 15, color: cs.primary),
+              Icon(
+                Icons.bookmarks_outlined,
+                size: 16,
+                color: cs.primary.withValues(alpha: 0.8),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Profiles',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      _onboardingProfiles.isEmpty
-                          ? 'Save presets for quick onboarding'
-                          : '${_onboardingProfiles.length} saved',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.75),
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  'Saved profiles',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
+              if (_onboardingProfiles.isNotEmpty)
+                Text(
+                  '${_onboardingProfiles.length} saved',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 108,
-            child: _onboardingProfiles.isEmpty
-                ? _buildEmptyProfileCard(cs)
-                : ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _onboardingProfiles.length + 1,
-                    separatorBuilder: (_, _) => const SizedBox(width: 10),
-                    itemBuilder: (context, index) {
-                      if (index == _onboardingProfiles.length) {
-                        return _buildAddProfileTile(cs);
+          const SizedBox(height: 10),
+          if (_onboardingProfiles.isEmpty) ...[
+            Text(
+              'Save the WiFi and server settings below as a reusable preset.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _promptSaveProfile,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('Save current settings'),
+              ),
+            ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey(_selectedProfileId),
+                    initialValue: _selectedProfileId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'Profile',
+                      filled: true,
+                      fillColor: cs.surface.withValues(alpha: 0.45),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    items: _onboardingProfiles
+                        .map(
+                          (p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              p.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (id) {
+                      if (id == null) return;
+                      for (final p in _onboardingProfiles) {
+                        if (p.id == id) {
+                          _selectProfile(p);
+                          break;
+                        }
                       }
-                      return _buildProfileTile(cs, _onboardingProfiles[index]);
                     },
                   ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyProfileCard(ColorScheme cs) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _promptSaveProfile,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: cs.surface.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: cs.primary.withValues(alpha: 0.25),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      cs.primary.withValues(alpha: 0.2),
-                      cs.primary.withValues(alpha: 0.08),
-                    ],
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Save current values as profile',
+                  onPressed: _promptSaveProfile,
+                  icon: Icon(
+                    Icons.save_outlined,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.7),
                   ),
-                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(
-                  Icons.bookmark_add_outlined,
-                  size: 20,
-                  color: cs.primary,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Create a profile',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                if (selected != null)
+                  PopupMenuButton<String>(
+                    tooltip: 'Profile actions',
+                    icon: Icon(
+                      Icons.more_vert_rounded,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.7),
                     ),
-                    Text(
-                      'Store WiFi, server URL, and baud rate',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                    onSelected: (action) {
+                      if (action == 'rename') {
+                        _promptRenameProfile(selected);
+                      } else if (action == 'delete') {
+                        _confirmDeleteProfile(selected);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename'),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAddProfileTile(ColorScheme cs) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _promptSaveProfile,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          width: 88,
-          decoration: BoxDecoration(
-            color: cs.surface.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: cs.outline.withValues(alpha: 0.35),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.add_rounded, size: 22, color: cs.primary),
-              const SizedBox(height: 4),
-              Text(
-                'New',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileTile(ColorScheme cs, OnboardingProfile profile) {
-    final active = _selectedProfileId == profile.id;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _selectProfile(profile),
-        borderRadius: BorderRadius.circular(14),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          width: 168,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            gradient: active
-                ? LinearGradient(
-                    colors: [
-                      cs.primary.withValues(alpha: 0.18),
-                      cs.primary.withValues(alpha: 0.06),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: active ? null : cs.surface.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: active
-                  ? cs.primary.withValues(alpha: 0.45)
-                  : cs.outline.withValues(alpha: 0.25),
-              width: active ? 1.2 : 0.5,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.wifi_rounded,
-                    size: 14,
-                    color: active ? cs.primary : cs.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      profile.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: active
-                            ? cs.onSurface
-                            : cs.onSurface.withValues(alpha: 0.9),
-                      ),
-                    ),
-                  ),
-                  _buildProfileMenu(cs, profile),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                profile.ssid,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.85),
-                  fontSize: 11,
-                ),
-              ),
-              const Spacer(),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _shortUrl(profile.serverUrl),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ),
-                  if (profile.baudRate != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: (active ? cs.primary : cs.onSurfaceVariant)
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '${profile.baudRate}',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                          color: active ? cs.primary : cs.onSurfaceVariant,
-                          fontFamily: 'monospace',
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text(
+                          'Delete',
+                          style: TextStyle(color: cs.error),
                         ),
                       ),
-                    ),
-                ],
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Selecting a profile fills the fields below. Edit a field and press Send to use it.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                height: 1.35,
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileMenu(ColorScheme cs, OnboardingProfile profile) {
-    return SizedBox(
-      width: 28,
-      height: 28,
-      child: PopupMenuButton<String>(
-        padding: EdgeInsets.zero,
-        iconSize: 18,
-        icon: Icon(
-          Icons.more_horiz_rounded,
-          size: 18,
-          color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-        ),
-        color: cs.surfaceContainerHigh,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        onSelected: (action) {
-          if (action == 'rename') {
-            _promptRenameProfile(profile);
-          } else if (action == 'delete') {
-            _confirmDeleteProfile(profile);
-          }
-        },
-        itemBuilder: (_) => [
-          const PopupMenuItem(value: 'rename', child: Text('Rename')),
-          PopupMenuItem(
-            value: 'delete',
-            child: Text('Delete', style: TextStyle(color: cs.error)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileDirtyBanner(ColorScheme cs) {
-    final hasSelection = _selectedProfile != null;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: cs.tertiaryContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.tertiary.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.edit_note_rounded, size: 18, color: cs.tertiary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              hasSelection ? 'Unsaved changes' : 'Unsaved configuration',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
             ),
-          ),
-          TextButton(
-            onPressed: hasSelection
-                ? _updateCurrentProfile
-                : _promptSaveProfile,
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-            ),
-            child: Text(hasSelection ? 'Update' : 'Save'),
-          ),
+          ],
         ],
       ),
     );
@@ -2006,18 +1862,43 @@ class _DeviceScreenState extends State<DeviceScreen>
     IconData icon, {
     bool obscure = false,
     String? placeholder,
+    String? errorText,
+    String? helperText,
+    TextInputType? keyboardType,
+    TextInputAction? textInputAction,
+    bool showObscureToggle = false,
   }) {
     return TextField(
       controller: ctrl,
       obscureText: obscure,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
       style: TextStyle(fontSize: 14, color: cs.onSurface),
       decoration: InputDecoration(
-        hintText: placeholder ?? label,
+        labelText: label,
+        hintText: placeholder,
+        helperText: helperText,
+        errorText: errorText,
         prefixIcon: Icon(
           icon,
           size: 18,
           color: cs.primary.withValues(alpha: 0.6),
         ),
+        suffixIcon: showObscureToggle
+            ? IconButton(
+                tooltip: obscure ? 'Show password' : 'Hide password',
+                onPressed: () {
+                  setState(() => _obscurePassword = !_obscurePassword);
+                },
+                icon: Icon(
+                  obscure
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                  size: 18,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.65),
+                ),
+              )
+            : null,
         filled: true,
         fillColor: cs.surface.withValues(alpha: 0.5),
         hintStyle: TextStyle(
@@ -2031,46 +1912,6 @@ class _DeviceScreenState extends State<DeviceScreen>
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 14,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSendButton(ColorScheme cs) {
-    final canSend = _connected && _ssidCtrl.text.trim().isNotEmpty;
-    return SizedBox(
-      width: double.infinity,
-      height: 48,
-      child: FilledButton.icon(
-        onPressed: canSend && !_sendingWifi ? _sendWifi : null,
-        icon: _sendingWifi
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : Icon(
-                _connected ? Icons.send_rounded : Icons.bluetooth_disabled,
-                size: 18,
-              ),
-        label: Text(
-          _sendingWifi
-              ? 'Sending...'
-              : _connected
-              ? (_wifiConfigured
-                    ? 'Update Configuration'
-                    : 'Send Configuration')
-              : (_connecting ? 'Connecting...' : 'Not Connected'),
-        ),
-        style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          backgroundColor: cs.primary,
-          disabledBackgroundColor: cs.onSurfaceVariant.withValues(alpha: 0.06),
         ),
       ),
     );
