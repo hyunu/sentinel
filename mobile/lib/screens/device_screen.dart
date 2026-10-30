@@ -108,6 +108,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   final List<String> _pendingParse = [];
   final Set<String> _pendingParseSet = {};
   final Map<String, Map<String, String>> _parsedFrames = {};
+  String? _parseError;
   Timer? _parseTimer;
   bool _parsingBatch = false;
   StreamSubscription? _uartSub;
@@ -645,15 +646,18 @@ class _DeviceScreenState extends State<DeviceScreen>
             boardUid == advUid;
         if (!bleMatch && !wifiMatch && !uidMatch) continue;
         final protocolId = raw['protocol_id']?.toString();
+        var protocolChanged = false;
         setState(() {
           if (protocolId != null && protocolId.isNotEmpty) {
             _boardProtoId = protocolId;
             if (!_protocolOverrideEnabled && protocolId != _selectedProtoId) {
               _selectedProtoId = protocolId;
               _resetParsedFrames();
+              protocolChanged = true;
             }
           }
         });
+        if (protocolChanged) _reparseBufferedFrames();
         break;
       }
     } catch (_) {}
@@ -1086,6 +1090,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       _selectedProtoId = id;
       _resetParsedFrames();
     });
+    _reparseBufferedFrames();
   }
 
   void _setProtocolOverride(bool enabled) {
@@ -1096,6 +1101,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       }
       _resetParsedFrames();
     });
+    _reparseBufferedFrames();
   }
 
   String _protocolName(String? id) {
@@ -1118,6 +1124,14 @@ class _DeviceScreenState extends State<DeviceScreen>
     _pendingParse.clear();
     _pendingParseSet.clear();
     _parsedFrames.clear();
+  }
+
+  void _reparseBufferedFrames() {
+    _resetParsedFrames();
+    _parseError = null;
+    for (final hex in _uartLogs) {
+      _enqueueParse(hex);
+    }
   }
 
   void _enqueueParse(String hex) {
@@ -1153,25 +1167,39 @@ class _DeviceScreenState extends State<DeviceScreen>
           )
           .timeout(const Duration(seconds: 4));
 
-      if (response.statusCode != 200) return;
+      if (response.statusCode != 200) {
+        if (mounted) {
+          setState(() => _parseError = 'Parser HTTP ${response.statusCode}');
+        }
+        return;
+      }
       final decoded = json.decode(response.body);
       final results = decoded is Map ? decoded['results'] : null;
-      if (results is! List) return;
+      if (results is! List) {
+        if (mounted) setState(() => _parseError = 'Parser returned no results');
+        return;
+      }
 
       final parsedBatch = <String, Map<String, String>>{};
+      String? firstError;
       for (final raw in results) {
         if (raw is! Map) continue;
         final hex = raw['raw_hex']?.toString() ?? '';
         final fields = raw['parsed_fields'];
-        if (hex.isEmpty || fields is! Map) continue;
+        if (hex.isEmpty) continue;
+        if (fields is! Map) {
+          firstError ??= raw['error']?.toString();
+          continue;
+        }
         parsedBatch[hex] = {
           for (final entry in fields.entries)
             entry.key.toString(): _formatParsedValue(entry.value),
         };
       }
 
-      if (!mounted || parsedBatch.isEmpty) return;
+      if (!mounted) return;
       setState(() {
+        _parseError = firstError;
         for (final entry in parsedBatch.entries) {
           _parsedFrames[entry.key] = entry.value;
         }
@@ -2444,6 +2472,10 @@ class _DeviceScreenState extends State<DeviceScreen>
               ),
             ],
           ]),
+          if (showParsed && _uartLogs.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildLatestParsedCard(cs, selectedProto),
+          ],
           const SizedBox(height: 16),
           _buildSectionHeader(cs, 'UART stream', Icons.cell_tower_rounded),
           const SizedBox(height: 12),
@@ -2563,6 +2595,62 @@ class _DeviceScreenState extends State<DeviceScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildLatestParsedCard(ColorScheme cs, _Protocol selectedProto) {
+    Map<String, String> latest = <String, String>{};
+    for (var i = _uartLogs.length - 1; i >= 0; i--) {
+      final parsed = _parseHex(_uartLogs[i], selectedProto);
+      if (parsed.isNotEmpty) {
+        latest = parsed;
+        break;
+      }
+    }
+
+    return _buildGlassCard(cs, [
+      Row(
+        children: [
+          Icon(Icons.data_object_rounded, size: 16, color: cs.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Latest parsed values',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      if (latest.isEmpty)
+        Text(
+          _parseError ?? 'Waiting for decoded values from the parser...',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _parseError == null
+                ? cs.onSurfaceVariant.withValues(alpha: 0.65)
+                : cs.error,
+            height: 1.35,
+          ),
+        )
+      else
+        Wrap(
+          spacing: 12,
+          runSpacing: 6,
+          children: latest.entries
+              .map(
+                (e) => Text(
+                  '${e.key}: ${e.value}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: cs.onSurface,
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+    ]);
   }
 
   Widget _buildPacketTile(
