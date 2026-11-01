@@ -2224,6 +2224,24 @@ tbody tr:last-child td {
   cursor: grab;
 }
 
+/* Y축(값 축) 위에서는 위아래 드래그로 값 축을 줌한다. */
+.viz-chart-viewport.y-hover:not(.panning):not(.selecting):not(.measuring):not(.y-zooming) {
+  cursor: ns-resize;
+}
+
+.viz-chart-viewport.y-zooming {
+  cursor: ns-resize;
+}
+
+.viz-chart-viewport.y-zooming .viz-canvas-chart-wrap {
+  pointer-events: none;
+}
+
+/* 세로로 줌된 상태에서도 플롯을 잡아 상하 이동할 수 있다. */
+.viz-chart-viewport.y-zoomed:not(.panning):not(.selecting):not(.measuring):not(.y-zooming) {
+  cursor: grab;
+}
+
 .viz-chart-viewport.measuring {
   cursor: crosshair;
 }

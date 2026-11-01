@@ -41,10 +41,11 @@ export const CHART_MANUAL_INTERACTIONS: ManualBlock[] = [
     kind: 'ul',
     items: [
       l('Wheel — zoom in/out around the pointer (time axis).', '휠 — 포인터 기준 시간축 확대·축소'),
+      l('Drag on the Y axis — zoom the value axis in/out vertically.', 'Y축 값 위에서 상하 드래그 — 값 축 확대·축소'),
       l('Shift + drag — select a time range to zoom in.', 'Shift + 드래그 — 구간을 지정해 줌인'),
-      l('Drag (while zoomed) — pan left/right.', '드래그(줌 상태) — 좌우 이동'),
+      l('Drag (while zoomed) — pan left/right; drag vertically too when the Y axis is zoomed.', '드래그(줌 상태) — 좌우 이동; Y축이 줌된 상태에서는 상하로도 이동'),
       l('Alt + drag — measure elapsed time between two points.', 'Alt + 드래그 — 두 시점 사이 시간 간격 측정'),
-      l('Double-click — reset zoom to the full loaded range.', '더블클릭 — 줌 초기화(불러온 전체 구간)'),
+      l('Double-click — reset zoom to the full loaded range and restore the value axis.', '더블클릭 — 줌 초기화(불러온 전체 구간) 및 값 축 원래대로'),
       l('+ / − or [ / ] — zoom in and out (chart focused).', '+ / − 또는 [ / ] — 차트 포커스 시 확대·축소'),
       l('Arrow keys — pan left/right when zoomed; Shift + arrows or Page Up/Down for faster pan.', '방향키 — 줌 상태에서 좌우 이동; Shift+방향키 또는 Page Up/Down으로 빠르게 이동'),
       l('Home / 0 — reset zoom when zoomed.', 'Home / 0 — 줌 상태에서 초기화'),

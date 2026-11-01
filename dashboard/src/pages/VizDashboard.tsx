@@ -58,6 +58,14 @@ import {
 } from '../lib/vizChartZoomTime';
 import { buildDetailCacheKey, VizDetailCache } from '../lib/vizDetailCache';
 import {
+  computeYAxisPanDomain,
+  computeYAxisZoomDomain,
+  isYAxisDomainZoomed,
+  yAxisDragZoomFactor,
+  type YAxisDomain,
+  type YAxisScaleKey,
+} from '../lib/vizChartYAxis';
+import {
   assessAllTimeRangeLoad,
   estimateVizPayloadBytes,
   formatFullLoadBytes,
@@ -523,6 +531,9 @@ export default function VizDashboardPage() {
   const [isChartSelecting, setIsChartSelecting] = useState(false);
   const [isChartPanning, setIsChartPanning] = useState(false);
   const [isChartMeasuring, setIsChartMeasuring] = useState(false);
+  const [isChartYZooming, setIsChartYZooming] = useState(false);
+  /** Y축이 수동으로 줌된 상태 — 커서/리셋 버튼 표시에 사용. */
+  const [yAxisZoomed, setYAxisZoomed] = useState(false);
   const [profiles, setProfiles] = useState<VizProfile[]>([]);
   const [savedProfileId, setSavedProfileId] = useState<string | null>(null);
   const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
@@ -606,7 +617,7 @@ export default function VizDashboardPage() {
   const chartDataRef = useRef(chartData);
   chartDataRef.current = chartData;
   const panRafRef = useRef<number | null>(null);
-  const pendingPanDeltaRef = useRef(0);
+  const pendingPanDeltaRef = useRef({ x: 0, y: 0 });
   const zoomCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewportFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reactChartZoomRef = useRef(chartZoom);
@@ -622,11 +633,27 @@ export default function VizDashboardPage() {
   const panSessionRef = useRef<{
     pointerId: number;
     startX: number;
+    startY: number;
     /** Viewport at pointer-down. Pan deltas are applied to this fixed range,
      *  not to the previous animation frame (which double-counted movement). */
     baseStartMs: number;
     baseEndMs: number;
+    /** X축이 줌된 상태에서만 좌우 팬. */
+    panX: boolean;
+    /** Y축이 줌된 상태에서만 상하 팬. 축별 기준 구간. */
+    baseY: Partial<Record<YAxisScaleKey, YAxisDomain>>;
+    panY: boolean;
   } | null>(null);
+  /** Y축 거터 드래그 줌 세션. */
+  const yZoomSessionRef = useRef<{
+    pointerId: number;
+    scale: YAxisScaleKey;
+    startY: number;
+    base: YAxisDomain;
+    anchorValue: number;
+  } | null>(null);
+  const isChartYZoomingRef = useRef(false);
+  isChartYZoomingRef.current = isChartYZooming;
   /** Wheel input is accumulated and applied once per animation frame. */
   const wheelRafRef = useRef<number | null>(null);
   const pendingWheelRef = useRef<{
@@ -688,6 +715,10 @@ export default function VizDashboardPage() {
 
   const flushChartZoomCommitRef = useRef(flushChartZoomCommit);
   flushChartZoomCommitRef.current = flushChartZoomCommit;
+
+  const syncYAxisZoomedState = useCallback(() => {
+    setYAxisZoomed(chartCanvasRef.current?.isYAxisZoomed() ?? false);
+  }, []);
 
   const scheduleChartZoomCommitRef = useRef<() => void>(() => {});
 
@@ -945,8 +976,12 @@ export default function VizDashboardPage() {
     measureSessionRef.current = null;
     timeMeasureOverlay.hide();
     panSessionRef.current = null;
+    yZoomSessionRef.current = null;
     activeChartPointerRef.current = null;
+    setIsChartYZooming(false);
+    setYAxisZoomed(false);
     cancelChartZoomRaf(chartZoomRafRefs);
+    chartCanvasRef.current?.resetYAxes();
 
     if (pendingSpectrumViewportRef.current) {
       scheduleSpectrumViewportFit();
@@ -1030,6 +1065,8 @@ export default function VizDashboardPage() {
     syncChartZoomRef(chartZoomRef, null);
     setChartZoom(null);
     chartCanvasRef.current?.resetWindow();
+    chartCanvasRef.current?.resetYAxes();
+    setYAxisZoomed(false);
     setDetailRawVizData(null);
     setDetailQueryMeta(null);
     setDetailLoading(false);
@@ -1274,18 +1311,39 @@ export default function VizDashboardPage() {
       );
     };
 
-    const schedulePanDelta = (deltaX: number) => {
-      pendingPanDeltaRef.current = deltaX;
+    const schedulePanDelta = (deltaX: number, deltaY: number) => {
+      pendingPanDeltaRef.current = { x: deltaX, y: deltaY };
       if (panRafRef.current != null) return;
       panRafRef.current = requestAnimationFrame(() => {
         panRafRef.current = null;
-        applyPanDelta(pendingPanDeltaRef.current);
+        const pending = pendingPanDeltaRef.current;
+        applyPanDelta(pending.x, pending.y);
       });
     };
 
-    const applyPanDelta = (deltaX: number) => {
+    const applyPanDelta = (deltaX: number, deltaY: number) => {
       const session = panSessionRef.current;
       if (!session) return;
+
+      if (session.panY) {
+        const scales: Array<[YAxisScaleKey, YAxisDomain]> = [];
+        for (const scale of ['y', 'y2'] as const) {
+          const base = session.baseY[scale];
+          if (base) scales.push([scale, base]);
+        }
+        for (const [scale, base] of scales) {
+          const metrics = chartCanvasRef.current?.getYAxisMetrics(scale);
+          const plotHeight = metrics?.plotHeight ?? 0;
+          if (plotHeight <= 0) continue;
+          chartCanvasRef.current?.setYAxisDomain(
+            scale,
+            computeYAxisPanDomain(base, deltaY, plotHeight),
+          );
+        }
+      }
+
+      if (!session.panX) return;
+
       const len = chartDataLengthRef.current;
       const data = chartDataRef.current;
       const { plotWidth } = getPlotMetrics();
@@ -1331,6 +1389,7 @@ export default function VizDashboardPage() {
       const wasPanning = panSessionRef.current?.pointerId === pointerId;
       const wasSelecting = isChartSelectingRef.current;
       const wasMeasuring = measureSessionRef.current?.pointerId === pointerId;
+      const wasYZooming = yZoomSessionRef.current?.pointerId === pointerId;
 
       activeChartPointerRef.current = null;
       releasePointerCaptureSafe(pointerId);
@@ -1339,6 +1398,14 @@ export default function VizDashboardPage() {
         panSessionRef.current = null;
         setIsChartPanning(false);
         flushChartZoomCommitRef.current();
+      }
+      if (wasYZooming) {
+        yZoomSessionRef.current = null;
+        isChartYZoomingRef.current = false;
+        setIsChartYZooming(false);
+      }
+      if (wasPanning || wasYZooming) {
+        syncYAxisZoomedState();
       }
       if (wasMeasuring) {
         measureSessionRef.current = null;
@@ -1351,9 +1418,21 @@ export default function VizDashboardPage() {
       }
     };
 
+    const setYAxisHover = (on: boolean) => {
+      // React re-renders rewrite className — compare with the live DOM instead of
+      // caching a flag so the hover cursor is restored after any render.
+      if (el.classList.contains('y-hover') === on) return;
+      el.classList.toggle('y-hover', on);
+    };
+    const updateYAxisHover = (clientX: number, clientY: number) => {
+      const onAxis = chartCanvasRef.current?.getYAxisAtClient(clientX, clientY) != null;
+      setYAxisHover(onAxis);
+    };
+
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
       el.focus({ preventScroll: true });
+      setYAxisHover(false);
       if (activeChartPointerRef.current != null) {
         endPointerSession(activeChartPointerRef.current);
       }
@@ -1417,6 +1496,44 @@ export default function VizDashboardPage() {
       }
 
       {
+        const canvas = chartCanvasRef.current;
+        const yScale = canvas?.getYAxisAtClient(e.clientX, e.clientY) ?? null;
+        if (yScale) {
+          const metrics = canvas?.getYAxisMetrics(yScale);
+          const anchorValue = canvas?.getYValueFromClientY(yScale, e.clientY);
+          if (metrics && anchorValue != null) {
+            yZoomSessionRef.current = {
+              pointerId: e.pointerId,
+              scale: yScale,
+              startY: e.clientY,
+              base: metrics.current,
+              anchorValue,
+            };
+            isChartYZoomingRef.current = true;
+            panSessionRef.current = null;
+            isChartSelectingRef.current = false;
+            refAreaLeftRef.current = null;
+            refAreaRightRef.current = null;
+            setIsChartYZooming(true);
+            setIsChartPanning(false);
+            setIsChartSelecting(false);
+            selectionOverlay.hide();
+            activeChartPointerRef.current = e.pointerId;
+            try {
+              el.setPointerCapture(e.pointerId);
+            } catch {
+              activeChartPointerRef.current = null;
+              yZoomSessionRef.current = null;
+              isChartYZoomingRef.current = false;
+              setIsChartYZooming(false);
+              return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+
         const len = chartDataLengthRef.current;
         const data = chartDataRef.current;
         if (len === 0 || data.length === 0) return;
@@ -1425,16 +1542,30 @@ export default function VizDashboardPage() {
         const baseRange = chartCanvasRef.current?.getXScaleMs()
           ?? resolveChartZoomTimeRange(data, zoom, len)
           ?? fullSpan;
-        if (
-          !baseRange
-          || !fullSpan
-          || isFullChartTimeRange(baseRange, fullSpan.startMs, fullSpan.endMs)
-        ) return;
+        if (!baseRange || !fullSpan) return;
+
+        const panX = !isFullChartTimeRange(baseRange, fullSpan.startMs, fullSpan.endMs);
+        const baseY: Partial<Record<YAxisScaleKey, YAxisDomain>> = {};
+        if (canvas?.isYAxisZoomed()) {
+          for (const scale of ['y', 'y2'] as const) {
+            const metrics = canvas.getYAxisMetrics(scale);
+            if (metrics && isYAxisDomainZoomed(metrics.current, metrics.base)) {
+              baseY[scale] = metrics.current;
+            }
+          }
+        }
+        const panY = Object.keys(baseY).length > 0;
+        if (!panX && !panY) return;
+
         panSessionRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
+          startY: e.clientY,
           baseStartMs: baseRange.startMs,
           baseEndMs: baseRange.endMs,
+          panX,
+          baseY,
+          panY,
         };
         liveFollowRef.current = false;
         isChartSelectingRef.current = false;
@@ -1458,16 +1589,33 @@ export default function VizDashboardPage() {
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (activeChartPointerRef.current !== e.pointerId) return;
+      if (activeChartPointerRef.current !== e.pointerId) {
+        updateYAxisHover(e.clientX, e.clientY);
+        return;
+      }
 
       // pointerup missed — primary button no longer held
       if (e.buttons === 0) {
         endPointerSession(e.pointerId);
+        updateYAxisHover(e.clientX, e.clientY);
         return;
       }
 
+      if (yZoomSessionRef.current?.pointerId === e.pointerId) {
+        const session = yZoomSessionRef.current;
+        const factor = yAxisDragZoomFactor(e.clientY - session.startY);
+        chartCanvasRef.current?.setYAxisDomain(
+          session.scale,
+          computeYAxisZoomDomain(session.base, session.anchorValue, factor),
+        );
+        e.preventDefault();
+        return;
+      }
       if (panSessionRef.current?.pointerId === e.pointerId) {
-        schedulePanDelta(e.clientX - panSessionRef.current.startX);
+        schedulePanDelta(
+          e.clientX - panSessionRef.current.startX,
+          e.clientY - panSessionRef.current.startY,
+        );
         e.preventDefault();
         return;
       }
@@ -1515,6 +1663,13 @@ export default function VizDashboardPage() {
       if (panSessionRef.current?.pointerId === e.pointerId) {
         panSessionRef.current = null;
         setIsChartPanning(false);
+        syncYAxisZoomedState();
+      }
+      if (yZoomSessionRef.current?.pointerId === e.pointerId) {
+        yZoomSessionRef.current = null;
+        isChartYZoomingRef.current = false;
+        setIsChartYZooming(false);
+        syncYAxisZoomedState();
       }
       if (measureSessionRef.current?.pointerId === e.pointerId) {
         measureSessionRef.current = null;
@@ -1531,21 +1686,29 @@ export default function VizDashboardPage() {
       }
     };
 
+    const onPointerLeave = () => {
+      if (activeChartPointerRef.current != null) return;
+      setYAxisHover(false);
+    };
+
     const pointerOpts: AddEventListenerOptions = { capture: true };
     el.addEventListener('pointerdown', onPointerDown, pointerOpts);
     el.addEventListener('pointermove', onPointerMove, pointerOpts);
     el.addEventListener('pointerup', onPointerUp, pointerOpts);
     el.addEventListener('pointercancel', onPointerUp, pointerOpts);
+    el.addEventListener('pointerleave', onPointerLeave);
     el.addEventListener('lostpointercapture', onLostPointerCapture);
     window.addEventListener('pointerup', onWindowPointerEnd);
     window.addEventListener('pointercancel', onWindowPointerEnd);
     window.addEventListener('blur', onWindowBlur);
 
     return () => {
+      el.classList.remove('y-hover');
       el.removeEventListener('pointerdown', onPointerDown, pointerOpts);
       el.removeEventListener('pointermove', onPointerMove, pointerOpts);
       el.removeEventListener('pointerup', onPointerUp, pointerOpts);
       el.removeEventListener('pointercancel', onPointerUp, pointerOpts);
+      el.removeEventListener('pointerleave', onPointerLeave);
       el.removeEventListener('lostpointercapture', onLostPointerCapture);
       window.removeEventListener('pointerup', onWindowPointerEnd);
       window.removeEventListener('pointercancel', onWindowPointerEnd);
@@ -1555,7 +1718,7 @@ export default function VizDashboardPage() {
         panRafRef.current = null;
       }
     };
-  }, [rawVizDataKey, liveMode, syncReactChartZoomFromRef]);
+  }, [rawVizDataKey, liveMode, syncReactChartZoomFromRef, syncYAxisZoomedState]);
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -2857,7 +3020,7 @@ export default function VizDashboardPage() {
     item.y_axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y'
   ), []);
 
-  const chartInteractionHidden = isChartPanning || isChartSelecting || isChartMeasuring;
+  const chartInteractionHidden = isChartPanning || isChartSelecting || isChartMeasuring || isChartYZooming;
 
   const chartZoomActive = zoomWindow != null;
 
@@ -3000,7 +3163,7 @@ export default function VizDashboardPage() {
   }, []);
 
   const handleChartHoverTimeKey = useCallback((timeKey: string | null) => {
-    if (isChartPanning || isChartSelecting || isChartMeasuring) return;
+    if (isChartPanning || isChartSelecting || isChartMeasuring || isChartYZooming) return;
     if (timeKey == null) {
       if (hoverCommitTimerRef.current != null) {
         clearTimeout(hoverCommitTimerRef.current);
@@ -3025,7 +3188,7 @@ export default function VizDashboardPage() {
       if (hoverCommitTimerRef.current != null) clearTimeout(hoverCommitTimerRef.current);
       hoverCommitTimerRef.current = setTimeout(commit, 80 - elapsed);
     }
-  }, [isChartPanning, isChartSelecting, isChartMeasuring]);
+  }, [isChartPanning, isChartSelecting, isChartMeasuring, isChartYZooming]);
 
   useEffect(() => () => {
     if (hoverCommitTimerRef.current != null) clearTimeout(hoverCommitTimerRef.current);
@@ -3058,26 +3221,13 @@ export default function VizDashboardPage() {
   const chartYAxisDomains = useMemo(() => {
     const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
     const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
-    let domainData = chartData;
-    if (zoomWindow && canvasChartData.length > 0) {
-      if (canvasClipViewport) {
-        domainData = filterChartPointsByTimeRange(
-          canvasChartData,
-          zoomWindow.startTs,
-          zoomWindow.endTs,
-        );
-      } else if (!inMemoryFull) {
-        domainData = canvasChartData;
-      } else {
-        domainData = canvasChartData.slice(zoomWindow.start, zoomWindow.end + 1);
-      }
-    }
-
+    // X 줌/팬과 무관하게 불러온 전체 구간으로 고정한다. 화면에 보이는 값에
+    // 맞춰 축이 재계산되면 같은 변화가 다른 값처럼 읽히기 때문이다.
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(domainData, leftItems),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(domainData, rightItems),
+      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftItems),
+      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, canvasChartData, canvasClipViewport, zoomWindow, inMemoryFull, activeChartItems]);
+  }, [chartData, activeChartItems]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -3780,7 +3930,7 @@ export default function VizDashboardPage() {
                 type="button"
                 className="viz-chart-icon-btn"
                 onClick={resetChartZoom}
-                disabled={!chartZoomActive}
+                disabled={!chartZoomActive && !yAxisZoomed}
                 title={t('viz.resetZoom')}
                 aria-label={t('viz.resetZoom')}
               >
@@ -3859,7 +4009,7 @@ export default function VizDashboardPage() {
         <div className="viz-chart-main">
         <div
           ref={chartViewportRef}
-          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${chartZoomActive ? ' zoomed' : ''}${liveMode ? ' live' : ''}`}
+          className={`viz-chart-viewport${isChartSelecting ? ' selecting' : ''}${isChartPanning ? ' panning' : ''}${isChartMeasuring ? ' measuring' : ''}${isChartYZooming ? ' y-zooming' : ''}${chartZoomActive ? ' zoomed' : ''}${yAxisZoomed ? ' y-zoomed' : ''}${liveMode ? ' live' : ''}`}
           role="application"
           tabIndex={0}
           aria-label={t('viz.chartKeyboard.region')}
@@ -3876,7 +4026,6 @@ export default function VizDashboardPage() {
             windowIndices={canvasWindowIndices}
             xWindowTimeKeys={canvasXWindowTimeKeys}
             filterPointsToXWindow={!canvasClipViewport}
-            autoSyncYToXWindow={canvasClipViewport}
             chartItems={chartItems}
             maxVisibleSeries={MAX_CHART_SERIES}
             yAxisDomains={canvasYAxisDomains}

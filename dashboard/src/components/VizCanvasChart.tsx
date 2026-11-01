@@ -20,13 +20,26 @@ const SECONDARY_SCALE = 'y2';
 import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
 import { chartSessionGapThresholdSec, shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
 import { filterChartPointsByTimeRange } from '../lib/vizChartZoomTime';
-import { computeYAxisDomain } from '../lib/vizDashboardUtils';
+import {
+  isYAxisDomainZoomed,
+  type YAxisDomain,
+  type YAxisScaleKey,
+} from '../lib/vizChartYAxis';
 
 export interface VizViewportSyncOptions {
-  /** Recompute Y from points visible in the new x window (default true). */
+  /** @deprecated Y축은 X 창과 무관하게 고정된다. 호환용으로만 남긴다. */
   syncY?: boolean;
   /** Skip bounds/session-break DOM work — use during pan/wheel frames. */
   lightweight?: boolean;
+}
+
+export interface VizYAxisMetrics {
+  /** 현재 화면에 적용된 값 구간. */
+  current: YAxisDomain;
+  /** X 줌과 무관한 기준(전체 데이터) 구간. */
+  base: YAxisDomain | null;
+  /** 플롯 높이(CSS px) — 세로 팬 거리 환산에 사용. */
+  plotHeight: number;
 }
 
 export interface VizCanvasChartHandle {
@@ -36,6 +49,13 @@ export interface VizCanvasChartHandle {
   getXScaleMs(): { startMs: number; endMs: number } | null;
   syncViewportFinish(): void;
   resetWindow(): void;
+  resetYAxes(): void;
+  isYAxisZoomed(): boolean;
+  /** 포인터가 Y축 거터(왼쪽/오른쪽) 위에 있으면 해당 스케일을 반환. */
+  getYAxisAtClient(clientX: number, clientY: number): YAxisScaleKey | null;
+  getYAxisMetrics(scale: YAxisScaleKey): VizYAxisMetrics | null;
+  getYValueFromClientY(scale: YAxisScaleKey, clientY: number): number | null;
+  setYAxisDomain(scale: YAxisScaleKey, domain: YAxisDomain): void;
   refreshPlotBounds(): { left: number; width: number };
   getPlotClientMetrics(): { plotLeft: number; plotWidth: number } | null;
   getWheelFocusMsFromClientX(clientX: number): number | null;
@@ -124,8 +144,6 @@ export interface VizCanvasChartProps {
   xWindowTimeKeys?: { start: string; end: string } | null;
   /** When false, uPlot x-scale clips full detail — avoids per-zoom point filtering. */
   filterPointsToXWindow?: boolean;
-  /** During pan/wheel, recompute Y from the visible x range on the canvas (no React). */
-  autoSyncYToXWindow?: boolean;
   chartItems: VizItem[];
   maxVisibleSeries: number;
   yAxisDomains: Record<string, [number, number] | undefined>;
@@ -321,7 +339,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     windowIndices,
     xWindowTimeKeys,
     filterPointsToXWindow = true,
-    autoSyncYToXWindow = false,
     chartItems,
     maxVisibleSeries,
     yAxisDomains,
@@ -373,8 +390,12 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   chartItemsRef.current = chartItems;
   const maxVisibleSeriesRef = useRef(maxVisibleSeries);
   maxVisibleSeriesRef.current = maxVisibleSeries;
-  const autoSyncYToXWindowRef = useRef(autoSyncYToXWindow);
-  autoSyncYToXWindowRef.current = autoSyncYToXWindow;
+  const yAxesRef = useRef(yAxes);
+  yAxesRef.current = yAxes;
+  const yAxisDomainsRef = useRef(yAxisDomains);
+  yAxisDomainsRef.current = yAxisDomains;
+  /** 사용자가 Y축을 직접 줌/팬했는지 — 데이터 갱신이 그 상태를 덮어쓰지 않게 한다. */
+  const yUserAdjustedRef = useRef(false);
   const windowIndicesRef = useRef<{ start: number; end: number } | null>(
     windowIndices ? { start: windowIndices.start, end: windowIndices.end } : null,
   );
@@ -445,33 +466,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   );
   const getGapThresholdSec = useCallback(() => gapThresholdSecRef.current, []);
 
-  const syncYScalesToVisibleWindow = useCallback((u: uPlot, startSec: number, endSec: number) => {
-    const points = pointsRef.current;
-    const items = chartItemsRef.current;
-    if (points.length === 0 || items.length === 0) return;
-
-    const startKey = new Date(Math.min(startSec, endSec) * 1000).toISOString();
-    const endKey = new Date(Math.max(startSec, endSec) * 1000).toISOString();
-    const visible = filterChartPointsByTimeRange(points, startKey, endKey);
-    if (visible.length === 0) return;
-
-    let visibleRank = 0;
-    const plottedItems: VizItem[] = [];
-    for (const item of items) {
-      if (!item.visible) continue;
-      if (visibleRank >= maxVisibleSeriesRef.current) break;
-      plottedItems.push(item);
-      visibleRank++;
-    }
-
-    const leftItems = plottedItems.filter(i => resolveYScaleRef.current(i) === PRIMARY_SCALE);
-    const rightItems = plottedItems.filter(i => resolveYScaleRef.current(i) === SECONDARY_SCALE);
-    const leftDomain = computeYAxisDomain(visible, leftItems);
-    const rightDomain = computeYAxisDomain(visible, rightItems);
-    if (leftDomain) u.setScale('y', { min: leftDomain[0], max: leftDomain[1] });
-    if (rightDomain) u.setScale('y2', { min: rightDomain[0], max: rightDomain[1] });
-  }, []);
-
   const applyXRangeToPlot = useCallback((
     u: uPlot,
     range: { min: number; max: number },
@@ -480,9 +474,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     imperativeXRangeRef.current = range;
     const applyScales = () => {
       u.setScale('x', range);
-      if (opts?.syncY !== false && autoSyncYToXWindowRef.current) {
-        syncYScalesToVisibleWindow(u, range.min, range.max);
-      }
     };
     if (opts?.lightweight) {
       // During pan/wheel uPlot's setScale() schedules one batched draw.
@@ -494,7 +485,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       u.batch(applyScales);
       syncPlotAndBreaks(u);
     }
-  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow]);
+  }, [syncPlotAndBreaks]);
 
   const applyWindowIndices = useCallback((start: number, end: number, opts?: VizViewportSyncOptions) => {
     const u = plotRef.current;
@@ -544,15 +535,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const syncViewportFinish = useCallback(() => {
     const u = plotRef.current;
     if (!u) return;
-    const min = u.scales.x.min;
-    const max = u.scales.x.max;
-    if (typeof min === 'number' && typeof max === 'number' && autoSyncYToXWindowRef.current) {
-      syncYScalesToVisibleWindow(u, min, max);
-    }
     syncPlotAndBreaks(u);
-  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow]);
+  }, [syncPlotAndBreaks]);
 
-  const resetWindow = useCallback((opts?: VizViewportSyncOptions) => {
+  const resetWindow = useCallback(() => {
     const u = plotRef.current;
     const timeline = fullTimelineRef.current ?? pointsRef.current;
     if (!u || timeline.length === 0) return;
@@ -561,15 +547,99 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     imperativeXRangeRef.current = range;
     u.batch(() => {
       u.setScale('x', range);
-      if (opts?.syncY !== false && autoSyncYToXWindowRef.current) {
-        syncYScalesToVisibleWindow(u, range.min, range.max);
-      } else if (fullTimelineRef.current) {
-        syncYScalesToVisibleWindow(u, range.min, range.max);
-      }
     });
     syncPlotAndBreaks(u);
     windowIndicesRef.current = null;
-  }, [syncPlotAndBreaks, syncYScalesToVisibleWindow]);
+  }, [syncPlotAndBreaks]);
+
+  const readYScale = useCallback((u: uPlot, scale: YAxisScaleKey): YAxisDomain | null => {
+    const s = u.scales[scale];
+    if (!s || typeof s.min !== 'number' || typeof s.max !== 'number') return null;
+    if (!Number.isFinite(s.min) || !Number.isFinite(s.max) || s.max <= s.min) return null;
+    return [s.min, s.max];
+  }, []);
+
+  const resetYAxes = useCallback(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    const baseY = yAxisDomainsRef.current[PRIMARY_SCALE];
+    const baseY2 = yAxisDomainsRef.current[SECONDARY_SCALE];
+    yUserAdjustedRef.current = false;
+    u.batch(() => {
+      if (u.scales[PRIMARY_SCALE] && baseY) {
+        u.setScale(PRIMARY_SCALE, { min: baseY[0], max: baseY[1] });
+      }
+      if (u.scales[SECONDARY_SCALE] && baseY2) {
+        u.setScale(SECONDARY_SCALE, { min: baseY2[0], max: baseY2[1] });
+      }
+    });
+    u.redraw();
+  }, []);
+
+  const isYAxisZoomed = useCallback(() => {
+    const u = plotRef.current;
+    if (!u) return false;
+    return ([PRIMARY_SCALE, SECONDARY_SCALE] as const).some(scale => (
+      isYAxisDomainZoomed(
+        readYScale(u, scale),
+        yAxisDomainsRef.current[scale] ?? null,
+      )
+    ));
+  }, [readYScale]);
+
+  const getYAxisAtClient = useCallback((
+    clientX: number,
+    clientY: number,
+  ): YAxisScaleKey | null => {
+    const u = plotRef.current;
+    if (!u || u.bbox.width <= 0) return null;
+    const rootRect = u.root.getBoundingClientRect();
+    if (clientX < rootRect.left || clientX > rootRect.right) return null;
+    const bb = plotBBoxCss(u);
+    const plotTop = rootRect.top + bb.top;
+    const plotBottom = plotTop + bb.height;
+    if (clientY < plotTop - 4 || clientY > plotBottom + 4) return null;
+    const plotLeft = rootRect.left + bb.left;
+    const plotRight = plotLeft + bb.width;
+    if (clientX < plotLeft - 1) return PRIMARY_SCALE;
+    const hasRightAxis = yAxesRef.current.some(axis => axis.id === SECONDARY_SCALE);
+    if (hasRightAxis && clientX > plotRight + 1) return SECONDARY_SCALE;
+    return null;
+  }, []);
+
+  const getYAxisMetrics = useCallback((scale: YAxisScaleKey): VizYAxisMetrics | null => {
+    const u = plotRef.current;
+    if (!u) return null;
+    const current = readYScale(u, scale);
+    if (!current) return null;
+    return {
+      current,
+      base: yAxisDomainsRef.current[scale] ?? null,
+      plotHeight: plotBBoxCss(u).height,
+    };
+  }, [readYScale]);
+
+  const getYValueFromClientY = useCallback((
+    scale: YAxisScaleKey,
+    clientY: number,
+  ): number | null => {
+    const u = plotRef.current;
+    if (!u || u.bbox.height <= 0) return null;
+    u.syncRect();
+    const rootRect = u.root.getBoundingClientRect();
+    const bb = plotBBoxCss(u);
+    const plotY = Math.max(0, Math.min(bb.height, clientY - rootRect.top - bb.top));
+    const value = u.posToVal(plotY, scale);
+    return Number.isFinite(value) ? value : null;
+  }, []);
+
+  const setYAxisDomain = useCallback((scale: YAxisScaleKey, domain: YAxisDomain) => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (!Number.isFinite(domain[0]) || !Number.isFinite(domain[1]) || domain[1] <= domain[0]) return;
+    yUserAdjustedRef.current = true;
+    u.setScale(scale, { min: domain[0], max: domain[1] });
+  }, []);
 
   const syncXWindow = useCallback(() => {
     if (xWindowTimeKeys) {
@@ -590,6 +660,12 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     getXScaleMs,
     syncViewportFinish,
     resetWindow,
+    resetYAxes,
+    isYAxisZoomed,
+    getYAxisAtClient,
+    getYAxisMetrics,
+    getYValueFromClientY,
+    setYAxisDomain,
     refreshPlotBounds: () => {
       const u = plotRef.current;
       if (!u) return { left: 0, width: 0 };
@@ -617,7 +693,17 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       if (!Number.isFinite(focusSec)) return null;
       return focusSec * 1000;
     },
-  }), [applyWindowIndices, applyXWindowTimeKeys, resetWindow]);
+  }), [
+    applyWindowIndices,
+    applyXWindowTimeKeys,
+    resetWindow,
+    resetYAxes,
+    isYAxisZoomed,
+    getYAxisAtClient,
+    getYAxisMetrics,
+    getYValueFromClientY,
+    setYAxisDomain,
+  ]);
 
   const hideTooltipEl = useCallback(() => {
     const el = tooltipRef.current;
@@ -827,6 +913,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ro.observe(container);
 
     const initialWidth = Math.floor(container.clientWidth);
+    yUserAdjustedRef.current = false;
     const plot = new uPlot(
       makeOptions(initialWidth > 0 ? initialWidth : 640),
       buildAlignedData(plotPoints, chartItems),
@@ -894,6 +981,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   useEffect(() => {
     const u = plotRef.current;
     if (!u || plotPoints.length === 0) return;
+    // 사용자가 Y축을 직접 조정한 뒤에는 데이터 갱신이 그 구간을 덮어쓰지 않는다.
+    if (yUserAdjustedRef.current) return;
     const leftDomain = yAxisDomains[PRIMARY_SCALE];
     const rightDomain = yAxisDomains[SECONDARY_SCALE];
     if (leftDomain) u.setScale('y', { min: leftDomain[0], max: leftDomain[1] });
