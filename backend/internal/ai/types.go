@@ -30,6 +30,9 @@ type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// ExtraContent carries provider-specific tool-call metadata (for example
+	// Gemini thought signatures) that must be echoed back on the next turn.
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 // ToolSpec describes a tool to the model. Parameters is a JSON Schema object.

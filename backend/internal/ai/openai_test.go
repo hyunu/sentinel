@@ -294,3 +294,22 @@ func TestOpenAIProviderChatStreamFallsBackToJSONResponse(t *testing.T) {
 		t.Fatalf("content=%q tokens=%#v", resp.Content, tokens)
 	}
 }
+
+func TestOpenAIToolExtraContentRoundTrip(t *testing.T) {
+	messages := toOpenAIMessages([]Message{{
+		Role: RoleAssistant,
+		ToolCalls: []ToolCall{{
+			ID:           "call_1",
+			Name:         "list_boards",
+			Arguments:    json.RawMessage(`{}`),
+			ExtraContent: json.RawMessage(`{"google":{"thought_signature":"sig-123"}}`),
+		}},
+	}})
+	raw, err := json.Marshal(messages)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"thought_signature":"sig-123"`) {
+		t.Fatalf("provider metadata was not preserved: %s", raw)
+	}
+}

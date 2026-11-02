@@ -83,9 +83,10 @@ type openAIToolFunction struct {
 }
 
 type openAIToolCall struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type"`
-	Function openAIToolCallFunc `json:"function"`
+	ID           string             `json:"id"`
+	Type         string             `json:"type"`
+	Function     openAIToolCallFunc `json:"function"`
+	ExtraContent json.RawMessage    `json:"extra_content,omitempty"`
 }
 
 type openAIToolCallFunc struct {
@@ -196,9 +197,10 @@ func (p *openAIProvider) chat(ctx context.Context, req ChatRequest, onToken func
 			id = fmt.Sprintf("call_%d", i+1)
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{
-			ID:        id,
-			Name:      call.Function.Name,
-			Arguments: normalizeArguments(call.Function.Arguments),
+			ID:           id,
+			Name:         call.Function.Name,
+			Arguments:    normalizeArguments(call.Function.Arguments),
+			ExtraContent: call.ExtraContent,
 		})
 	}
 	if decoded.Usage != nil {
@@ -227,6 +229,7 @@ type openAIStreamChunk struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
 				} `json:"function"`
+				ExtraContent json.RawMessage `json:"extra_content"`
 			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
@@ -247,9 +250,10 @@ func (p *openAIProvider) readOpenAIStream(body io.Reader, onToken func(string) e
 
 	result := ChatResponse{}
 	type toolAccum struct {
-		id        string
-		name      string
-		arguments string
+		id           string
+		name         string
+		arguments    string
+		extraContent json.RawMessage
 	}
 	toolAcc := make(map[int]*toolAccum)
 	var order []int
@@ -289,6 +293,9 @@ func (p *openAIProvider) readOpenAIStream(body io.Reader, onToken func(string) e
 				}
 				acc.name += delta.Function.Name
 				acc.arguments += delta.Function.Arguments
+				if len(delta.ExtraContent) > 0 {
+					acc.extraContent = delta.ExtraContent
+				}
 			}
 			if choice.FinishReason != "" {
 				result.FinishReason = choice.FinishReason
@@ -315,9 +322,10 @@ func (p *openAIProvider) readOpenAIStream(body io.Reader, onToken func(string) e
 			id = fmt.Sprintf("call_%d", idx+1)
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{
-			ID:        id,
-			Name:      acc.name,
-			Arguments: normalizeArguments(acc.arguments),
+			ID:           id,
+			Name:         acc.name,
+			Arguments:    normalizeArguments(acc.arguments),
+			ExtraContent: acc.extraContent,
 		})
 	}
 	return result, nil
@@ -340,6 +348,7 @@ func toOpenAIMessages(messages []Message) []openAIMessage {
 					Name:      call.Name,
 					Arguments: string(normalizeArgumentsBytes(call.Arguments)),
 				},
+				ExtraContent: call.ExtraContent,
 			})
 		}
 		out = append(out, converted)

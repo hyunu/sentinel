@@ -73,7 +73,7 @@ const AI_PRESETS = [
     label: 'Google Gemini',
     provider: 'openai',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.5-flash',
   },
   {
     id: 'custom',
