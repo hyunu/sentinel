@@ -45,10 +45,12 @@ type AIConfig struct {
 func Load() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Host:         getEnv("SERVER_HOST", "0.0.0.0"),
-			Port:         getEnv("SERVER_PORT", "5050"),
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
+			Host:        getEnv("SERVER_HOST", "0.0.0.0"),
+			Port:        getEnv("SERVER_PORT", "5050"),
+			ReadTimeout: 30 * time.Second,
+			// AI tool-calling responses can take longer than 30 seconds.
+			// The handler has its own 120s AI budget.
+			WriteTimeout: 5 * time.Minute,
 		},
 		MongoDB: MongoDBConfig{
 			URI:      getEnv("MONGODB_URI", "mongodb://localhost:27017"),
