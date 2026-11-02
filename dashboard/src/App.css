@@ -970,6 +970,20 @@ tbody tr:last-child td {
   height: 100%;
 }
 
+.viz-config-toggle {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.viz-config-toggle:hover h2 {
+  color: var(--text);
+}
+
+.viz-config-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(124, 131, 255, 0.35);
+}
+
 .viz-config-header-main h2,
 .viz-stats-header-main h2 {
   flex-shrink: 0;
@@ -986,6 +1000,19 @@ tbody tr:last-child td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.viz-config-collapse-btn.has-label {
+  width: auto;
+  min-width: 64px;
+  padding: 0 10px;
+  gap: 5px;
+}
+
+.viz-config-collapse-label {
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .viz-config-collapse-btn:focus,

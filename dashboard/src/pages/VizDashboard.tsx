@@ -139,6 +139,7 @@ const WHEEL_GESTURE_QUIET_MS = 180;
 type FieldValuesLayout = 'bottom' | 'left';
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
 const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
+const CONFIG_OPEN_STORAGE_KEY = 'sentinel.viz.config-open';
 
 interface AIChartLink {
   board_id: string;
@@ -149,6 +150,17 @@ interface AIChartLink {
   aggregation?: string;
   bucket_seconds?: number;
   title?: string;
+}
+
+function readConfigOpen(): boolean {
+  try {
+    const stored = localStorage.getItem(CONFIG_OPEN_STORAGE_KEY);
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+  } catch {
+    /* ignore */
+  }
+  return true;
 }
 
 function readFieldValuesLayout(): FieldValuesLayout {
@@ -590,7 +602,18 @@ export default function VizDashboardPage() {
   const [showProfileAdd, setShowProfileAdd] = useState(false);
   const [profileDraftName, setProfileDraftName] = useState('');
   const [fieldTooltip, setFieldTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
-  const [configOpen, setConfigOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(readConfigOpen);
+  const toggleConfigOpen = useCallback(() => {
+    setConfigOpen(open => {
+      const next = !open;
+      try {
+        localStorage.setItem(CONFIG_OPEN_STORAGE_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
   const [statsOpen, setStatsOpen] = useState(false);
   const [itemFieldSearch, setItemFieldSearch] = useState('');
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
@@ -3355,7 +3378,21 @@ export default function VizDashboardPage() {
 
       <div className={`card table-card viz-config-card${configOpen ? '' : ' is-collapsed'}`}>
         <div className="card-header viz-config-header">
-          <div className="viz-config-header-main">
+          <div
+            className="viz-config-header-main viz-config-toggle"
+            role="button"
+            tabIndex={0}
+            aria-expanded={configOpen}
+            aria-controls="viz-config-panel"
+            title={configOpen ? t('viz.collapseConfig') : t('viz.expandConfig')}
+            onClick={toggleConfigOpen}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleConfigOpen();
+              }
+            }}
+          >
             <h2>{t('viz.configuration')}</h2>
             {!configOpen && (
               <>
@@ -3380,17 +3417,21 @@ export default function VizDashboardPage() {
           )}
           <button
             type="button"
-            className="btn-ghost btn-sm viz-config-collapse-btn"
-            onClick={() => setConfigOpen(v => !v)}
+            className="btn-ghost btn-sm viz-config-collapse-btn has-label"
+            onClick={toggleConfigOpen}
             aria-expanded={configOpen}
+            aria-controls="viz-config-panel"
             aria-label={configOpen ? t('viz.collapseConfig') : t('viz.expandConfig')}
             title={configOpen ? t('viz.collapse') : t('viz.expand')}
           >
             <span className={`viz-collapse-chevron${configOpen ? ' open' : ''}`} aria-hidden>›</span>
+            <span className="viz-config-collapse-label">
+              {configOpen ? t('viz.collapse') : t('viz.expand')}
+            </span>
           </button>
         </div>
         {configOpen && (
-        <div className="viz-config-panel">
+        <div id="viz-config-panel" className="viz-config-panel">
         <div className="viz-config-row" aria-labelledby="viz-board-title">
           <div className="viz-config-row-head">
             <div id="viz-board-title" className="viz-config-row-title">{t('common.board')}</div>
