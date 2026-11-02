@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# Large UART capture artifacts
+uart_*.log
