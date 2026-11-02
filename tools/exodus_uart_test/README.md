@@ -55,3 +55,4 @@ closer together than that cannot start at the exact captured interval; they are
 queued and serialized by the UART. No packet is discarded because of this.
 
 Use `--limit N` for a short smoke test. Without `--once`, the capture repeats.
+Add `--trace-sim` to log every `SIM->PRD` packet as it is sent.

@@ -192,6 +192,11 @@ def main() -> int:
         default=0,
         help="stop after N scheduled packets (0 = unlimited)",
     )
+    parser.add_argument(
+        "--trace-sim",
+        action="store_true",
+        help="log every SIM->PRD packet instead of every 100th",
+    )
     args = parser.parse_args()
 
     if not args.log.is_file():
@@ -305,10 +310,13 @@ def main() -> int:
 
                 direction_stats.record_sent(len(packet.raw), lag)
                 sent = direction_stats.sent
-                if sent == 1 or sent % 100 == 0:
+                trace_packet = direction == "SIM->PRD" and args.trace_sim
+                if sent == 1 or sent % 100 == 0 or trace_packet:
                     with print_lock:
                         print(
                             f"sent {direction}={sent} "
+                            f"len={len(packet.raw)} "
+                            f"lag={lag:.3f}s "
                             f"bytes={direction_stats.bytes_sent} "
                             f"late={direction_stats.late} "
                             f"max_lag={direction_stats.max_lag:.3f}s "
