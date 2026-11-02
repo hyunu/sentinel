@@ -76,6 +76,27 @@ const AI_PRESETS = [
     model: 'gemini-3.5-flash',
   },
   {
+    id: 'groq-free',
+    label: 'Groq Free (GPT-OSS 120B)',
+    provider: 'openai',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    model: 'openai/gpt-oss-120b',
+  },
+  {
+    id: 'openrouter-free',
+    label: 'OpenRouter Free (Nemotron)',
+    provider: 'openai',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+  },
+  {
+    id: 'mistral-free',
+    label: 'Mistral Free',
+    provider: 'openai',
+    baseUrl: 'https://api.mistral.ai/v1',
+    model: 'mistral-small-latest',
+  },
+  {
     id: 'custom',
     label: 'Custom / OpenAI-compatible',
     provider: 'openai',
