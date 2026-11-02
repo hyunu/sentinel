@@ -1021,6 +1021,10 @@ export default function VizDashboardPage() {
   }, [rawVizDataKey, selectionOverlay.hide, timeMeasureOverlay.hide, chartZoomRafRefs, scheduleSpectrumViewportFit]);
 
   useEffect(() => {
+    if (hoverCommitTimerRef.current != null) {
+      clearTimeout(hoverCommitTimerRef.current);
+      hoverCommitTimerRef.current = null;
+    }
     setHoverTimeKey(null);
   }, [rawVizDataKey]);
 
@@ -3215,11 +3219,11 @@ export default function VizDashboardPage() {
   const handleChartHoverTimeKey = useCallback((timeKey: string | null) => {
     if (isChartPanning || isChartSelecting || isChartMeasuring || isChartYZooming) return;
     if (timeKey == null) {
-      if (hoverCommitTimerRef.current != null) {
-        clearTimeout(hoverCommitTimerRef.current);
-        hoverCommitTimerRef.current = null;
-      }
-      setHoverTimeKey(null);
+      // Keep the last cursor value when the pointer leaves the chart. The
+      // canvas tooltip hides itself, but the field-value panel is a readout of
+      // the last inspected sample and should remain visible.
+      // A pending throttled commit is allowed to finish so the last sample is
+      // still shown even when the pointer leaves immediately after moving.
       return;
     }
     const now = performance.now();
