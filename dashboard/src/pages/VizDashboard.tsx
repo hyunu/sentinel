@@ -132,6 +132,9 @@ const MIN_CHART_ZOOM_POINTS = 10;
 const ZOOM_COMMIT_DEBOUNCE_MS = 64;
 const DETAIL_FETCH_DEBOUNCE_MS = 250;
 const VIEWPORT_FINISH_DEBOUNCE_MS = 48;
+/** A wheel gesture ends after this quiet period when deciding whether a
+ *  direction reversal is a new gesture or trackpad residual momentum. */
+const WHEEL_GESTURE_QUIET_MS = 180;
 
 type FieldValuesLayout = 'bottom' | 'left';
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
@@ -661,6 +664,10 @@ export default function VizDashboardPage() {
     zoomDeltaY: number;
     clientX: number;
   } | null>(null);
+  /** Once a wheel gesture reaches full view, ignore its residual reverse
+   *  momentum events; otherwise trackpad inertia can snap back to 80–90%. */
+  const lastWheelEventAtRef = useRef(0);
+  const fullResetDuringWheelGestureRef = useRef(false);
   const activeChartPointerRef = useRef<number | null>(null);
   const isChartSelectingRef = useRef(false);
   isChartSelectingRef.current = isChartSelecting;
@@ -1766,6 +1773,7 @@ export default function VizDashboardPage() {
         fullSpan.endMs,
       );
       if (isFullChartTimeRange(next, fullSpan.startMs, fullSpan.endMs)) {
+        fullResetDuringWheelGestureRef.current = true;
         chartZoomRef.current = null;
         chartCanvasRef.current?.resetWindow();
         flushChartZoomCommitRef.current();
@@ -1800,6 +1808,18 @@ export default function VizDashboardPage() {
         fullSpan.endMs,
       );
 
+      // Trackpad momentum can emit a tiny reverse-delta event after the
+      // zoom-out gesture has already landed on the full range. Ignore that
+      // reverse event until the wheel stream has gone quiet; otherwise the
+      // chart snaps back to the previous 80–90% viewport.
+      if (
+        factor < 1
+        && atFullViewport
+        && fullResetDuringWheelGestureRef.current
+      ) {
+        return;
+      }
+
       // Already showing the full data range — ignore further zoom-out.
       if (factor >= 1 && atFullViewport) {
         return;
@@ -1824,6 +1844,7 @@ export default function VizDashboardPage() {
         if (atFullViewport && chartZoomRef.current == null) {
           return;
         }
+        fullResetDuringWheelGestureRef.current = true;
         resetToFullChartViewRef.current();
         chartCanvasRef.current?.syncViewportFinish();
         return;
@@ -1871,6 +1892,12 @@ export default function VizDashboardPage() {
 
       e.preventDefault();
       e.stopPropagation();
+
+      const now = performance.now();
+      if (now - lastWheelEventAtRef.current > WHEEL_GESTURE_QUIET_MS) {
+        fullResetDuringWheelGestureRef.current = false;
+      }
+      lastWheelEventAtRef.current = now;
 
       const pending = pendingWheelRef.current ?? {
         panDeltaX: 0,
