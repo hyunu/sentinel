@@ -4,14 +4,24 @@
 #define UART_BAUD_RATE      19200
 #define UART_BAUD_MIN       300
 #define UART_BAUD_MAX       2000000
-#define UART_MONITOR_RX     20   // ESP32-C3 GPIO20 (sniffer RX = target TX)
-#define UART_MONITOR_TX     21   // ESP32-C3 GPIO21 (sniffer TX = target RX)
+
+// Two UART capture channels: one for each wire direction.
+// GPIO20 is the original RX pin; GPIO21 is the adjacent pin that was
+// previously used as UART1 TX and now captures the opposite direction.
+#define UART_CAPTURE_RX_PIN         20
+#define UART_CAPTURE_TX_PIN         21
+// Dummy TX pins: the sniffer never transmits, but the Arduino UART driver
+// needs a valid output pin when the UART is initialized.
+#define UART_CAPTURE_RX_DUMMY_TX    7
+#define UART_CAPTURE_TX_DUMMY_TX    4
 
 #define HEARTBEAT_INTERVAL_MS  10000
 #define TEMP_INTERVAL_MS       3000
 
-// Set to 1 to transmit test UART/temperature sensor data.
+// Set to 1 to transmit captured UART frames to the server/BLE.
 #define ENABLE_TEST_SENSOR_DATA 1
+// Keep fake temperature frames out of uart_data while testing LCP capture.
+#define ENABLE_TEST_TEMPERATURE 0
 
 #define BACKEND_URL             "http://192.168.0.9:5050"
 #define BOARD_ID_PREFIX         "sentinel"

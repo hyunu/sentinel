@@ -42,6 +42,7 @@ from pathlib import Path
 
 try:
     import serial
+    from serial.tools import list_ports
 except ImportError as exc:  # pragma: no cover
     raise SystemExit("pyserial is required: python3 -m pip install pyserial") from exc
 
@@ -133,6 +134,36 @@ def load_packets(path: Path) -> tuple[list[Packet], dict[str, int]]:
     return packets, counts
 
 
+def resolve_port(spec: str, exclude: set[str] | None = None) -> str:
+    """Resolve a port path, optionally auto-detecting the spare CP2102.
+
+    macOS renumbers /dev/cu.usbserial-* after a USB re-enumeration. Both
+    adapters use serial number 0001, so use the PRD path as the exclusion and
+    pick the only remaining CP2102.
+    """
+    if spec != "auto":
+        return spec
+
+    excluded = exclude or set()
+    candidates = [
+        info
+        for info in list_ports.comports()
+        if info.vid == 0x10C4
+        and info.pid == 0xEA60
+        and info.device not in excluded
+    ]
+    if len(candidates) == 1:
+        return candidates[0].device
+    if not candidates:
+        raise serial.SerialException(
+            "no spare CP2102 port found for auto-detection"
+        )
+    raise serial.SerialException(
+        "multiple spare CP2102 ports found; pass --sim-port explicitly: "
+        + ", ".join(info.device for info in candidates)
+    )
+
+
 def open_port(port: str, baud: int) -> serial.Serial:
     return serial.Serial(
         port=port,
@@ -172,7 +203,11 @@ def main() -> int:
         type=Path,
         default=Path(__file__).with_name("uart_20261028_183723.log"),
     )
-    parser.add_argument("--sim-port", default="/dev/cu.usbserial-3")
+    parser.add_argument(
+        "--sim-port",
+        default="auto",
+        help="SIM->PRD port, or 'auto' for the spare CP2102",
+    )
     parser.add_argument("--prd-port", default="/dev/cu.usbserial-0001")
     parser.add_argument("--baud", type=int, default=19200)
     parser.add_argument(
@@ -237,7 +272,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    port_paths = {
+    port_specs = {
         "SIM->PRD": args.sim_port,
         "PRD->SIM": args.prd_port,
     }
@@ -248,7 +283,8 @@ def main() -> int:
     print_lock = threading.Lock()
 
     def writer(direction: str) -> None:
-        port_path = port_paths[direction]
+        port_spec = port_specs[direction]
+        port_path = port_spec
         direction_stats = stats[direction]
         port: serial.Serial | None = None
 
@@ -278,6 +314,15 @@ def main() -> int:
                 while True:
                     try:
                         if port is None:
+                            # Re-resolve on every reopen so a macOS device
+                            # renumber (usbserial-3 -> usbserial-5) recovers
+                            # without restarting the replay.
+                            port_path = resolve_port(
+                                port_spec,
+                                {args.prd_port}
+                                if direction == "SIM->PRD"
+                                else None,
+                            )
                             port = open_port(port_path, args.baud)
                             with print_lock:
                                 print(

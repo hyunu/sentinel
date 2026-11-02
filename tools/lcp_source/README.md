@@ -5,11 +5,11 @@
 ## Frame
 
 ```text
-AA | LENGTH(2, big-endian) | FID=CA | SEQ(2, big-endian) | ATTR |
-119-byte status payload | CRC16(2, big-endian) | BB
+AA | LENGTH(1) | FID=CA | SEQ(2, big-endian) | ATTR |
+129-byte status payload | 10-byte reserved tail | CRC16(2, big-endian) | BB
 ```
 
-- Total frame size: 129 bytes
+- Total frame size: 138 bytes
 - FID: `0xCA` (monitoring)
 - Source: `AppFramework/RPC_Interface.c::SendMonitoringPacketEncoder`
 - Field order: `Driver/Uart.h::T_E_UartTxName`
@@ -24,7 +24,7 @@ name: LCP Monitoring
 version: 1.0
 ```
 
-Board `0015` was switched to this protocol so incoming `AA 00 81 CA ... BB`
+Board `0015` was switched to this protocol so incoming `AA 8A CA ... BB`
 frames are parsed into the 96 status fields.
 
 ## Field generation

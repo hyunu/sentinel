@@ -4,16 +4,30 @@
 
 #include <Preferences.h>
 
-static uint8_t frame_buf[1024];
-static int frame_pos = 0;
-static int frame_expected_len = 0;
+struct FrameParser {
+    uint8_t buf[1024];
+    int pos;
+    int expected_len;
+};
+
+static FrameParser parser_rx = {};
+static FrameParser parser_tx = {};
 static uint32_t current_baud = UART_BAUD_RATE;
 static volatile uint32_t pending_baud = 0;
+static volatile uint32_t rx_bytes = 0;
+static volatile uint32_t tx_bytes = 0;
+static volatile uint32_t rx_frames = 0;
+static volatile uint32_t tx_frames = 0;
+static volatile uint32_t rx_edges = 0;
+static volatile uint32_t tx_edges = 0;
+
+static void IRAM_ATTR rx_edge_isr() { rx_edges++; }
+static void IRAM_ATTR tx_edge_isr() { tx_edges++; }
 
 static const char *NVS_NS = "sentinel";
 static const char *NVS_BAUD_KEY = "baud";
 
-extern void on_frame_received(const uint8_t *data, int len);
+extern void on_frame_received(const uint8_t *data, int len, const char *direction);
 
 static bool is_valid_baud(uint32_t baud) {
     return baud >= UART_BAUD_MIN && baud <= UART_BAUD_MAX;
@@ -29,16 +43,57 @@ static uint32_t load_stored_baud() {
     return is_valid_baud(baud) ? baud : UART_BAUD_RATE;
 }
 
+static void reset_parser(FrameParser &parser) {
+    parser.pos = 0;
+    parser.expected_len = 0;
+}
+
 static void begin_uart(uint32_t baud) {
+    // Initialize UART0 first, then UART1. UART0's default pins are 20/21, so
+    // starting it after UART1 can steal GPIO20 from the UART1 RX assignment.
+    //
+    // UART0 captures the opposite direction on GPIO21. UART0 is free because
+    // ARDUINO_USB_CDC_ON_BOOT=1 maps the Arduino Serial logger to USB CDC.
+    Serial0.end();
+    Serial0.setRxBufferSize(4096);
+    Serial0.begin(baud, SERIAL_8N1, UART_CAPTURE_TX_PIN,
+                  UART_CAPTURE_TX_DUMMY_TX);
+
+    // UART1 captures the RX direction on GPIO20.
+    // Keep both RX buffers modest: the C3 needs contiguous heap for BLE, and
+    // 4 KB at 19200 bps is still about two seconds of traffic.
     Serial1.end();
-    Serial1.setRxBufferSize(32768);
-    Serial1.begin(baud, SERIAL_8N1, UART_MONITOR_RX, UART_MONITOR_TX);
+    Serial1.setRxBufferSize(4096);
+    Serial1.begin(baud, SERIAL_8N1, UART_CAPTURE_RX_PIN,
+                  UART_CAPTURE_RX_DUMMY_TX);
+
+    reset_parser(parser_rx);
+    reset_parser(parser_tx);
 }
 
 void uart_sniffer_init() {
     current_baud = load_stored_baud();
+
+    // Diagnostic: an idle UART TX line is high. With a pull-down enabled,
+    // a connected adapter should read 1; a floating/disconnected pin reads 0.
+    pinMode(UART_CAPTURE_RX_PIN, INPUT_PULLDOWN);
+    pinMode(UART_CAPTURE_TX_PIN, INPUT_PULLDOWN);
+    delay(5);
+    AppLog.printf("[UART] idle levels RX=%d TX=%d\n",
+                  digitalRead(UART_CAPTURE_RX_PIN),
+                  digitalRead(UART_CAPTURE_TX_PIN));
+
     begin_uart(current_baud);
-    AppLog.printf("[UART] Sniffer baud=%lu\n", (unsigned long)current_baud);
+    // Edge counters diagnose whether a signal reaches the pins at all,
+    // independently of the UART peripheral's frame parser.
+    attachInterrupt(digitalPinToInterrupt(UART_CAPTURE_RX_PIN), rx_edge_isr,
+                    CHANGE);
+    attachInterrupt(digitalPinToInterrupt(UART_CAPTURE_TX_PIN), tx_edge_isr,
+                    CHANGE);
+
+    AppLog.printf("[UART] Sniffer baud=%lu dual RX=%d,%d\n",
+                  (unsigned long)current_baud, UART_CAPTURE_RX_PIN,
+                  UART_CAPTURE_TX_PIN);
 }
 
 void uart_sniffer_set_baud(uint32_t baud) {
@@ -63,8 +118,6 @@ static void apply_pending_baud() {
     }
     pending_baud = 0;
     current_baud = baud;
-    frame_pos = 0;
-    frame_expected_len = 0;
     begin_uart(current_baud);
 
     Preferences prefs;
@@ -76,48 +129,73 @@ static void apply_pending_baud() {
     AppLog.printf("[UART] Baud changed to %lu\n", (unsigned long)current_baud);
 }
 
-static void process_byte(uint8_t b) {
-    if (frame_pos == 0) {
+static void process_byte(FrameParser &parser, uint8_t b,
+                         const char *direction) {
+    if (parser.pos == 0) {
         if (b == FRAME_START_BYTE) {
-            frame_buf[0] = b;
-            frame_pos = 1;
-            frame_expected_len = 0;
+            parser.buf[0] = b;
+            parser.pos = 1;
+            parser.expected_len = 0;
         }
         return;
     }
 
-    frame_buf[frame_pos++] = b;
+    parser.buf[parser.pos++] = b;
 
-    if (frame_pos == 3 && frame_expected_len == 0) {
-        frame_expected_len = (frame_buf[1] << 8) | frame_buf[2];
+    if (parser.pos == 3 && parser.expected_len == 0) {
+        parser.expected_len = (parser.buf[1] << 8) | parser.buf[2];
     }
 
-    if (b == FRAME_END_BYTE && frame_pos > 4) {
-        on_frame_received(frame_buf, frame_pos);
-        frame_pos = 0;
-        frame_expected_len = 0;
+    if (b == FRAME_END_BYTE && parser.pos > 4) {
+        if (direction[0] == 'T') {
+            tx_frames++;
+        } else {
+            rx_frames++;
+        }
+        on_frame_received(parser.buf, parser.pos, direction);
+        reset_parser(parser);
         return;
     }
 
-    if (frame_expected_len > 0 && frame_pos >= frame_expected_len + 1) {
+    if (parser.expected_len > 0 &&
+        parser.pos >= parser.expected_len + 1) {
         if (b == FRAME_END_BYTE) {
-            on_frame_received(frame_buf, frame_pos);
+            if (direction[0] == 'T') {
+                tx_frames++;
+            } else {
+                rx_frames++;
+            }
+            on_frame_received(parser.buf, parser.pos, direction);
         }
-        frame_pos = 0;
-        frame_expected_len = 0;
+        reset_parser(parser);
         return;
     }
 
-    if (frame_pos >= (int)sizeof(frame_buf)) {
-        frame_pos = 0;
-        frame_expected_len = 0;
+    if (parser.pos >= (int)sizeof(parser.buf)) {
+        reset_parser(parser);
     }
 }
 
 void uart_sniffer_loop() {
     apply_pending_baud();
+
+    // Read both directions independently. Each parser keeps its own frame
+    // state so interleaved traffic cannot corrupt the other channel.
     while (Serial1.available()) {
-        uint8_t b = Serial1.read();
-        process_byte(b);
+        rx_bytes++;
+        process_byte(parser_rx, (uint8_t)Serial1.read(), "RX");
     }
+    while (Serial0.available()) {
+        tx_bytes++;
+        process_byte(parser_tx, (uint8_t)Serial0.read(), "TX");
+    }
+}
+
+void uart_sniffer_log_stats() {
+    AppLog.printf(
+        "[UART] RX bytes=%lu frames=%lu edges=%lu | "
+        "TX bytes=%lu frames=%lu edges=%lu\n",
+        (unsigned long)rx_bytes, (unsigned long)rx_frames,
+        (unsigned long)rx_edges, (unsigned long)tx_bytes,
+        (unsigned long)tx_frames, (unsigned long)tx_edges);
 }

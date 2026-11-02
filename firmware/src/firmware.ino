@@ -22,11 +22,14 @@
 
 static unsigned long lastHeartbeat = 0;
 static unsigned long lastTemp = 0;
+static unsigned long lastUartStats = 0;
 
 struct CapturedFrame {
     uint32_t capturedTickMs;
     int64_t capturedEpochMs;
-    char hex[260];
+    char direction[4];
+    // 145-byte captures need 290 hex characters plus a terminator.
+    char hex[320];
 };
 
 static QueueHandle_t capturedFrameQueue = nullptr;
@@ -41,10 +44,12 @@ static void uart_capture_task(void *) {
 // Called from the high-priority UART capture task. Only queue the frame here;
 // HTTP and BLE work stays in loop() so a slow network cannot make a burst of
 // frames look like they arrived at the same instant.
-void on_frame_received(const uint8_t *data, int len) {
+void on_frame_received(const uint8_t *data, int len, const char *direction) {
     CapturedFrame frame{};
     frame.capturedTickMs = millis();
     frame.capturedEpochMs = wifi_current_epoch_ms();
+    snprintf(frame.direction, sizeof(frame.direction), "%s",
+             direction != nullptr ? direction : "RX");
     int pos = 0;
     for (int i = 0; i < len && pos < (int)sizeof(frame.hex) - 3; i++) {
         pos += snprintf(frame.hex + pos, sizeof(frame.hex) - pos, "%02X", data[i]);
@@ -71,21 +76,25 @@ void setup() {
     AppLog.printf("[SYS] reset_reason=%d\n", (int)esp_reset_reason());
     AppLog.println();
     AppLog.println("=== Sentinel UART Monitor ===");
-    AppLog.printf("Monitor UART: %d bps on GPIO TX:%d RX:%d\n",
-                  UART_BAUD_RATE, UART_MONITOR_TX, UART_MONITOR_RX);
+    AppLog.printf("Monitor UART: %d bps dual capture RX:%d TX:%d\n",
+                  UART_BAUD_RATE, UART_CAPTURE_RX_PIN,
+                  UART_CAPTURE_TX_PIN);
 
-    uart_sniffer_init();
-    capturedFrameQueue = xQueueCreate(256, sizeof(CapturedFrame));
-    BaseType_t uartTaskCreated = xTaskCreate(
-        uart_capture_task, "uart_capture", 4096, nullptr, 10, nullptr);
-    AppLog.printf("[UART] capture queue=%p task=%d\n",
-                  capturedFrameQueue, (int)uartTaskCreated);
     display_init();
     // wifi_init must run before ble_init so WiFi.macAddress() is valid for
     // the BLE MAC characteristic (6e400004).
     wifi_init();
+    // Initialize BLE before allocating the UART capture queue and drivers.
+    // NimBLE needs a large contiguous heap block on the C3.
     ble_init();
     wifi_startup();
+
+    uart_sniffer_init();
+    capturedFrameQueue = xQueueCreate(128, sizeof(CapturedFrame));
+    BaseType_t uartTaskCreated = xTaskCreate(
+        uart_capture_task, "uart_capture", 4096, nullptr, 10, nullptr);
+    AppLog.printf("[UART] capture queue=%p task=%d\n",
+                  capturedFrameQueue, (int)uartTaskCreated);
 
     lastHeartbeat = millis();
     lastTemp = millis();
@@ -101,7 +110,8 @@ void loop() {
            xQueueReceive(capturedFrameQueue, &frame, 0) == pdTRUE) {
         String hex(frame.hex);
 #if ENABLE_TEST_SENSOR_DATA
-        wifi_send_uart_data_at(hex, frame.capturedTickMs, frame.capturedEpochMs);
+        wifi_send_uart_data_at(hex, frame.capturedTickMs,
+                               frame.capturedEpochMs, frame.direction);
         ble_send_uart_data(hex);
 #endif
     }
@@ -115,6 +125,11 @@ void loop() {
     display_update(wifi_get_uid(), wifi_is_connected(), ble_is_server_registered());
 
     unsigned long now = millis();
+
+    if (now - lastUartStats >= 5000) {
+        lastUartStats = now;
+        uart_sniffer_log_stats();
+    }
 
     // Periodic heartbeat
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
@@ -131,7 +146,7 @@ void loop() {
         }
     }
 
-#if ENABLE_TEST_SENSOR_DATA
+#if ENABLE_TEST_TEMPERATURE
     // Periodic temperature
     if (now - lastTemp >= TEMP_INTERVAL_MS) {
         lastTemp = now;

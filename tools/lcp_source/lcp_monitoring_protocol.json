@@ -1,12 +1,12 @@
 {
   "name": "LCP Monitoring",
   "version": "1.0",
-  "description": "LCP → OSP monitoring/status packet (AA [LEN:2 BE] CA [SEQ:2 BE] ATTR payload CRC16 BB).",
+  "description": "LCP -> OSP monitoring/status packet (AA [LEN:1] CA [SEQ:2 BE] ATTR payload padding CRC16 BB).",
   "parse_rules": {
     "_meta": {
       "name": "LCP Monitoring",
       "version": "1.0",
-      "frame": "AA [LEN:2 BE] CA [SEQ:2 BE] ATTR [STATUS...] CRC16 BB"
+      "frame": "AA [LEN:1] CA [SEQ:2 BE] ATTR [STATUS...] PADDING(10) CRC16 BB"
     },
     "fields": [
       {
@@ -20,8 +20,8 @@
       },
       {
         "name": "length",
-        "type": "U16",
-        "endian": "big"
+        "type": "U8",
+        "endian": ""
       },
       {
         "name": "fid",
@@ -422,6 +422,11 @@
       {
         "name": "software_option_reserved",
         "type": "U8"
+      },
+      {
+        "name": "reserved_padding",
+        "type": "Padding",
+        "size": 10
       },
       {
         "name": "crc16",

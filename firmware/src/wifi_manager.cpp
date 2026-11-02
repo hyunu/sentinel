@@ -28,11 +28,14 @@ static const char *NVS_NS = "sentinel";
 // UART frames arrive faster than one HTTP request can be completed. Queue a
 // short burst and send it through the batch endpoint to avoid serial RX
 // overflows and the huge per-frame HTTP overhead.
-static const int UART_BATCH_MAX = 32;
-static const unsigned long UART_BATCH_INTERVAL_MS = 500;
+// Keep batches small: a 32-frame batch can exceed 10 KB of JSON, and the
+// ESP32 HTTP client occasionally sends an empty body under that pressure.
+static const int UART_BATCH_MAX = 8;
+static const unsigned long UART_BATCH_INTERVAL_MS = 200;
 
 struct UartBatchEntry {
     String hex;
+    String direction;
     uint32_t capturedTickMs;
     int64_t capturedEpochMs;
 };
@@ -366,9 +369,13 @@ int64_t wifi_current_epoch_ms() {
 }
 
 void wifi_send_uart_data_at(const String &hex_data, uint32_t captured_tick_ms,
-                            int64_t captured_epoch_ms) {
+                            int64_t captured_epoch_ms,
+                            const char *direction) {
     UartBatchEntry entry;
     entry.hex = hex_data;
+    entry.direction = (direction != nullptr && direction[0] != '\0')
+                          ? String(direction)
+                          : String("RX");
     entry.capturedTickMs = captured_tick_ms;
     entry.capturedEpochMs = captured_epoch_ms;
 
@@ -401,7 +408,7 @@ static void flush_uart_batch() {
     for (int i = 0; i < uartBatchCount; i++) {
         if (i > 0) body += ",";
         body += "{\"raw_hex\":\"" + uartBatch[i].hex +
-                "\",\"direction\":\"RX\"";
+                "\",\"direction\":\"" + uartBatch[i].direction + "\"";
         if (uartBatch[i].capturedEpochMs > 0) {
             char timestampBuf[32];
             snprintf(timestampBuf, sizeof(timestampBuf), "%lld",
@@ -419,6 +426,7 @@ static void flush_uart_batch() {
     body += "]}";
 
     String response;
+    const unsigned int bodyLen = body.length();
     const int code = http_post("/api/v1/data/uart/batch", body, &response);
     lastUartBatchAt = millis();
     if (httpOk(code)) {
@@ -427,13 +435,15 @@ static void flush_uart_batch() {
     } else {
         uartBatchRetryAt = millis() + 5000;
         String shortResponse = response.substring(0, 300);
-        AppLog.printf("[HTTP] UART batch failed code=%d body=%s\n",
-                      code, shortResponse.c_str());
+        AppLog.printf(
+            "[HTTP] UART batch failed code=%d entries=%d len=%u heap=%u body=%s\n",
+            code, uartBatchCount, bodyLen, (unsigned)ESP.getFreeHeap(),
+            shortResponse.c_str());
     }
 }
 
 void wifi_send_uart_data(const String &hex_data) {
-    wifi_send_uart_data_at(hex_data, millis(), current_epoch_ms());
+    wifi_send_uart_data_at(hex_data, millis(), current_epoch_ms(), "RX");
 }
 
 void wifi_send_temperature(float temp_celsius) {

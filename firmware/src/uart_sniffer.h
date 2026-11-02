@@ -5,6 +5,7 @@
 
 void uart_sniffer_init();
 void uart_sniffer_loop();
+void uart_sniffer_log_stats();
 void uart_sniffer_set_baud(uint32_t baud);
 uint32_t uart_sniffer_get_baud();
 
