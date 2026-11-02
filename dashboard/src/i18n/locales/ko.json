@@ -287,7 +287,8 @@
       "unpinFavorite": "더블클릭: 우선 배치 해제",
       "layoutGroup": "필드 값 패널 위치",
       "layoutBottom": "하단에 표시",
-      "layoutLeft": "좌측에 표시"
+      "layoutLeft": "좌측에 표시",
+      "resize": "필드 값 높이 조절"
     },
     "seriesGroup": {
       "panelToggles": "차트 패널 옵션",

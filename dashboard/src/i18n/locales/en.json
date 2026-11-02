@@ -287,7 +287,8 @@
       "unpinFavorite": "Double-click: unpin",
       "layoutGroup": "Field values panel position",
       "layoutBottom": "Show at bottom",
-      "layoutLeft": "Show on left"
+      "layoutLeft": "Show on left",
+      "resize": "Resize field values height"
     },
     "seriesGroup": {
       "panelToggles": "Chart panel options",
