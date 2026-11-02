@@ -12,27 +12,46 @@ frames are shorter command/status frames.
 
 ## Replay
 
-The replay tool opens both serial ports and preserves the original packet order
-and timing:
-
-```bash
-python replay_uart_log.py \
-  --sim-port /dev/cu.usbserial-4 \
-  --prd-port /dev/cu.usbserial-0001 \
-  --baud 19200 \
-  --speed 1
-```
-
-Default port mapping:
+Each direction is written to its own serial port:
 
 ```text
-SIM->PRD : /dev/cu.usbserial-4
+SIM->PRD : /dev/cu.usbserial-3
 PRD->SIM : /dev/cu.usbserial-0001
 ```
 
-At 19200 baud, a 138-byte frame takes about 72 ms on the wire. Keep `--speed`
-at `1` unless you have verified the serial bandwidth. Use `--once` for one
-pass, or `--limit N` for a short smoke test.
+Run one complete pass from the beginning:
 
-The input log is intentionally ignored by Git because it is a large capture
-artifact.
+```bash
+python replay_uart_log.py \
+  --sim-port /dev/cu.usbserial-3 \
+  --prd-port /dev/cu.usbserial-0001 \
+  --baud 19200 \
+  --speed 1 \
+  --once
+```
+
+The timeline starts at the current time. Each packet is scheduled at:
+
+```text
+start + (packet timestamp - first packet timestamp) / speed
+```
+
+For example, the first PRD->SIM packet is sent 0.085 seconds after the first
+SIM->PRD packet, and the original gaps between packets are preserved.
+
+## No packet drops
+
+The replay tool never skips a packet:
+
+- One writer thread per direction preserves packet order.
+- A failed port open or write retries the same packet.
+- Packets that cannot fit on the wire immediately stay queued and are sent in
+  order at the UART's maximum rate.
+- At the end of a pass the tool drains both queues before reporting completion.
+- The pass summary compares sent counts against the capture counts.
+
+At 19200 baud a 138-byte frame takes about 72-88 ms on the wire. Pairs captured
+closer together than that cannot start at the exact captured interval; they are
+queued and serialized by the UART. No packet is discarded because of this.
+
+Use `--limit N` for a short smoke test. Without `--once`, the capture repeats.
