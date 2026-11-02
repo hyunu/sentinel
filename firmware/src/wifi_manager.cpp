@@ -13,7 +13,6 @@ static int http_post(const String &path, const String &body, String *responseOut
 static void flush_uart_batch();
 
 static String board_id;
-static unsigned long lastHeartbeat = 0;
 static bool connecting = false;
 static bool pendingInitialHeartbeat = false;
 static unsigned long wifiConnectedAt = 0;
@@ -22,6 +21,7 @@ static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 static String backend_url = String(BACKEND_URL);
 static String board_uid = String("");
+static unsigned long lastServerResponseAt = 0;
 
 static const char *NVS_NS = "sentinel";
 
@@ -31,7 +31,9 @@ static const char *NVS_NS = "sentinel";
 // Keep batches small: a 32-frame batch can exceed 10 KB of JSON, and the
 // ESP32 HTTP client occasionally sends an empty body under that pressure.
 static const int UART_BATCH_MAX = 8;
-static const unsigned long UART_BATCH_INTERVAL_MS = 200;
+// One request per second matches the 1x capture rate and keeps the JSON body
+// small enough for the C3's limited free heap.
+static const unsigned long UART_BATCH_INTERVAL_MS = 1000;
 
 struct UartBatchEntry {
     String hex;
@@ -276,10 +278,13 @@ static int http_post(const String &path, const String &body, String *responseOut
 
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
-    http.setTimeout(10000);
+    http.setTimeout(3000);
 
     int code = http.POST(body);
     if (code > 0) {
+        if (code >= 200 && code < 300) {
+            lastServerResponseAt = millis();
+        }
         AppLog.printf("[HTTP] POST %s: %d\n", path.c_str(), code);
         if (responseOut) {
             *responseOut = http.getString();
@@ -315,53 +320,56 @@ static String buildHeartbeatBody() {
 }
 
 bool wifi_send_heartbeat() {
+    if (!wifi_is_connected() || !hasValidIp()) {
+        return false;
+    }
+
     // Keep onboarding's BLE identity aligned with the board_id used below.
     ble_set_wifi_mac(WiFi.macAddress());
     const String body = buildHeartbeatBody();
-    AppLog.printf("[HTTP] Heartbeat body: %s\n", body.c_str());
-
-    const int maxAttempts = 5;
-    unsigned long backoffMs[] = {500, 1000, 2000, 3000, 4000};
-    bool ok = false;
-    for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
-        if (!waitForWifiReady(5000)) {
-            AppLog.printf("[HTTP] Heartbeat attempt %d/%d skipped: WiFi not ready\n", attempt, maxAttempts);
-        } else {
-            AppLog.printf("[HTTP] Heartbeat attempt %d/%d -> %s\n", attempt, maxAttempts, (backend_url + String("/api/v1/heartbeat")).c_str());
-            AppLog.printf("[HTTP] WiFi.status=%d, IP=%s\n", WiFi.status(), WiFi.localIP().toString().c_str());
-            String response;
-            int code = http_post("/api/v1/heartbeat", body, &response);
-            ok = httpOk(code);
-            AppLog.printf("[HTTP] Heartbeat result code: %d\n", code);
-            if (ok) {
-                const String action = extract_json_string_field(response, "action");
-                if (action == "deleted") {
-                    wifi_clear_board_registration();
-                    ble_send_uart_data(String("EVENT:BOARD_DELETED"));
-                    AppLog.println("[HTTP] Server deleted this board — registration cleared");
-                }
-                break;
-            }
-            // If the server no longer knows this board (e.g. it was deleted
-            // while offline), wipe local onboarding state as well.
-            if (code == 404 ||
-                (code == 400 &&
-                 (response.indexOf("board not found") >= 0 ||
-                  response.indexOf("board_id or uid required") >= 0))) {
-                wifi_clear_board_registration();
-                ble_send_uart_data(String("EVENT:BOARD_DELETED"));
-                AppLog.println("[HTTP] Board unknown to server — local onboarding cleared");
-                return false;
-            }
-        }
-        if (attempt < maxAttempts) delay(backoffMs[attempt - 1]);
-    }
-
-    lastHeartbeat = millis();
+    String response;
+    const int code = http_post("/api/v1/heartbeat", body, &response);
+    const bool ok = httpOk(code);
     if (!ok) {
-        AppLog.println("[HTTP] Heartbeat: all attempts failed");
+        AppLog.printf("[HTTP] Heartbeat result code: %d\n", code);
+        // If the server no longer knows this board (e.g. it was deleted
+        // while offline), wipe local onboarding state as well.
+        if (code == 404 ||
+            (code == 400 &&
+             (response.indexOf("board not found") >= 0 ||
+              response.indexOf("board_id or uid required") >= 0))) {
+            wifi_clear_board_registration();
+            ble_send_uart_data(String("EVENT:BOARD_DELETED"));
+            AppLog.println("[HTTP] Board unknown to server — local onboarding cleared");
+        }
+        return false;
     }
-    return ok;
+
+    const String action = extract_json_string_field(response, "action");
+    if (action == "deleted") {
+        wifi_clear_board_registration();
+        ble_send_uart_data(String("EVENT:BOARD_DELETED"));
+        AppLog.println("[HTTP] Server deleted this board — registration cleared");
+    }
+    return true;
+}
+
+bool wifi_server_link_healthy() {
+    return lastServerResponseAt != 0 &&
+           (millis() - lastServerResponseAt) < 5000;
+}
+
+void wifi_force_reconnect() {
+    const String ssid = nvs_load_string("ssid");
+    const String pass = nvs_load_string("pass");
+    if (ssid.length() == 0) return;
+
+    AppLog.println("[WiFi] Link watchdog: forcing reconnect");
+    WiFi.disconnect(false);
+    delay(100);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+    connecting = true;
+    wifiConnectingAt = millis();
 }
 
 int64_t wifi_current_epoch_ms() {
@@ -398,7 +406,7 @@ static void flush_uart_batch() {
     if (uartBatchCount <= 0 || !wifi_is_connected()) return;
 
     String body;
-    body.reserve(128 + uartBatchCount * 280);
+    body.reserve(256 + uartBatchCount * 340);
     body = "{\"board_id\":\"" + board_id + "\"";
     if (board_uid.length() > 0) {
         body += ",\"uid\":\"" + board_uid + "\"";

@@ -55,15 +55,15 @@ static void begin_uart(uint32_t baud) {
     // UART0 captures the opposite direction on GPIO21. UART0 is free because
     // ARDUINO_USB_CDC_ON_BOOT=1 maps the Arduino Serial logger to USB CDC.
     Serial0.end();
-    Serial0.setRxBufferSize(4096);
+    Serial0.setRxBufferSize(2048);
     Serial0.begin(baud, SERIAL_8N1, UART_CAPTURE_TX_PIN,
                   UART_CAPTURE_TX_DUMMY_TX);
 
     // UART1 captures the RX direction on GPIO20.
-    // Keep both RX buffers modest: the C3 needs contiguous heap for BLE, and
-    // 4 KB at 19200 bps is still about two seconds of traffic.
+    // 2 KB at 19200 bps is about one second of traffic; the capture task
+    // drains it every millisecond, and the C3 needs heap for HTTP/BLE.
     Serial1.end();
-    Serial1.setRxBufferSize(4096);
+    Serial1.setRxBufferSize(2048);
     Serial1.begin(baud, SERIAL_8N1, UART_CAPTURE_RX_PIN,
                   UART_CAPTURE_RX_DUMMY_TX);
 

@@ -20,9 +20,12 @@
 #include <freertos/queue.h>
 #include "logger.h"
 
-static unsigned long lastHeartbeat = 0;
 static unsigned long lastTemp = 0;
 static unsigned long lastUartStats = 0;
+static unsigned long lastLinkProbeAt = 0;
+static unsigned long lastWifiRecoveryAt = 0;
+static int linkFailures = 0;
+static bool linkWasHealthy = false;
 
 struct CapturedFrame {
     uint32_t capturedTickMs;
@@ -90,13 +93,12 @@ void setup() {
     wifi_startup();
 
     uart_sniffer_init();
-    capturedFrameQueue = xQueueCreate(128, sizeof(CapturedFrame));
+    capturedFrameQueue = xQueueCreate(64, sizeof(CapturedFrame));
     BaseType_t uartTaskCreated = xTaskCreate(
         uart_capture_task, "uart_capture", 4096, nullptr, 10, nullptr);
     AppLog.printf("[UART] capture queue=%p task=%d\n",
                   capturedFrameQueue, (int)uartTaskCreated);
 
-    lastHeartbeat = millis();
     lastTemp = millis();
 
     AppLog.println("System ready.");
@@ -131,18 +133,48 @@ void loop() {
         uart_sniffer_log_stats();
     }
 
-    // Periodic heartbeat
-    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        lastHeartbeat = now;
-        if (wifi_is_connected()) {
-            bool ok = wifi_send_heartbeat();
-            if (ok && wifi_has_board_uid()) {
-                ble_set_server_registered(true);
-                ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
-            } else if (!ok) {
-                ble_set_server_registered(false);
-                ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
+    // Server link watchdog. Any successful HTTP response (UART batch or
+    // heartbeat) keeps the link healthy, so heartbeat is not sent while data
+    // uploads are succeeding. Only when responses stop do we probe every
+    // second and force a WiFi reconnect / reboot if needed.
+    if (wifi_is_connected()) {
+        if (wifi_server_link_healthy()) {
+            if (!linkWasHealthy) {
+                linkWasHealthy = true;
+                linkFailures = 0;
+                if (wifi_has_board_uid()) ble_set_server_registered(true);
             }
+        } else if (now - lastLinkProbeAt >= 1000) {
+            lastLinkProbeAt = now;
+            const bool ok = wifi_send_heartbeat();
+            if (ok) {
+                linkWasHealthy = true;
+                linkFailures = 0;
+                if (wifi_has_board_uid()) ble_set_server_registered(true);
+                ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
+            } else {
+                linkWasHealthy = false;
+                linkFailures++;
+                ble_set_server_registered(false);
+                if (linkFailures == 1 || (linkFailures % 3) == 0) {
+                    ble_send_uart_data(String("EVENT:HEARTBEAT_FAILED"));
+                }
+                if ((linkFailures % 3) == 0) {
+                    wifi_force_reconnect();
+                    lastWifiRecoveryAt = now;
+                }
+                if (linkFailures >= 30) {
+                    AppLog.println("[WiFi] Link watchdog restart");
+                    delay(100);
+                    ESP.restart();
+                }
+            }
+        }
+    } else {
+        linkWasHealthy = false;
+        if (now - lastWifiRecoveryAt >= 10000) {
+            lastWifiRecoveryAt = now;
+            wifi_force_reconnect();
         }
     }
 
