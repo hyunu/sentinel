@@ -191,6 +191,29 @@ export interface AIChartSpec {
   title?: string;
 }
 
+export interface AISettings {
+  provider: string;
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+  max_tokens: number;
+  temperature: number;
+  timeout_seconds: number;
+  max_tool_rounds: number;
+  updated_at?: string;
+}
+
+export interface AISettingsInput {
+  provider: string;
+  base_url: string;
+  model: string;
+  api_key: string;
+  max_tokens: number;
+  temperature: number;
+  timeout_seconds: number;
+  max_tool_rounds: number;
+}
+
 export interface AIStatus {
   configured: boolean;
   provider?: string;
@@ -392,6 +415,14 @@ export const api = {
 
   ai: {
     status: () => request<AIStatus>('/ai/status', { headers: aiAuthHeaders() }),
+    getSettings: () => request<AISettings>('/ai/settings', { headers: aiAuthHeaders() }),
+    saveSettings: (data: AISettingsInput) =>
+      request<AISettings>('/ai/settings', {
+        method: 'PUT',
+        headers: aiAuthHeaders(),
+        body: JSON.stringify(data),
+        timeoutMs: 20000,
+      }),
     query: (data: AIQueryRequest) =>
       request<AIQueryResult>('/ai/query', {
         method: 'POST',

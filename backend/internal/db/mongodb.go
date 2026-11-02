@@ -62,32 +62,57 @@ func (m *MongoDB) Collection(name string) *mongo.Collection {
 }
 
 const (
-	CollectionBoards      = "boards"
-	CollectionHeartbeats  = "heartbeats"
-	CollectionUartData    = "uart_data"
-	CollectionVizRollups  = "viz_rollups"
-	CollectionSessions    = "sessions"
-	CollectionProtocols   = "protocols"
+	CollectionBoards        = "boards"
+	CollectionHeartbeats    = "heartbeats"
+	CollectionUartData      = "uart_data"
+	CollectionVizRollups    = "viz_rollups"
+	CollectionSessions      = "sessions"
+	CollectionProtocols     = "protocols"
 	CollectionSchemaPresets = "schema_presets"
-	CollectionTemperatures = "temperatures"
-	CollectionVizProfiles = "viz_profiles"
-	CollectionCounters    = "counters"
+	CollectionTemperatures  = "temperatures"
+	CollectionVizProfiles   = "viz_profiles"
+	CollectionCounters      = "counters"
+	CollectionAISettings    = "ai_settings"
 )
 
-func (m *MongoDB) Boards() *mongo.Collection      { return m.Collection(CollectionBoards) }
-func (m *MongoDB) Heartbeats() *mongo.Collection   { return m.Collection(CollectionHeartbeats) }
-func (m *MongoDB) UartData() *mongo.Collection     { return m.Collection(CollectionUartData) }
-func (m *MongoDB) VizRollups() *mongo.Collection   { return m.Collection(CollectionVizRollups) }
-func (m *MongoDB) Sessions() *mongo.Collection     { return m.Collection(CollectionSessions) }
-func (m *MongoDB) Protocols() *mongo.Collection    { return m.Collection(CollectionProtocols) }
+func (m *MongoDB) Boards() *mongo.Collection        { return m.Collection(CollectionBoards) }
+func (m *MongoDB) Heartbeats() *mongo.Collection    { return m.Collection(CollectionHeartbeats) }
+func (m *MongoDB) UartData() *mongo.Collection      { return m.Collection(CollectionUartData) }
+func (m *MongoDB) VizRollups() *mongo.Collection    { return m.Collection(CollectionVizRollups) }
+func (m *MongoDB) Sessions() *mongo.Collection      { return m.Collection(CollectionSessions) }
+func (m *MongoDB) Protocols() *mongo.Collection     { return m.Collection(CollectionProtocols) }
 func (m *MongoDB) SchemaPresets() *mongo.Collection { return m.Collection(CollectionSchemaPresets) }
-func (m *MongoDB) Temperatures() *mongo.Collection { return m.Collection(CollectionTemperatures) }
-func (m *MongoDB) VizProfiles() *mongo.Collection  { return m.Collection(CollectionVizProfiles) }
-func (m *MongoDB) Counters() *mongo.Collection    { return m.Collection(CollectionCounters) }
+func (m *MongoDB) Temperatures() *mongo.Collection  { return m.Collection(CollectionTemperatures) }
+func (m *MongoDB) VizProfiles() *mongo.Collection   { return m.Collection(CollectionVizProfiles) }
+func (m *MongoDB) Counters() *mongo.Collection      { return m.Collection(CollectionCounters) }
+func (m *MongoDB) AISettings() *mongo.Collection    { return m.Collection(CollectionAISettings) }
+
+func (m *MongoDB) GetAISettings(ctx context.Context) (*models.AISettings, error) {
+	var settings models.AISettings
+	err := m.AISettings().FindOne(ctx, bson.M{"_id": "default"}).Decode(&settings)
+	if err == mongo.ErrNoDocuments {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (m *MongoDB) SaveAISettings(ctx context.Context, settings *models.AISettings) error {
+	settings.ID = "default"
+	_, err := m.AISettings().ReplaceOne(
+		ctx,
+		bson.M{"_id": "default"},
+		settings,
+		options.Replace().SetUpsert(true),
+	)
+	return err
+}
 
 func (m *MongoDB) EnsureIndexes(ctx context.Context) error {
 	_, err := m.Boards().Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "uid", Value: 1}},
+		Keys:    bson.D{{Key: "uid", Value: 1}},
 		Options: options.Index().SetUnique(true).SetSparse(true),
 	})
 	if err != nil {

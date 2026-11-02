@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,8 +31,21 @@ type Handler struct {
 	db        *db.MongoDB
 	logger    *zap.Logger
 	agent     *ai.Agent
+	aiMu      sync.RWMutex
 	aiToken   string
 	aiLimiter *aiRateLimiter
+}
+
+func (h *Handler) currentAgent() *ai.Agent {
+	h.aiMu.RLock()
+	defer h.aiMu.RUnlock()
+	return h.agent
+}
+
+func (h *Handler) replaceAgent(agent *ai.Agent) {
+	h.aiMu.Lock()
+	h.agent = agent
+	h.aiMu.Unlock()
 }
 
 func NewHandler(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts ...HandlerOptions) *Handler {

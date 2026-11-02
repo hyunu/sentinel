@@ -50,6 +50,20 @@ type SchemaPreset struct {
 	UpdatedAt       time.Time                    `json:"updated_at" bson:"updated_at"`
 }
 
+type AISettings struct {
+	ID             string    `json:"-" bson:"_id"`
+	Provider       string    `json:"provider" bson:"provider"`
+	BaseURL        string    `json:"base_url" bson:"base_url"`
+	Model          string    `json:"model" bson:"model"`
+	APIKey         string    `json:"-" bson:"api_key,omitempty"`
+	HasAPIKey      bool      `json:"has_api_key" bson:"-"`
+	MaxTokens      int       `json:"max_tokens" bson:"max_tokens"`
+	Temperature    float64   `json:"temperature" bson:"temperature"`
+	TimeoutSeconds int       `json:"timeout_seconds" bson:"timeout_seconds"`
+	MaxToolRounds  int       `json:"max_tool_rounds" bson:"max_tool_rounds"`
+	UpdatedAt      time.Time `json:"updated_at" bson:"updated_at"`
+}
+
 type UartData struct {
 	ID           string                 `json:"id" bson:"_id"`
 	BoardID      string                 `json:"board_id" bson:"board_id"`
@@ -73,15 +87,15 @@ type UartQueryResult struct {
 }
 
 type Session struct {
-	ID             string            `json:"id" bson:"_id"`
-	BoardID        string            `json:"board_id" bson:"board_id"`
-	Name           string            `json:"name" bson:"name"`
-	Description    string            `json:"description,omitempty" bson:"description,omitempty"`
-	StartTime      time.Time         `json:"start_time" bson:"start_time"`
-	EndTime        time.Time         `json:"end_time,omitempty" bson:"end_time,omitempty"`
-	Tags           []string          `json:"tags,omitempty" bson:"tags,omitempty"`
-	AutoSplitRule  *SplitRule        `json:"auto_split_rule,omitempty" bson:"auto_split_rule,omitempty"`
-	CreatedAt      time.Time         `json:"created_at" bson:"created_at"`
+	ID            string     `json:"id" bson:"_id"`
+	BoardID       string     `json:"board_id" bson:"board_id"`
+	Name          string     `json:"name" bson:"name"`
+	Description   string     `json:"description,omitempty" bson:"description,omitempty"`
+	StartTime     time.Time  `json:"start_time" bson:"start_time"`
+	EndTime       time.Time  `json:"end_time,omitempty" bson:"end_time,omitempty"`
+	Tags          []string   `json:"tags,omitempty" bson:"tags,omitempty"`
+	AutoSplitRule *SplitRule `json:"auto_split_rule,omitempty" bson:"auto_split_rule,omitempty"`
+	CreatedAt     time.Time  `json:"created_at" bson:"created_at"`
 }
 
 type SplitRule struct {
@@ -90,10 +104,10 @@ type SplitRule struct {
 }
 
 type Temperature struct {
-	ID            string    `json:"id" bson:"_id"`
-	BoardID       string    `json:"board_id" bson:"board_id"`
-	Timestamp     time.Time `json:"timestamp" bson:"timestamp"`
-	ValueCelsius  float64   `json:"value_celsius" bson:"value_celsius"`
+	ID           string    `json:"id" bson:"_id"`
+	BoardID      string    `json:"board_id" bson:"board_id"`
+	Timestamp    time.Time `json:"timestamp" bson:"timestamp"`
+	ValueCelsius float64   `json:"value_celsius" bson:"value_celsius"`
 }
 
 type VizProfile struct {
@@ -114,17 +128,17 @@ type TimeRange struct {
 }
 
 type VizItem struct {
-	ID         string          `json:"id" bson:"id"`
-	Label      string          `json:"label" bson:"label"`
-	ShortLabel string          `json:"short_label,omitempty" bson:"short_label,omitempty"`
-	Color      string          `json:"color" bson:"color"`
-	Visible       bool            `json:"visible" bson:"visible"`
-	FieldRef      FieldRef        `json:"field_ref" bson:"field_ref"`
-	ChartType string          `json:"chart_type" bson:"chart_type"`
-	YAxis     YAxisConfig     `json:"y_axis" bson:"y_axis"`
-	Offset    float64         `json:"offset" bson:"offset"`
-	Weight    float64         `json:"weight" bson:"weight"`
-	Favorite  bool            `json:"favorite,omitempty" bson:"favorite,omitempty"`
+	ID         string      `json:"id" bson:"id"`
+	Label      string      `json:"label" bson:"label"`
+	ShortLabel string      `json:"short_label,omitempty" bson:"short_label,omitempty"`
+	Color      string      `json:"color" bson:"color"`
+	Visible    bool        `json:"visible" bson:"visible"`
+	FieldRef   FieldRef    `json:"field_ref" bson:"field_ref"`
+	ChartType  string      `json:"chart_type" bson:"chart_type"`
+	YAxis      YAxisConfig `json:"y_axis" bson:"y_axis"`
+	Offset     float64     `json:"offset" bson:"offset"`
+	Weight     float64     `json:"weight" bson:"weight"`
+	Favorite   bool        `json:"favorite,omitempty" bson:"favorite,omitempty"`
 }
 
 type FieldRef struct {

@@ -41,7 +41,8 @@ func (f *aiQueryFailure) Error() string {
 // AIStatus reports whether the server has a usable AI provider without
 // exposing credentials.
 func (h *Handler) AIStatus(c *gin.Context) {
-	if h.agent == nil {
+	agent := h.currentAgent()
+	if agent == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"configured": false,
 			"tools":      aiToolCount,
@@ -50,9 +51,9 @@ func (h *Handler) AIStatus(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"configured": true,
-		"provider":   h.agent.ProviderName(),
-		"model":      h.agent.Model(),
-		"max_rounds": h.agent.MaxRounds(),
+		"provider":   agent.ProviderName(),
+		"model":      agent.Model(),
+		"max_rounds": agent.MaxRounds(),
 		"tools":      aiToolCount,
 	})
 }
@@ -61,9 +62,9 @@ func (h *Handler) AIQuery(c *gin.Context) {
 	if !h.authorizeAI(c) {
 		return
 	}
-	if h.agent == nil {
+	if h.currentAgent() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",
+			"error": "AI is not configured. Set AI provider settings in Settings or AI_PROVIDER/AI_MODEL/AI_BASE_URL/AI_API_KEY.",
 			"code":  "ai_not_configured",
 		})
 		return
@@ -106,9 +107,9 @@ func (h *Handler) AIQueryStream(c *gin.Context) {
 	if !h.authorizeAI(c) {
 		return
 	}
-	if h.agent == nil {
+	if h.currentAgent() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "AI is not configured. Set AI_PROVIDER, AI_MODEL, and AI_BASE_URL/AI_API_KEY on the backend.",
+			"error": "AI is not configured. Set AI provider settings in Settings or AI_PROVIDER/AI_MODEL/AI_BASE_URL/AI_API_KEY.",
 			"code":  "ai_not_configured",
 		})
 		return
@@ -179,8 +180,12 @@ func (h *Handler) runAIQuery(
 		protocolID = proto.ID
 	}
 
+	agent := h.currentAgent()
+	if agent == nil {
+		return nil, "", "", &aiQueryFailure{Status: http.StatusServiceUnavailable, Code: "ai_not_configured", Message: "AI is not configured"}
+	}
 	registry := h.buildAIToolRegistry(board.ID, protocolID)
-	result, err := h.agent.Run(ctx, ai.Request{
+	result, err := agent.Run(ctx, ai.Request{
 		Query:         req.Query,
 		History:       req.History,
 		SystemContext: systemContext,

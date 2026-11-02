@@ -13,6 +13,7 @@ import (
 	"github.com/hyunu/sentinel/internal/api"
 	"github.com/hyunu/sentinel/internal/config"
 	"github.com/hyunu/sentinel/internal/db"
+	"github.com/hyunu/sentinel/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -44,7 +45,18 @@ func main() {
 		logger.Warn("Failed to backfill temperature uart data", zap.Error(err))
 	}
 
-	router := api.SetupRouter(database, logger, buildAIAgent(cfg, logger), api.HandlerOptions{
+	aiSettings, err := database.GetAISettings(context.Background())
+	if err != nil {
+		logger.Warn("Failed to load AI settings", zap.Error(err))
+	}
+	if aiSettings == nil {
+		aiSettings = aiSettingsFromConfig(cfg.AI)
+		if err := database.SaveAISettings(context.Background(), aiSettings); err != nil {
+			logger.Warn("Failed to seed AI settings", zap.Error(err))
+		}
+	}
+
+	router := api.SetupRouter(database, logger, buildAIAgent(aiSettings, logger), api.HandlerOptions{
 		AIToken:   cfg.AI.APIToken,
 		RateLimit: cfg.AI.RateLimit,
 	})
@@ -78,13 +90,43 @@ func main() {
 	logger.Info("Server exited")
 }
 
-func buildAIAgent(cfg *config.Config, logger *zap.Logger) *ai.Agent {
+func aiSettingsFromConfig(cfg config.AIConfig) *models.AISettings {
+	return &models.AISettings{
+		ID:             "default",
+		Provider:       cfg.Provider,
+		BaseURL:        cfg.BaseURL,
+		Model:          cfg.Model,
+		APIKey:         cfg.APIKey,
+		MaxTokens:      cfg.MaxTokens,
+		Temperature:    cfg.Temperature,
+		TimeoutSeconds: int(cfg.Timeout.Seconds()),
+		MaxToolRounds:  cfg.MaxToolRounds,
+		UpdatedAt:      time.Now().UTC(),
+	}
+}
+
+func buildAIAgent(settings *models.AISettings, logger *zap.Logger) *ai.Agent {
+	if settings == nil {
+		return nil
+	}
+	timeoutSeconds := settings.TimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 60
+	}
+	maxTokens := settings.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+	maxRounds := settings.MaxToolRounds
+	if maxRounds <= 0 {
+		maxRounds = 6
+	}
 	providerCfg := ai.ProviderConfig{
-		Provider: cfg.AI.Provider,
-		BaseURL:  cfg.AI.BaseURL,
-		APIKey:   cfg.AI.APIKey,
-		Model:    cfg.AI.Model,
-		Timeout:  cfg.AI.Timeout,
+		Provider: settings.Provider,
+		BaseURL:  settings.BaseURL,
+		APIKey:   settings.APIKey,
+		Model:    settings.Model,
+		Timeout:  time.Duration(timeoutSeconds) * time.Second,
 	}
 	if !providerCfg.Configured() {
 		logger.Info("AI is not configured; /api/v1/ai/query will return 503")
@@ -95,10 +137,10 @@ func buildAIAgent(cfg *config.Config, logger *zap.Logger) *ai.Agent {
 		logger.Warn("AI provider configuration is invalid; AI is disabled", zap.Error(err))
 		return nil
 	}
-	temp := cfg.AI.Temperature
+	temp := settings.Temperature
 	agent := ai.NewAgent(provider, ai.Options{
-		MaxRounds:   cfg.AI.MaxToolRounds,
-		MaxTokens:   cfg.AI.MaxTokens,
+		MaxRounds:   maxRounds,
+		MaxTokens:   maxTokens,
 		Temperature: &temp,
 	}, logger)
 	logger.Info("AI configured",

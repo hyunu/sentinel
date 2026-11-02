@@ -79,6 +79,8 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 		}
 
 		v1.GET("/ai/status", h.AIStatus)
+		v1.GET("/ai/settings", h.GetAISettings)
+		v1.PUT("/ai/settings", h.UpdateAISettings)
 		v1.POST("/ai/query", h.AIQuery)
 		v1.POST("/ai/query/stream", h.AIQueryStream)
 	}
