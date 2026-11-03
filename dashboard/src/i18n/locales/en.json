@@ -290,6 +290,7 @@
     "zoomOut": "Zoom out horizontally (− / [)",
     "resetZoom": "Reset zoom (Home / 0)",
     "detailLoading": "Loading detail data…",
+    "chartLoading": "Loading chart data",
     "detailRefreshing": "Refreshing detail data…",
     "tooltip": "Tooltip",
     "tooltipToggle": "Show value popup on hover (T)",

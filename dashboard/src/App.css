@@ -1960,9 +1960,56 @@ tbody tr:last-child td {
 }
 
 .viz-chart-panel {
+  position: relative;
   background: var(--surface-inset);
   border-top: 1px solid var(--border);
   padding: 12px 20px 16px;
+}
+
+.viz-chart-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 6;
+}
+
+.viz-chart-progress.is-active {
+  opacity: 1;
+}
+
+.viz-chart-progress-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34%;
+  left: -34%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent, #7c83ff), transparent);
+  animation: viz-chart-progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes viz-chart-progress-slide {
+  0% {
+    left: -34%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viz-chart-progress-bar {
+    left: 0;
+    width: 100%;
+    animation: none;
+    opacity: 0.65;
+  }
 }
 
 .viz-chart-panel-layout {

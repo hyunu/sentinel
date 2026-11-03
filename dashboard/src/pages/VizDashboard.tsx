@@ -3175,6 +3175,7 @@ export default function VizDashboardPage() {
 
   const chartZoomActive = zoomWindow != null;
 
+  const chartDataLoading = loading || detailLoading;
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
     && !inMemoryFull
@@ -4195,6 +4196,14 @@ export default function VizDashboardPage() {
           </div>
         </div>
         <div className="viz-chart-panel">
+        <div
+          className={`viz-chart-progress${chartDataLoading ? ' is-active' : ''}`}
+          role="progressbar"
+          aria-label={t('viz.chartLoading')}
+          aria-hidden={!chartDataLoading}
+        >
+          <span className="viz-chart-progress-bar" />
+        </div>
         <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
         <div className="viz-chart-main">
         <div
