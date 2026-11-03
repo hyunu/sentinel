@@ -56,3 +56,9 @@ queued and serialized by the UART. No packet is discarded because of this.
 
 Use `--limit N` for a short smoke test. Without `--once`, the capture repeats.
 Add `--trace-sim` to log every `SIM->PRD` packet as it is sent.
+
+## Capture fixture
+
+`uart_20261028_183723.log` is tracked as the shared replay fixture
+(90,148 packets). Future `uart_*.log` files remain ignored by Git unless they
+are explicitly unignored.

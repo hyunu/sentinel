@@ -3,3 +3,5 @@ __pycache__/
 
 # Large UART capture artifacts
 uart_*.log
+# The current capture is the shared replay fixture.
+!uart_20261028_183723.log
