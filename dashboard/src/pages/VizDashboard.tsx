@@ -510,8 +510,12 @@ export default function VizDashboardPage() {
   const aiChartLinkAppliedRef = useRef(false);
   const [boardProtocol, setBoardProtocol] = useState<ProtocolSpec | null>(null);
   const [items, setItems] = useState<VizItem[]>([]);
-  const itemQueryKey = useMemo(
-    () => items.map(i => `${i.id}:${i.field_ref.protocol_id}:${i.field_ref.field_name}:${i.visible}`).join('|'),
+  // Data identity for the detail cache. Visibility/offset/weight only affect
+  // rendering, so toggling them must not throw away cached detail series.
+  const itemDataKey = useMemo(
+    () => items
+      .map(i => `${i.id}:${i.label}:${i.field_ref.protocol_id}:${i.field_ref.field_name}`)
+      .join('|'),
     [items],
   );
   const liveFieldsKey = useMemo(
@@ -2032,9 +2036,17 @@ export default function VizDashboardPage() {
     setDetailLoading(false);
     setDetailWindowKey(null);
     detailFetchSeqRef.current += 1;
-    detailCacheRef.current.clear();
+    // Keep detailCacheRef. A refresh/time-range change should not discard
+    // high-resolution windows that can be reused when zooming back.
     lastDetailCanvasPointsRef.current = [];
   }, []);
+
+  // Only a different board/field set invalidates cached detail windows.
+  // Refreshes and time-range changes keep reusable high-resolution data.
+  useEffect(() => {
+    detailCacheRef.current.clear();
+    lastDetailCanvasPointsRef.current = [];
+  }, [selectedBoard, itemDataKey]);
 
   const applyQueryResult = useCallback((
     result: Awaited<ReturnType<typeof queryVizDataset>>,
@@ -2771,7 +2783,7 @@ export default function VizDashboardPage() {
 
     const { startTs, endTs } = zoomWindow;
     const windowKey = `${startTs}:${endTs}`;
-    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemQueryKey);
+    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemDataKey);
     const cached = detailCacheRef.current.get(cacheKey);
 
     const zoomStartMs = Date.parse(startTs);
@@ -2826,7 +2838,7 @@ export default function VizDashboardPage() {
           selectedBoard,
           startTs,
           endTs,
-          itemQueryKey,
+          itemDataKey,
         );
         if (overlapCached) {
           applyDetail(overlapCached.data, overlapCached.meta, true);
@@ -2887,7 +2899,60 @@ export default function VizDashboardPage() {
       detailAbortRef.current?.abort();
       detailAbortRef.current = null;
     };
-  }, [zoomWindow, liveMode, selectedBoard, itemQueryKey, inMemoryFull, aiAggregationParams]);
+  }, [zoomWindow, liveMode, selectedBoard, itemDataKey, inMemoryFull, aiAggregationParams]);
+
+  // While the full-range overview is downsampled, fetch a higher-resolution
+  // copy in the background and keep it in the detail cache. Zooming into it
+  // can then render immediately instead of waiting for a fresh request.
+  useEffect(() => {
+    if (
+      liveMode
+      || !selectedBoard
+      || inMemoryFull
+      || zoomWindow
+      || !queryMeta?.downsampled
+      || rawVizData.length < 2
+    ) return;
+
+    const startTs = rawVizData[0].timestamp;
+    const endTs = rawVizData[rawVizData.length - 1].timestamp;
+    const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemDataKey);
+    if (detailCacheRef.current.peek(cacheKey)) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void api.viz.queryItems({
+        board_id: selectedBoard,
+        items: itemsForDataQuery(itemsRef.current),
+        time_range: { start: startTs, end: endTs },
+        limit: Math.min(
+          DETAIL_MAX_POINTS,
+          Math.max(MAX_POINTS, queryMeta.total_matched ?? MAX_POINTS),
+        ),
+        ...aiAggregationParams,
+      }, { signal: controller.signal, timeoutMs: 30000 }).then(result => {
+        if (controller.signal.aborted) return;
+        detailCacheRef.current.set(cacheKey, result.data, result.meta ?? null);
+      }).catch(() => {
+        /* Background prefetch is best-effort. */
+      });
+    }, 800);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    liveMode,
+    selectedBoard,
+    inMemoryFull,
+    zoomWindow,
+    queryMeta?.downsampled,
+    queryMeta?.total_matched,
+    rawVizData,
+    itemDataKey,
+    aiAggregationParams,
+  ]);
 
   const displayChartData = useMemo(() => {
     if (!chartData.length) return [];
