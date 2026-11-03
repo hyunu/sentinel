@@ -3423,18 +3423,17 @@ tbody tr:last-child td {
 }
 
 .viz-profile-error-inline {
-  flex-shrink: 0;
+  flex-shrink: 1;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
+  max-width: 320px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 107, 107, 0.15);
   color: #ff6b6b;
   font-size: 11px;
-  font-weight: 700;
-  cursor: help;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .toolbar {

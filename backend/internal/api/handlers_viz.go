@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxVizProfilesPerBoard = 5
+const maxVizProfilesPerBoard = 20
 
 func (h *Handler) CreateVizProfile(c *gin.Context) {
 	var profile models.VizProfile
@@ -35,6 +35,31 @@ func (h *Handler) CreateVizProfile(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+
+	// Saving the same name again updates that profile instead of creating a
+	// duplicate. This also makes retries after a flaky request idempotent.
+	var existing models.VizProfile
+	err := h.db.VizProfiles().FindOne(ctx, bson.M{
+		"board_id": profile.BoardID,
+		"name":     profile.Name,
+	}).Decode(&existing)
+	if err == nil {
+		profile.ID = existing.ID
+		profile.CreatedAt = existing.CreatedAt
+		profile.UpdatedAt = time.Now()
+		if _, err := h.db.VizProfiles().ReplaceOne(ctx, bson.M{"_id": existing.ID}, profile); err != nil {
+			h.logger.Error("failed to update viz profile by name", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save profile"})
+			return
+		}
+		c.JSON(http.StatusOK, profile)
+		return
+	}
+	if err != mongo.ErrNoDocuments {
+		h.logger.Error("failed to look up viz profile by name", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save profile"})
+		return
+	}
 
 	count, err := h.db.VizProfiles().CountDocuments(ctx, bson.M{"board_id": profile.BoardID})
 	if err != nil {

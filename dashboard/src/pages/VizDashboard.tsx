@@ -125,7 +125,7 @@ const CHART_TYPES = ['line', 'bar', 'area'] as const;
 const MAX_POINTS = 8000;
 const DETAIL_MAX_POINTS = 20_000;
 const MAX_CHART_SERIES = 24;
-const MAX_PROFILES = 5;
+const MAX_PROFILES = 20;
 const POLL_INTERVAL = 3000;
 const MIN_CHART_ZOOM_POINTS = 10;
 /** Defer React zoom commit while panning/wheeling — canvas updates imperatively. */
@@ -2638,8 +2638,15 @@ export default function VizDashboardPage() {
       return false;
     }
 
-    const existing = profiles.find(p => p.name === trimmed);
-    if (!existing && profiles.length >= MAX_PROFILES) {
+    let latestProfiles = profiles;
+    try {
+      latestProfiles = await api.viz.listProfiles(selectedBoard);
+      setProfiles(latestProfiles);
+    } catch {
+      // Fall back to the last loaded list if the refresh fails.
+    }
+    const existing = latestProfiles.find(p => p.name === trimmed);
+    if (!existing && latestProfiles.length >= MAX_PROFILES) {
       setProfileError(t('viz.profileError.maxProfiles', { max: MAX_PROFILES }));
       return false;
     }
@@ -3671,7 +3678,9 @@ export default function VizDashboardPage() {
                 <span className="muted viz-items-header-hint">{t('viz.selectBoardForProfiles')}</span>
               )}
               {profileError && (
-                <span className="viz-profile-error-inline" title={profileError}>!</span>
+                <span className="viz-profile-error-inline" role="alert" title={profileError}>
+                  {profileError}
+                </span>
               )}
             </div>
           </div>
