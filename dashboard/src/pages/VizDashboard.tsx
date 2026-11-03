@@ -537,9 +537,15 @@ export default function VizDashboardPage() {
     return {};
   }, [aiChartLink]);
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
+  // The chart layer only needs the visible series that can actually be drawn.
+  // Field values still read the full raw rows, including hidden series.
+  const chartSeriesItems = useMemo(
+    () => items.filter(i => i.visible).slice(0, MAX_CHART_SERIES),
+    [items],
+  );
   const chartData = useMemo(
-    () => toChartPoints(rawVizData, items),
-    [rawVizData, itemTransformKey],
+    () => toChartPoints(rawVizData, chartSeriesItems),
+    [rawVizData, chartSeriesItems],
   );
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
   const refAreaLeftRef = useRef<number | null>(null);

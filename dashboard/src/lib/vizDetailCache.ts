@@ -13,6 +13,7 @@ type DetailCacheEntry = {
 };
 
 const DETAIL_CACHE_MAX = 32;
+const DETAIL_CACHE_MAX_ROWS = 100_000;
 const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function buildDetailCacheKey(
@@ -26,6 +27,7 @@ export function buildDetailCacheKey(
 
 export class VizDetailCache {
   private store = new Map<string, DetailCacheEntry>();
+  private totalRows = 0;
 
   get(key: string): DetailCacheEntry | undefined {
     const hit = this.store.get(key);
@@ -40,10 +42,19 @@ export class VizDetailCache {
   }
 
   set(key: string, data: VizDetailCacheRow[], meta: VizDetailCacheMeta | null): void {
+    const previous = this.store.get(key);
+    if (previous) this.totalRows -= previous.data.length;
     this.store.set(key, { data, meta, fetchedAt: Date.now() });
-    while (this.store.size > DETAIL_CACHE_MAX) {
+    this.totalRows += data.length;
+
+    while (
+      this.store.size > DETAIL_CACHE_MAX
+      || this.totalRows > DETAIL_CACHE_MAX_ROWS
+    ) {
       const oldest = this.store.keys().next().value;
       if (!oldest) break;
+      const removed = this.store.get(oldest);
+      this.totalRows -= removed?.data.length ?? 0;
       this.store.delete(oldest);
     }
   }
@@ -94,5 +105,6 @@ export class VizDetailCache {
 
   clear(): void {
     this.store.clear();
+    this.totalRows = 0;
   }
 }
