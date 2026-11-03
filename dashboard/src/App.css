@@ -3014,6 +3014,21 @@ tbody tr:last-child td {
   margin-bottom: 0;
 }
 
+.viz-checked-only-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.viz-checked-only-toggle input {
+  margin: 0;
+}
+
 .viz-add-field-group {
   display: inline-flex;
   align-items: center;
@@ -3403,6 +3418,10 @@ tbody tr:last-child td {
 .viz-profile-tag-remove:hover {
   background: rgba(255, 107, 107, 0.15);
   color: #ff6b6b;
+}
+
+.viz-profile-save-btn {
+  white-space: nowrap;
 }
 
 .viz-profile-add-form {

@@ -627,6 +627,7 @@ export default function VizDashboardPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [itemFieldSearch, setItemFieldSearch] = useState('');
   const [itemFieldSearchOpen, setItemFieldSearchOpen] = useState(false);
+  const [checkedOnly, setCheckedOnly] = useState(false);
   const itemFieldSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [chartManualOpen, setChartManualOpen] = useState(false);
@@ -2651,7 +2652,8 @@ export default function VizDashboardPage() {
       setProfileError(t('viz.profileError.noName'));
       return false;
     }
-    if (items.length === 0) {
+    const profileItems = checkedOnly ? items.filter(i => i.visible) : items;
+    if (profileItems.length === 0) {
       setProfileError(t('viz.profileError.noItems'));
       return false;
     }
@@ -2675,7 +2677,7 @@ export default function VizDashboardPage() {
       const data = {
         name: trimmed,
         board_id: selectedBoard,
-        items,
+        items: profileItems,
         time_range: buildTimeRange(),
       };
       if (existing) {
@@ -2730,13 +2732,30 @@ export default function VizDashboardPage() {
     }
   };
 
+  const activeProfile = useMemo(
+    () => profiles.find(p => p.id === savedProfileId) ?? null,
+    [profiles, savedProfileId],
+  );
+  const profileDirty = useMemo(() => {
+    if (!activeProfile) return false;
+    const current = checkedOnly ? items.filter(i => i.visible) : items;
+    return JSON.stringify(current) !== JSON.stringify(activeProfile.items);
+  }, [items, activeProfile, checkedOnly]);
+  const saveCurrentProfile = async () => {
+    if (!activeProfile) return;
+    await saveProfile(activeProfile.name);
+  };
+
   const visibleItems = useMemo(
     () => items.filter(i => i.visible),
     [items],
   );
   const filteredItems = useMemo(
-    () => items.filter(item => itemMatchesFieldSearch(item, itemFieldSearch)),
-    [items, itemFieldSearch],
+    () => items.filter(item =>
+      (!checkedOnly || item.visible)
+      && itemMatchesFieldSearch(item, itemFieldSearch),
+    ),
+    [items, itemFieldSearch, checkedOnly],
   );
   const chartItems = useMemo(() => items, [items]);
   const activeChartItems = useMemo(
@@ -3267,7 +3286,7 @@ export default function VizDashboardPage() {
 
   const cursorValueRows = useMemo(() => {
     const rows = buildCursorValueRows(
-      items,
+      checkedOnly ? items.filter(item => item.visible) : items,
       hoverTimeKey ? rawValuesByTimeKey.get(hoverTimeKey) : undefined,
       hoverPrevTimeKey ? rawValuesByTimeKey.get(hoverPrevTimeKey) : undefined,
       chartItemIds,
@@ -3279,7 +3298,7 @@ export default function VizDashboardPage() {
       if (a.onChart !== b.onChart) return a.onChart ? -1 : 1;
       return chartLabel(a.item).localeCompare(chartLabel(b.item));
     });
-  }, [items, hoverTimeKey, hoverPrevTimeKey, rawValuesByTimeKey, chartItemIds]);
+  }, [items, checkedOnly, hoverTimeKey, hoverPrevTimeKey, rawValuesByTimeKey, chartItemIds]);
 
   const toggleItemFavorite = useCallback((id: string) => {
     setItems(prev => prev.map(i => (i.id === id ? { ...i, favorite: !i.favorite } : i)));
@@ -3668,6 +3687,14 @@ export default function VizDashboardPage() {
               <button type="button" className="btn-sm" onClick={addAllFields} disabled={!boardProtocol}>
                 {t('viz.addAllFields')}
               </button>
+              <label className="viz-checked-only-toggle">
+                <input
+                  type="checkbox"
+                  checked={checkedOnly}
+                  onChange={e => setCheckedOnly(e.target.checked)}
+                />
+                <span>{t('viz.checkedOnly')}</span>
+              </label>
               <div className="viz-add-field-group">
                 <VizFieldPicker
                   fields={availableFields}
@@ -3722,7 +3749,7 @@ export default function VizDashboardPage() {
                           visible: p.items.filter(i => i.visible).length,
                         })}
                       >
-                        {p.name}
+                        {p.name}{savedProfileId === p.id && profileDirty ? ' *' : ''}
                       </button>
                       <button
                         type="button"
@@ -3742,6 +3769,17 @@ export default function VizDashboardPage() {
                       title={t('viz.addProfile')}
                     >
                       +
+                    </button>
+                  )}
+                  {savedProfileId && (
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm viz-profile-save-btn"
+                      onClick={() => void saveCurrentProfile()}
+                      disabled={profileSaving || !profileDirty}
+                      title={profileDirty ? t('viz.saveProfileChanges') : t('viz.profileSaved')}
+                    >
+                      {profileSaving ? '…' : t('viz.saveProfileChanges')}
                     </button>
                   )}
                 </div>
