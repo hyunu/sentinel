@@ -1,8 +1,8 @@
 /* eslint-disable react-refresh/only-export-components -- helper exports are colocated with the component */
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { VizItem } from '../api';
-import { IconEye, IconEyeOff } from './ChartControlIcons';
+import { IconEye, IconEyeOff, IconSearch } from './ChartControlIcons';
 import { useTranslation } from '../i18n';
 import { formatVizActualValue, resolveVizItemRawValue } from '../lib/vizDashboardUtils';
 
@@ -60,10 +60,26 @@ export default function ChartCursorValues({
   layout = 'bottom',
 }: ChartCursorValuesProps) {
   const { t } = useTranslation();
-  const withValue = rows.filter(r => typeof r.raw === 'number');
+  const [search, setSearch] = useState('');
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredRows = useMemo(() => {
+    if (!normalizedSearch) return rows;
+    return rows.filter(({ item }) => {
+      const name = chartLabel(item);
+      return [name, item.label, item.field_ref.field_name]
+        .filter(Boolean)
+        .some(value => value.toLocaleLowerCase().includes(normalizedSearch));
+    });
+  }, [rows, normalizedSearch]);
+  const withValue = filteredRows.filter(r => typeof r.raw === 'number');
   const empty = rows.length === 0;
+  const noMatches = normalizedSearch.length > 0 && filteredRows.length === 0;
   const gridRef = useRef<HTMLDivElement>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [search]);
 
   useLayoutEffect(() => {
     if (pendingScrollTopRef.current == null || !gridRef.current) return;
@@ -109,18 +125,49 @@ export default function ChartCursorValues({
         </time>
         {timeKey && (
           <span className="viz-cursor-values-meta muted">
-            {t('viz.valuePanel.fieldsMeta', { withValue: withValue.length, total: rows.length })}
+            {t('viz.valuePanel.fieldsMeta', { withValue: withValue.length, total: filteredRows.length })}
           </span>
         )}
+        <div className="viz-cursor-values-search">
+          <IconSearch className="viz-cursor-values-search-icon" />
+          <input
+            type="search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Escape') {
+                setSearch('');
+              }
+            }}
+            placeholder={t('viz.valuePanel.searchPlaceholder')}
+            aria-label={t('viz.valuePanel.searchLabel')}
+            autoComplete="off"
+          />
+          {search && (
+            <button
+              type="button"
+              className="viz-cursor-values-search-clear"
+              onClick={() => setSearch('')}
+              title={t('viz.valuePanel.searchClear')}
+              aria-label={t('viz.valuePanel.searchClear')}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
       <div className="viz-cursor-values-body">
         {!timeKey ? (
           <p className="viz-cursor-values-placeholder muted">{t('viz.valuePanel.placeholder')}</p>
         ) : empty ? (
           <p className="viz-cursor-values-placeholder muted">{t('viz.valuePanel.noItems')}</p>
+        ) : noMatches ? (
+          <p className="viz-cursor-values-placeholder muted">
+            {t('viz.valuePanel.noMatches', { query: search.trim() })}
+          </p>
         ) : (
           <div className="viz-cursor-values-grid" role="list" ref={gridRef}>
-            {rows.map(({ item, raw, prevRaw, onChart }) => {
+            {filteredRows.map(({ item, raw, prevRaw, onChart }) => {
               const name = chartLabel(item);
               const hasValue = typeof raw === 'number';
               const isFavorite = !!item.favorite;
