@@ -16,6 +16,8 @@ export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
 export const FULL_LOAD_MAX_POINTS = 100_000;
+/** Time-sliced full-load chunk size. Keep each response comfortably below the single-response budget. */
+export const FULL_LOAD_CHUNK_ROWS = 4_000;
 
 export function estimateVizPayloadBytes(data: VizFullLoadRow[]): number {
   if (data.length === 0) return 0;
@@ -41,6 +43,16 @@ export function shouldFullLoadInMemory(
   if (meta.total_matched <= meta.returned) return false;
   if (meta.total_matched > FULL_LOAD_MAX_POINTS) return false;
   return estimateFullLoadBytes(sample, meta.returned, meta.total_matched) <= FULL_LOAD_BYTE_BUDGET;
+}
+
+/** Large but bounded datasets that should be loaded in time-sliced chunks. */
+export function shouldChunkedFullLoad(
+  meta: VizFullLoadMeta | null | undefined,
+): boolean {
+  if (!meta) return false;
+  if (!meta.downsampled) return false;
+  if (meta.total_matched <= meta.returned) return false;
+  return meta.total_matched <= FULL_LOAD_MAX_POINTS;
 }
 
 export type AllRangeLoadLevel = 'ok' | 'heavy';
@@ -86,7 +98,7 @@ export function assessAllTimeRangeLoad(
     };
   }
 
-  if (shouldFullLoadInMemory(meta, sample)) {
+  if (shouldFullLoadInMemory(meta, sample) || shouldChunkedFullLoad(meta)) {
     return {
       level: 'ok',
       totalMatched,

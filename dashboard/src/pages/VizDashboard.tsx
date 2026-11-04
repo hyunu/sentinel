@@ -70,7 +70,9 @@ import {
   estimateVizPayloadBytes,
   formatFullLoadBytes,
   FULL_LOAD_BYTE_BUDGET,
+  FULL_LOAD_CHUNK_ROWS,
   FULL_LOAD_MAX_POINTS,
+  shouldChunkedFullLoad,
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
 } from '../lib/vizFullLoad';
@@ -141,6 +143,8 @@ type ChartLoadProgress = {
   phase: 'overview' | 'full' | 'detail';
   loaded: number;
   total: number | null;
+  chunkIndex?: number;
+  chunkCount?: number;
 };
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
 const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
@@ -348,13 +352,117 @@ type VizQueryParams = {
   bucket_seconds?: number;
 };
 
+type VizLoadProgressHandler = (
+  phase: 'overview' | 'full' | 'detail',
+  loaded: number,
+  total: number | null,
+  chunkIndex?: number,
+  chunkCount?: number,
+) => void;
+
+async function queryFullDatasetChunked(
+  params: VizQueryParams,
+  overview: VizDataRow[],
+  meta: VizQueryMeta,
+  options?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    onProgress?: VizLoadProgressHandler;
+  },
+): Promise<{ data: VizDataRow[]; meta: VizQueryMeta }> {
+  const range = params.time_range ?? (
+    overview.length >= 2
+      ? { start: overview[0].timestamp, end: overview[overview.length - 1].timestamp }
+      : undefined
+  );
+  const startMs = range ? Date.parse(range.start) : NaN;
+  const endMs = range ? Date.parse(range.end) : NaN;
+  if (!range || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    const full = await api.viz.queryItems({
+      ...params,
+      limit: meta.total_matched,
+    }, {
+      signal: options?.signal,
+      timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
+      onProgress: (loaded, total) => options?.onProgress?.('full', loaded, total),
+    });
+    return { data: full.data, meta: full.meta ?? meta };
+  }
+
+  const chunkCount = Math.max(1, Math.ceil(meta.total_matched / FULL_LOAD_CHUNK_ROWS));
+  const chunkLimit = Math.min(
+    DETAIL_MAX_POINTS,
+    Math.max(MAX_POINTS, Math.ceil(meta.total_matched / chunkCount * 3)),
+  );
+  const rows: VizDataRow[] = [];
+
+  const fetchRange = async (
+    rangeStartMs: number,
+    rangeEndMs: number,
+    chunkIndex: number,
+    depth: number,
+  ): Promise<void> => {
+    if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
+    const result = await api.viz.queryItems({
+      ...params,
+      time_range: {
+        start: new Date(rangeStartMs).toISOString(),
+        end: new Date(rangeEndMs).toISOString(),
+      },
+      limit: chunkLimit,
+    }, {
+      signal: options?.signal,
+      timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
+      onProgress: (loaded, total) => options?.onProgress?.(
+        'full', loaded, total, chunkIndex, chunkCount,
+      ),
+    });
+    if (
+      result.meta?.downsampled
+      && result.meta.total_matched > result.data.length
+      && depth < 3
+      && rangeEndMs - rangeStartMs > 60_000
+      && !options?.signal?.aborted
+    ) {
+      const midMs = rangeStartMs + (rangeEndMs - rangeStartMs) / 2;
+      await fetchRange(rangeStartMs, midMs, chunkIndex, depth + 1);
+      await fetchRange(midMs, rangeEndMs, chunkIndex, depth + 1);
+      return;
+    }
+    rows.push(...result.data);
+  };
+
+  for (let i = 0; i < chunkCount; i++) {
+    if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
+    const chunkStart = startMs + (endMs - startMs) * i / chunkCount;
+    const chunkEnd = i === chunkCount - 1
+      ? endMs
+      : startMs + (endMs - startMs) * (i + 1) / chunkCount;
+    await fetchRange(chunkStart, chunkEnd, i + 1, 0);
+  }
+
+  const byTimestamp = new Map<string, VizDataRow>();
+  for (const row of rows) byTimestamp.set(row.timestamp, row);
+  const merged = Array.from(byTimestamp.values())
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+  return {
+    data: merged,
+    meta: {
+      total_matched: meta.total_matched,
+      returned: merged.length,
+      downsampled: merged.length < meta.total_matched,
+    },
+  };
+}
+
 async function queryVizDataset(
   params: VizQueryParams,
   options?: {
     assessAllRange?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
-    onProgress?: (phase: 'overview' | 'full', loaded: number, total: number | null) => void;
+    onProgress?: VizLoadProgressHandler;
   },
 ): Promise<{
   data: VizDataRow[];
@@ -375,7 +483,16 @@ async function queryVizDataset(
     ? assessAllTimeRangeLoad(meta, overview.data)
     : null;
 
-  if (!shouldFullLoadInMemory(meta, overview.data)) {
+  if (!meta || !shouldFullLoadInMemory(meta, overview.data)) {
+    if (meta && shouldChunkedFullLoad(meta)) {
+      const full = await queryFullDatasetChunked(params, overview.data, meta, options);
+      return {
+        data: full.data,
+        meta: full.meta,
+        inMemoryFull: true,
+        allRangeAssessment,
+      };
+    }
     return {
       data: overview.data,
       meta,
@@ -383,11 +500,12 @@ async function queryVizDataset(
       allRangeAssessment,
     };
   }
+
   options?.onProgress?.('full', 0, null);
   const full = await api.viz.queryItems(
     {
       ...params,
-      limit: meta!.total_matched,
+      limit: meta.total_matched,
     },
     {
       signal: options?.signal,
@@ -2128,8 +2246,8 @@ export default function VizDashboardPage() {
         assessAllRange: isAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
-        onProgress: (phase, loaded, total) => {
-          setChartLoadProgress({ phase, loaded, total });
+        onProgress: (phase, loaded, total, chunkIndex, chunkCount) => {
+          setChartLoadProgress({ phase, loaded, total, chunkIndex, chunkCount });
         },
       });
       if (controller.signal.aborted) return;
@@ -2259,8 +2377,8 @@ export default function VizDashboardPage() {
         assessAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
-        onProgress: (phase, loaded, total) => {
-          setChartLoadProgress({ phase, loaded, total });
+        onProgress: (phase, loaded, total, chunkIndex, chunkCount) => {
+          setChartLoadProgress({ phase, loaded, total, chunkIndex, chunkCount });
         },
       });
       if (controller.signal.aborted) return;
@@ -3218,9 +3336,15 @@ export default function VizDashboardPage() {
   const chartZoomActive = zoomWindow != null;
 
   const chartDataLoading = loading || detailLoading;
-  const chartProgressPercent = chartLoadProgress?.total && chartLoadProgress.total > 0
-    ? Math.max(0, Math.min(100, chartLoadProgress.loaded / chartLoadProgress.total * 100))
-    : null;
+  const chartProgressPercent = (() => {
+    const progress = chartLoadProgress;
+    if (!progress?.total || progress.total <= 0) return null;
+    const ratio = Math.max(0, Math.min(1, progress.loaded / progress.total));
+    if (progress.chunkCount && progress.chunkIndex) {
+      return ((progress.chunkIndex - 1 + ratio) / progress.chunkCount) * 100;
+    }
+    return ratio * 100;
+  })();
   const chartProgressPercentText = chartProgressPercent != null
     ? chartProgressPercent.toFixed(1)
     : null;
@@ -3228,11 +3352,14 @@ export default function VizDashboardPage() {
     if (!chartDataLoading) return '';
     if (!chartLoadProgress) return t('viz.chartLoading');
     const phase = t(`viz.loadPhase.${chartLoadProgress.phase}`);
+    const chunk = chartLoadProgress.chunkCount
+      ? ` ${chartLoadProgress.chunkIndex}/${chartLoadProgress.chunkCount}`
+      : '';
     const loaded = formatLoadBytes(chartLoadProgress.loaded);
     if (chartProgressPercentText != null && chartLoadProgress.total) {
-      return `${phase} ${chartProgressPercentText}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
+      return `${phase}${chunk} ${chartProgressPercentText}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
     }
-    return `${phase} ${loaded}`;
+    return `${phase}${chunk} ${loaded}`;
   })();
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
