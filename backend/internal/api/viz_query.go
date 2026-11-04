@@ -384,14 +384,22 @@ func (h *Handler) queryVizSeriesSampled(
 		return nil, vizQueryMeta{}, err
 	}
 
+	// Guarantee the real start/end of the range are present even when the first
+	// or last document has no value for the selected fields.
+	head, err := h.scanVizPoints(ctx, filter, items, 20, false)
+	if err == nil && len(head) > 0 {
+		results = append(head[:1], results...)
+	}
+	tail, err := h.scanVizPoints(ctx, filter, items, 20, true)
+	if err == nil && len(tail) > 0 {
+		results = append(results, tail[len(tail)-1])
+	}
+
 	results = coalesceVizPointsByTimestamp(results)
 	if len(results) > 1 {
 		sort.Slice(results, func(i, j int) bool {
 			return results[i].Timestamp.Before(results[j].Timestamp)
 		})
-	}
-	if len(results) > effectiveLimit {
-		results = results[:effectiveLimit]
 	}
 
 	return results, vizQueryMeta{
