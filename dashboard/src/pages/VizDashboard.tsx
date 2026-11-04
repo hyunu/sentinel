@@ -655,6 +655,57 @@ function parseNumericDraft(raw: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+interface VizOptionalNumberInputProps {
+  value: number | undefined;
+  onCommit: (value: number | undefined) => void;
+  width?: number;
+  ariaLabel: string;
+}
+
+// Optional numeric input (Y min/max). Keeps the raw draft while editing so a
+// leading '-' survives until commit, and only notifies the parent on blur/Enter.
+// Committing per keystroke re-rendered all profile items and rebuilt the chart
+// data, which made the whole table feel laggy.
+function VizOptionalNumberInput({
+  value,
+  onCommit,
+  width = 48,
+  ariaLabel,
+}: VizOptionalNumberInputProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="viz-item-numeric-input"
+      value={editing ? draft : value ?? ''}
+      placeholder="—"
+      aria-label={ariaLabel}
+      style={{ width }}
+      onFocus={() => {
+        setDraft(value == null ? '' : String(value));
+        setEditing(true);
+      }}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={e => {
+        setEditing(false);
+        onCommit(parseOptionalNumber(e.target.value));
+      }}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        }
+        if (e.key === 'Escape') {
+          setEditing(false);
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 interface VizItemNumericInputProps {
   value: number;
   onCommit: (value: number) => void;
@@ -4373,32 +4424,22 @@ export default function VizDashboardPage() {
                     />
                   </td>
                   <td>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="viz-item-numeric-input"
-                      value={item.y_axis.min ?? ''}
-                      placeholder="—"
-                      aria-label={t('viz.yMinAria', { label: item.label })}
-                      style={{ width: 48 }}
-                      onChange={e => updateItem(item.id, 'y_axis', {
+                    <VizOptionalNumberInput
+                      value={item.y_axis.min}
+                      ariaLabel={t('viz.yMinAria', { label: item.label })}
+                      onCommit={min => updateItem(item.id, 'y_axis', {
                         ...item.y_axis,
-                        min: parseOptionalNumber(e.target.value),
+                        min,
                       } as YAxisConfig)}
                     />
                   </td>
                   <td>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="viz-item-numeric-input"
-                      value={item.y_axis.max ?? ''}
-                      placeholder="—"
-                      aria-label={t('viz.yMaxAria', { label: item.label })}
-                      style={{ width: 48 }}
-                      onChange={e => updateItem(item.id, 'y_axis', {
+                    <VizOptionalNumberInput
+                      value={item.y_axis.max}
+                      ariaLabel={t('viz.yMaxAria', { label: item.label })}
+                      onCommit={max => updateItem(item.id, 'y_axis', {
                         ...item.y_axis,
-                        max: parseOptionalNumber(e.target.value),
+                        max,
                       } as YAxisConfig)}
                     />
                   </td>
