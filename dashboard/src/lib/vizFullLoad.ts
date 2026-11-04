@@ -6,8 +6,13 @@ export type VizFullLoadMeta = {
   downsampled: boolean;
 };
 
-/** In-memory full dataset budget (~350 MiB JSON). */
-export const FULL_LOAD_BYTE_BUDGET = 350 * 1024 * 1024;
+/**
+ * In-memory full dataset budget (~100 MiB JSON). The current 98-field
+ * monitoring payload is ~3.4 KB per row, so 90k rows would be ~306 MB.
+ * Loading that as one response times out on remote browsers; larger sets use
+ * the overview + detail-window cache instead.
+ */
+export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
 export const FULL_LOAD_MAX_POINTS = 100_000;

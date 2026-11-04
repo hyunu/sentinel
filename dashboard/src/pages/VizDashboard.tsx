@@ -190,7 +190,7 @@ function axisUnitLabel(itemsOnAxis: VizItem[]): string {
 function formatLoadBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0KB';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
 }
 
 function formatYAxisTick(value: number | string): string {
@@ -3219,15 +3219,18 @@ export default function VizDashboardPage() {
 
   const chartDataLoading = loading || detailLoading;
   const chartProgressPercent = chartLoadProgress?.total && chartLoadProgress.total > 0
-    ? Math.max(0, Math.min(100, Math.round(chartLoadProgress.loaded / chartLoadProgress.total * 100)))
+    ? Math.max(0, Math.min(100, chartLoadProgress.loaded / chartLoadProgress.total * 100))
+    : null;
+  const chartProgressPercentText = chartProgressPercent != null
+    ? chartProgressPercent.toFixed(1)
     : null;
   const chartProgressLabel = (() => {
     if (!chartDataLoading) return '';
     if (!chartLoadProgress) return t('viz.chartLoading');
     const phase = t(`viz.loadPhase.${chartLoadProgress.phase}`);
     const loaded = formatLoadBytes(chartLoadProgress.loaded);
-    if (chartProgressPercent != null && chartLoadProgress.total) {
-      return `${phase} ${chartProgressPercent}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
+    if (chartProgressPercentText != null && chartLoadProgress.total) {
+      return `${phase} ${chartProgressPercentText}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
     }
     return `${phase} ${loaded}`;
   })();
@@ -4258,14 +4261,14 @@ export default function VizDashboardPage() {
           aria-hidden={!chartDataLoading}
           aria-valuemin={chartProgressPercent != null ? 0 : undefined}
           aria-valuemax={chartProgressPercent != null ? 100 : undefined}
-          aria-valuenow={chartProgressPercent ?? undefined}
+          aria-valuenow={chartProgressPercent != null ? Math.round(chartProgressPercent) : undefined}
         >
           <span
             className="viz-chart-progress-bar"
-            style={chartProgressPercent != null ? { width: `${chartProgressPercent}%` } : undefined}
+            style={chartProgressPercent != null ? { width: `${chartProgressPercent.toFixed(2)}%` } : undefined}
           />
         </div>
-        {chartDataLoading && (
+        {chartDataLoading && rawVizData.length > 0 && (
           <span className="viz-chart-progress-label">{chartProgressLabel}</span>
         )}
         <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
@@ -4310,7 +4313,12 @@ export default function VizDashboardPage() {
           ) : canvasChartData.length > 0 && items.length > 0 ? (
             <p className="viz-chart-empty muted">{t('viz.noVisibleItems')}</p>
           ) : chartEmptyMessage ? (
-            <p className="viz-chart-empty muted">{chartEmptyMessage}</p>
+            <div className="viz-chart-empty muted viz-chart-loading-state">
+              <span>{chartEmptyMessage}</span>
+              {chartDataLoading && chartProgressLabel && (
+                <span className="viz-chart-loading-detail">{chartProgressLabel}</span>
+              )}
+            </div>
           ) : null}
         </div>
         {chartNavigatorWindow && (
