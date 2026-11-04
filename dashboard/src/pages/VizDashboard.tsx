@@ -141,8 +141,12 @@ const WHEEL_GESTURE_QUIET_MS = 180;
 type FieldValuesLayout = 'bottom' | 'left';
 type ChartLoadProgress = {
   phase: 'overview' | 'full' | 'detail';
+  /** Bytes downloaded in the current request/chunk. */
   loaded: number;
+  /** Bytes expected for the current request/chunk. */
   total: number | null;
+  /** Bytes accumulated across all completed chunks plus the current one. */
+  overallLoaded: number;
   chunkIndex?: number;
   chunkCount?: number;
 };
@@ -352,13 +356,7 @@ type VizQueryParams = {
   bucket_seconds?: number;
 };
 
-type VizLoadProgressHandler = (
-  phase: 'overview' | 'full' | 'detail',
-  loaded: number,
-  total: number | null,
-  chunkIndex?: number,
-  chunkCount?: number,
-) => void;
+type VizLoadProgressHandler = (progress: ChartLoadProgress) => void;
 
 async function queryFullDatasetChunked(
   params: VizQueryParams,
@@ -384,7 +382,12 @@ async function queryFullDatasetChunked(
     }, {
       signal: options?.signal,
       timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
-      onProgress: (loaded, total) => options?.onProgress?.('full', loaded, total),
+      onProgress: (loaded, total) => options?.onProgress?.({
+        phase: 'full',
+        loaded,
+        total,
+        overallLoaded: loaded,
+      }),
     });
     return { data: full.data, meta: full.meta ?? meta };
   }
@@ -395,14 +398,17 @@ async function queryFullDatasetChunked(
     Math.max(MAX_POINTS, Math.ceil(meta.total_matched / chunkCount * 3)),
   );
   const rows: VizDataRow[] = [];
+  let completedBytes = 0;
 
   const fetchRange = async (
     rangeStartMs: number,
     rangeEndMs: number,
     chunkIndex: number,
     depth: number,
-  ): Promise<void> => {
+    baseBytes: number,
+  ): Promise<number> => {
     if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
+    let lastLoaded = 0;
     const result = await api.viz.queryItems({
       ...params,
       time_range: {
@@ -413,9 +419,17 @@ async function queryFullDatasetChunked(
     }, {
       signal: options?.signal,
       timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
-      onProgress: (loaded, total) => options?.onProgress?.(
-        'full', loaded, total, chunkIndex, chunkCount,
-      ),
+      onProgress: (loaded, total) => {
+        lastLoaded = loaded;
+        options?.onProgress?.({
+          phase: 'full',
+          loaded,
+          total,
+          overallLoaded: completedBytes + baseBytes + loaded,
+          chunkIndex,
+          chunkCount,
+        });
+      },
     });
     // Coalescing nearby timestamps also reduces returned rows; only recurse
     // when the request actually hit the point limit.
@@ -428,11 +442,15 @@ async function queryFullDatasetChunked(
       && !options?.signal?.aborted
     ) {
       const midMs = rangeStartMs + (rangeEndMs - rangeStartMs) / 2;
-      await fetchRange(rangeStartMs, midMs, chunkIndex, depth + 1);
-      await fetchRange(midMs, rangeEndMs, chunkIndex, depth + 1);
-      return;
+      const leftBytes = await fetchRange(
+        rangeStartMs, midMs, chunkIndex, depth + 1, baseBytes,
+      );
+      return leftBytes + await fetchRange(
+        midMs, rangeEndMs, chunkIndex, depth + 1, baseBytes + leftBytes,
+      );
     }
     rows.push(...result.data);
+    return lastLoaded;
   };
 
   for (let i = 0; i < chunkCount; i++) {
@@ -441,7 +459,7 @@ async function queryFullDatasetChunked(
     const chunkEnd = i === chunkCount - 1
       ? endMs
       : startMs + (endMs - startMs) * (i + 1) / chunkCount;
-    await fetchRange(chunkStart, chunkEnd, i + 1, 0);
+    completedBytes += await fetchRange(chunkStart, chunkEnd, i + 1, 0, 0);
   }
 
   const byTimestamp = new Map<string, VizDataRow>();
@@ -478,7 +496,12 @@ async function queryVizDataset(
     {
       signal: options?.signal,
       timeoutMs: options?.timeoutMs,
-      onProgress: (loaded, total) => options?.onProgress?.('overview', loaded, total),
+      onProgress: (loaded, total) => options?.onProgress?.({
+        phase: 'overview',
+        loaded,
+        total,
+        overallLoaded: loaded,
+      }),
     },
   );
   const meta = overview.meta ?? null;
@@ -504,7 +527,12 @@ async function queryVizDataset(
     };
   }
 
-  options?.onProgress?.('full', 0, null);
+  options?.onProgress?.({
+    phase: 'full',
+    loaded: 0,
+    total: null,
+    overallLoaded: 0,
+  });
   const full = await api.viz.queryItems(
     {
       ...params,
@@ -513,7 +541,12 @@ async function queryVizDataset(
     {
       signal: options?.signal,
       timeoutMs: options?.timeoutMs,
-      onProgress: (loaded, total) => options?.onProgress?.('full', loaded, total),
+      onProgress: (loaded, total) => options?.onProgress?.({
+        phase: 'full',
+        loaded,
+        total,
+        overallLoaded: loaded,
+      }),
     },
   );
   return {
@@ -2249,9 +2282,7 @@ export default function VizDashboardPage() {
         assessAllRange: isAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
-        onProgress: (phase, loaded, total, chunkIndex, chunkCount) => {
-          setChartLoadProgress({ phase, loaded, total, chunkIndex, chunkCount });
-        },
+        onProgress: progress => setChartLoadProgress(progress),
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, isAllRange);
@@ -2380,9 +2411,7 @@ export default function VizDashboardPage() {
         assessAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
-        onProgress: (phase, loaded, total, chunkIndex, chunkCount) => {
-          setChartLoadProgress({ phase, loaded, total, chunkIndex, chunkCount });
-        },
+        onProgress: progress => setChartLoadProgress(progress),
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, assessAllRange);
@@ -3046,7 +3075,12 @@ export default function VizDashboardPage() {
             signal: controller.signal,
             timeoutMs: 30000,
             onProgress: (loaded, total) => {
-              setChartLoadProgress({ phase: 'detail', loaded, total });
+              setChartLoadProgress({
+                phase: 'detail',
+                loaded,
+                total,
+                overallLoaded: loaded,
+              });
             },
           });
           if (controller.signal.aborted) return;
@@ -3358,11 +3392,14 @@ export default function VizDashboardPage() {
     const chunk = chartLoadProgress.chunkCount
       ? ` ${chartLoadProgress.chunkIndex}/${chartLoadProgress.chunkCount}`
       : '';
-    const loaded = formatLoadBytes(chartLoadProgress.loaded);
+    const overallLoaded = formatLoadBytes(chartLoadProgress.overallLoaded);
     if (chartProgressPercentText != null && chartLoadProgress.total) {
-      return `${phase}${chunk} ${chartProgressPercentText}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
+      if (chartLoadProgress.chunkCount) {
+        return `${phase}${chunk} ${chartProgressPercentText}% · 누적 ${overallLoaded}`;
+      }
+      return `${phase} ${chartProgressPercentText}% · 누적 ${overallLoaded} / ${formatLoadBytes(chartLoadProgress.total)}`;
     }
-    return `${phase}${chunk} ${loaded}`;
+    return `${phase}${chunk} · 누적 ${overallLoaded}`;
   })();
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
