@@ -872,6 +872,23 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         getGapThresholdSec,
       ),
       hooks: {
+        drawClear: [(u) => {
+          if (!hasAnalogSeries || digitalLaneCount <= 0) return;
+          const { left, top, width, height } = u.bbox;
+          const bandHeight = height * 0.35;
+          const ctx = u.ctx;
+          ctx.save();
+          ctx.fillStyle = 'rgba(129, 140, 248, 0.045)';
+          ctx.fillRect(left, top, width, bandHeight);
+          ctx.strokeStyle = 'rgba(129, 140, 248, 0.22)';
+          ctx.lineWidth = Math.max(1, uPlot.pxRatio);
+          ctx.setLineDash([4 * uPlot.pxRatio, 4 * uPlot.pxRatio]);
+          ctx.beginPath();
+          ctx.moveTo(left, top + bandHeight);
+          ctx.lineTo(left + width, top + bandHeight);
+          ctx.stroke();
+          ctx.restore();
+        }],
         drawAxes: [(u) => drawXAxisGridBehind(u, gridColor)],
         ready: [syncPlotAndBreaks],
         setSize: [syncPlotAndBreaks],
