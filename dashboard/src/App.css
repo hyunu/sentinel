@@ -1986,8 +1986,15 @@ tbody tr:last-child td {
 .viz-chart-progress.is-determinate .viz-chart-progress-bar {
   left: 0;
   width: 0;
-  animation: none;
+  animation: viz-chart-progress-shimmer 1.1s linear infinite;
   transition: width 120ms linear;
+  background: linear-gradient(
+    90deg,
+    var(--accent, #7c83ff),
+    rgba(255, 255, 255, 0.9),
+    var(--accent, #7c83ff)
+  );
+  background-size: 220% 100%;
 }
 
 .viz-chart-progress-bar {
@@ -2027,12 +2034,25 @@ tbody tr:last-child td {
   }
 }
 
+@keyframes viz-chart-progress-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .viz-chart-progress-bar {
+  .viz-chart-progress:not(.is-determinate) .viz-chart-progress-bar {
     left: 0;
     width: 100%;
     animation: none;
     opacity: 0.65;
+  }
+
+  .viz-chart-progress.is-determinate .viz-chart-progress-bar {
+    animation: none;
   }
 }
 
