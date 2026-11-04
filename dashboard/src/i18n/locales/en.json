@@ -398,6 +398,10 @@
       "refreshingDetail": "refreshing detail",
       "zoomed": "zoomed",
       "polling": "polling every {{seconds}}s"
-    }
+    },
+    "autoLayout": "Auto Y layout",
+    "autoLayoutHint": "Stacks visible on/off items below the analog range with even spacing and pins the axis bounds.",
+    "autoLayoutDone": "Placed {count} on/off items below. Save the profile to keep it.",
+    "autoLayoutNoData": "No analog data to lay out. Load data first."
   }
 }

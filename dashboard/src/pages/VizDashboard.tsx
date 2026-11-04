@@ -85,9 +85,9 @@ import {
   parseOptionalNumber,
   vizErrorMessage,
   yAxisOptionLabel,
-  isDigitalVizItem,
   usesDigitalLane,
-  applyVizItemTransform,
+  computeAutoYLayout,
+  vizChartValue,
   formatVizActualValue,
   formatVizItemActualValue,
   resolveVizItemRawValue,
@@ -636,11 +636,9 @@ function toChartPoints(
     for (const item of visible) {
       const raw = row.values[item.label];
       if (typeof raw === 'number' && !Number.isNaN(raw)) {
-        // Digital signals keep their raw 0/1 value. The canvas turns them into
-        // stacked lanes on their own fixed scale.
-        point[item.id] = isDigitalVizItem(item)
-          ? (raw > 0.5 ? 1 : 0)
-          : applyVizItemTransform(raw, item);
+        // Digital signals stay 0/1 in lanes; on the Y axis they use
+        // offset/weight so profiles can space them out.
+        point[item.id] = vizChartValue(raw, item);
       }
     }
     return point;
@@ -923,6 +921,7 @@ export default function VizDashboardPage() {
   const detailAbortRef = useRef<AbortController | null>(null);
   const liveAbortRef = useRef<AbortController | null>(null);
   const [profileError, setProfileError] = useState('');
+  const [autoLayoutNote, setAutoLayoutNote] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [showProfileAdd, setShowProfileAdd] = useState(false);
   const [profileDraftName, setProfileDraftName] = useState('');
@@ -3167,6 +3166,31 @@ export default function VizDashboardPage() {
     }
   };
 
+  const applyAutoYLayout = () => {
+    const result = computeAutoYLayout(items, chartData);
+    if (!result) {
+      setAutoLayoutNote(t('viz.autoLayoutNoData'));
+      return;
+    }
+    const byId = new Map(result.updates.map(update => [update.id, update] as const));
+    setItems(prev => prev.map(item => {
+      const update = byId.get(item.id);
+      if (!update) return item;
+      return {
+        ...item,
+        offset: update.offset,
+        weight: update.weight,
+        y_axis: {
+          ...item.y_axis,
+          id: update.yAxisId,
+          min: update.min,
+          max: update.max,
+        },
+      };
+    }));
+    setAutoLayoutNote(t('viz.autoLayoutDone', { count: result.updates.length }));
+  };
+
   const visibleItems = useMemo(
     () => items.filter(i => i.visible),
     [items],
@@ -4191,6 +4215,16 @@ export default function VizDashboardPage() {
               <button type="button" className="btn-sm" onClick={addAllFields} disabled={!boardProtocol}>
                 {t('viz.addAllFields')}
               </button>
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={applyAutoYLayout}
+                disabled={items.length === 0 || chartData.length === 0}
+                title={t('viz.autoLayoutHint')}
+              >
+                {t('viz.autoLayout')}
+              </button>
+              {autoLayoutNote && <span className="muted">{autoLayoutNote}</span>}
               <label className="viz-checked-only-toggle">
                 <input
                   type="checkbox"

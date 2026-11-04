@@ -8,6 +8,8 @@ import {
   isDigitalVizItem,
   parseOptionalNumber,
   usesDigitalLane,
+  vizChartValue,
+  computeAutoYLayout,
 } from './vizDashboardUtils';
 
 describe('clampChartZoom', () => {
@@ -173,5 +175,101 @@ describe('usesDigitalLane', () => {
   it('never routes analog items to a lane', () => {
     const analog: VizItem = { ...base, field_ref: { protocol_id: 'p1', field_name: 'washmotor_getcurrpm' } };
     expect(usesDigitalLane(analog)).toBe(false);
+  });
+});
+
+describe('vizChartValue', () => {
+  const base: VizItem = {
+    id: 'd1',
+    label: 'washmotor_ison',
+    color: '#fff',
+    visible: true,
+    field_ref: { protocol_id: 'p1', field_name: 'washmotor_ison' },
+    chart_type: 'line',
+    y_axis: { id: 'y-left', label: 'Left' },
+    offset: 0,
+    weight: 1,
+  };
+
+  it('keeps lane on/off items binary, ignoring offset and weight', () => {
+    const lane: VizItem = { ...base, offset: 10, weight: 0.5 };
+    expect(vizChartValue(1, lane)).toBe(1);
+    expect(vizChartValue(0, lane)).toBe(0);
+  });
+
+  it('applies offset and weight to on/off items on a Y axis', () => {
+    const axis: VizItem = {
+      ...base,
+      offset: -90,
+      weight: 30,
+      y_axis: { id: 'y-left', label: 'Left', min: -200, max: 100 },
+    };
+    expect(vizChartValue(1, axis)).toBe(-60);
+    expect(vizChartValue(0, axis)).toBe(-90);
+  });
+
+  it('applies the transform to analog items', () => {
+    const analog: VizItem = {
+      ...base,
+      field_ref: { protocol_id: 'p1', field_name: 'washmotor_getcurrpm' },
+      offset: 5,
+      weight: 2,
+    };
+    expect(vizChartValue(10, analog)).toBe(25);
+  });
+});
+
+describe('computeAutoYLayout', () => {
+  const analog: VizItem = {
+    id: 'a1',
+    label: 'rpm',
+    color: '#fff',
+    visible: true,
+    field_ref: { protocol_id: 'p1', field_name: 'washmotor_getcurrpm' },
+    chart_type: 'line',
+    y_axis: { id: 'y-left', label: 'Left', unit: 'RPM' },
+    offset: 0,
+    weight: 1,
+  };
+  const digital = (id: string, visible = true): VizItem => ({
+    id,
+    label: id,
+    color: '#fff',
+    visible,
+    field_ref: { protocol_id: 'p1', field_name: `${id}_ison` },
+    chart_type: 'line',
+    y_axis: { id: 'y-right', label: 'Right' },
+    offset: 0,
+    weight: 1,
+  });
+  const data = [
+    { timeKey: 't1', a1: 0, d1: 0, d2: 1 },
+    { timeKey: 't2', a1: 1000, d1: 1, d2: 0 },
+  ];
+
+  it('stacks visible on/off items below the analog range', () => {
+    const result = computeAutoYLayout([analog, digital('d1'), digital('d2')], data);
+    expect(result).toBeDefined();
+    const updates = result!.updates;
+    expect(updates).toHaveLength(2);
+    // 2% of the 0..1000 span
+    expect(updates[0].weight).toBeCloseTo(20);
+    expect(updates[0].offset).toBeLessThan(0);
+    expect(updates[1].offset).toBeLessThan(updates[0].offset);
+    expect(updates[0].yAxisId).toBe('y-left');
+    expect(updates[0].min).toBeLessThan(updates[0].offset);
+    expect(updates[0].max).toBeGreaterThan(1000);
+    expect(result!.axis[0]).toBeLessThan(updates[1].offset);
+  });
+
+  it('ignores hidden on/off items', () => {
+    const result = computeAutoYLayout([analog, digital('d1'), digital('d2', false)], data);
+    expect(result?.updates).toHaveLength(1);
+  });
+
+  it('returns undefined without analog data or digital items', () => {
+    expect(computeAutoYLayout([digital('d1')], data)).toBeUndefined();
+    expect(computeAutoYLayout([analog], data)).toBeUndefined();
+    expect(computeAutoYLayout([analog, digital('d1')], [])).toBeUndefined();
   });
 });
