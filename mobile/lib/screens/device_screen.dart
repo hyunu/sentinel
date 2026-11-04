@@ -6,9 +6,12 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
 import '../models/onboarding_profile.dart';
+import '../models/viz_profile.dart';
 import '../services/onboarding_profiler.dart';
+import '../services/protocol_parser.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/live_chart.dart';
 
 const String kTemperatureProtocolId = 'temperature-telemetry-v1';
 const String kDefaultServerUrl = 'http://116.39.187.5:50000';
@@ -81,6 +84,15 @@ class _UartPacket {
   const _UartPacket(this.receivedAt, this.hex);
 }
 
+class _LiveSample {
+  final DateTime at;
+  final Map<String, double> values;
+  const _LiveSample(this.at, this.values);
+}
+
+const int _maxLiveSamples = 1800;
+const int _maxChartSeries = 8;
+
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
   final AdvertisementData? advertisementData;
@@ -111,6 +123,18 @@ class _DeviceScreenState extends State<DeviceScreen>
   List<_Protocol> _protocols = [];
   String? _selectedProtoId;
   String? _boardProtoId;
+  String? _boardId;
+  List<VizProfile> _vizProfiles = [];
+  String? _selectedVizProfileId;
+  String? _vizProfileError;
+  bool _vizProfilesLoading = false;
+  final Set<String> _selectedChartItemIds = {};
+  int _chartWindowSeconds = 60;
+  final List<_LiveSample> _liveSamples = [];
+  int _liveParsedFrames = 0;
+  int _liveParseErrors = 0;
+  ProtocolParser? _cachedParser;
+  String? _cachedParserKey;
   StreamSubscription? _uartSub;
   StreamSubscription? _connSub;
   StreamSubscription<String>? _logSub;
@@ -604,6 +628,8 @@ class _DeviceScreenState extends State<DeviceScreen>
                   ? defaultProto.first.id
                   : (_protocols.isNotEmpty ? _protocols.first.id : null);
             }
+            _cachedParser = null;
+            _cachedParserKey = null;
           });
         }
       }
@@ -642,15 +668,164 @@ class _DeviceScreenState extends State<DeviceScreen>
             boardUid == advUid;
         if (!bleMatch && !wifiMatch && !uidMatch) continue;
         final protocolId = raw['protocol_id']?.toString();
+        final boardId = raw['id']?.toString();
         setState(() {
+          _boardId = boardId;
           if (protocolId != null && protocolId.isNotEmpty) {
             _boardProtoId = protocolId;
             _selectedProtoId = protocolId;
           }
         });
-        break;
+        await _loadVizProfiles();
+        return;
       }
     } catch (_) {}
+  }
+
+  Future<void> _loadVizProfiles() async {
+    final boardId = _boardId;
+    if (boardId == null || boardId.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _vizProfilesLoading = true;
+        _vizProfileError = null;
+      });
+    }
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '$_baseUrl/api/v1/viz/profiles?board_id=${Uri.encodeQueryComponent(boardId)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+      final rawList = json.decode(res.body) as List;
+      final profiles = rawList
+          .whereType<Map>()
+          .map((e) => VizProfile.fromJson(Map<String, dynamic>.from(e)))
+          .where((p) => p.id.isNotEmpty)
+          .toList();
+
+      final savedId = await _storage.getLastVizProfileId(boardId);
+      VizProfile? selected;
+      for (final profile in profiles) {
+        if (profile.id == savedId) {
+          selected = profile;
+          break;
+        }
+      }
+      selected ??= profiles.isNotEmpty ? profiles.first : null;
+
+      if (!mounted) return;
+      setState(() {
+        _vizProfiles = profiles;
+        _vizProfilesLoading = false;
+        _vizProfileError = profiles.isEmpty
+            ? 'No chart profile is registered for this board.'
+            : null;
+        _selectedVizProfileId = selected?.id;
+        _selectedChartItemIds
+          ..clear()
+          ..addAll(_defaultChartItemIds(selected));
+      });
+      if (selected != null) {
+        await _storage.setLastVizProfileId(boardId, selected.id);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _vizProfilesLoading = false;
+        _vizProfileError = 'Could not load profiles from the server.';
+      });
+      debugPrint('load viz profiles failed: $e');
+    }
+  }
+
+  VizProfile? get _selectedVizProfile {
+    final id = _selectedVizProfileId;
+    if (id == null) return null;
+    for (final profile in _vizProfiles) {
+      if (profile.id == id) return profile;
+    }
+    return null;
+  }
+
+  Set<String> _defaultChartItemIds(VizProfile? profile) {
+    if (profile == null) return <String>{};
+    final candidates = profile.items
+        .where((item) => item.visible && _itemMatchesBoard(item))
+        .toList();
+    final fallback = candidates.isEmpty
+        ? profile.items.where(_itemMatchesBoard).toList()
+        : candidates;
+    return fallback
+        .take(_maxChartSeries)
+        .map((item) => item.id)
+        .toSet();
+  }
+
+  bool _itemMatchesBoard(VizProfileItem item) {
+    final boardProtocol = _boardProtoId ?? _selectedProtoId;
+    if (boardProtocol == null || boardProtocol.isEmpty) return true;
+    if (item.protocolId.isEmpty) return true;
+    return item.protocolId == boardProtocol;
+  }
+
+  Future<void> _selectVizProfile(String? id) async {
+    if (id == null) return;
+    VizProfile? selected;
+    for (final profile in _vizProfiles) {
+      if (profile.id == id) {
+        selected = profile;
+        break;
+      }
+    }
+    if (selected == null) return;
+    setState(() {
+      _selectedVizProfileId = selected!.id;
+      _selectedChartItemIds
+        ..clear()
+        ..addAll(_defaultChartItemIds(selected));
+    });
+    final boardId = _boardId;
+    if (boardId != null) {
+      await _storage.setLastVizProfileId(boardId, selected.id);
+    }
+  }
+
+  ProtocolParser? get _liveParser {
+    var protocolId = _boardProtoId ?? _selectedProtoId;
+    if (protocolId == null || protocolId.isEmpty) {
+      final profile = _selectedVizProfile;
+      if (profile != null) {
+        for (final item in profile.items) {
+          if (item.protocolId.isNotEmpty) {
+            protocolId = item.protocolId;
+            break;
+          }
+        }
+      }
+    }
+    if (protocolId == null || protocolId.isEmpty) return null;
+    if (_cachedParserKey == protocolId && _cachedParser != null) {
+      return _cachedParser;
+    }
+    for (final protocol in _protocols) {
+      if (protocol.id != protocolId) continue;
+      if (!protocol.hasParseRules) return null;
+      try {
+        _cachedParser = ProtocolParser.fromParseRules(protocol.parseRules);
+        _cachedParserKey = protocolId;
+        return _cachedParser;
+      } catch (e) {
+        debugPrint('protocol parser init failed: $e');
+        return null;
+      }
+    }
+    return null;
   }
 
   Future<bool> _serverHasRecentHeartbeat(
@@ -1024,9 +1199,8 @@ class _DeviceScreenState extends State<DeviceScreen>
       if (mounted) setState(() => _scanningUart = true);
       _uartSub = stream.listen((data) {
         if (!mounted) return;
-        _uartRxBuffer += data
-            .map((b) => b.toRadixString(16).padLeft(2, '0'))
-            .join(' ');
+        // The firmware sends ASCII hex terminated by '\n'.
+        _uartRxBuffer += String.fromCharCodes(data);
 
         while (true) {
           final newline = _uartRxBuffer.indexOf('\n');
@@ -1039,23 +1213,237 @@ class _DeviceScreenState extends State<DeviceScreen>
           _uartRxBuffer = _uartRxBuffer.substring(newline + 1);
 
           if (line.isEmpty || line.startsWith('EVENT:')) continue;
-          if (!RegExp(r'^[0-9A-F ]+$').hasMatch(line)) continue;
-
-          setState(() {
-            _uartLogs.add(_UartPacket(DateTime.now(), line));
-            if (_uartLogs.length > 500) {
-              _uartLogs = _uartLogs.sublist(-500);
-            }
-          });
+          final compact = line.replaceAll(RegExp(r'\s+'), '');
+          if (compact.length.isOdd ||
+              !RegExp(r'^[0-9A-F]+$').hasMatch(compact)) {
+            continue;
+          }
+          _handleLiveFrame(compact);
         }
 
-        if (_uartRxBuffer.length > 8192) {
+        if (_uartRxBuffer.length > 16384) {
           _uartRxBuffer = '';
         }
       });
     } catch (e) {
       if (mounted) _showError('Failed to start the UART stream.');
     }
+  }
+
+  void _handleLiveFrame(String hex) {
+    final now = DateTime.now();
+    final parser = _liveParser;
+    Map<String, double>? values;
+    if (parser != null) {
+      try {
+        values = parser.parseHex(hex);
+      } catch (_) {
+        _liveParseErrors++;
+      }
+    }
+
+    setState(() {
+      _liveParsedFrames++;
+      if (values != null && values.isNotEmpty) {
+        _liveSamples.add(_LiveSample(now, values));
+        if (_liveSamples.length > _maxLiveSamples) {
+          _liveSamples.removeRange(0, _liveSamples.length - _maxLiveSamples);
+        }
+      }
+      _uartLogs.add(_UartPacket(now, _spaceHex(hex)));
+      if (_uartLogs.length > 500) {
+        _uartLogs = _uartLogs.sublist(_uartLogs.length - 500);
+      }
+    });
+  }
+
+  String _spaceHex(String hex) {
+    final buffer = StringBuffer();
+    for (var i = 0; i + 1 < hex.length; i += 2) {
+      if (buffer.isNotEmpty) buffer.write(' ');
+      buffer.write(hex.substring(i, i + 2));
+    }
+    return buffer.toString();
+  }
+
+  List<LiveChartSeries> _buildLiveSeries() {
+    final profile = _selectedVizProfile;
+    if (profile == null) return const [];
+    final cutoff = DateTime.now()
+        .subtract(Duration(seconds: _chartWindowSeconds))
+        .millisecondsSinceEpoch;
+
+    final result = <LiveChartSeries>[];
+    for (final item in profile.items) {
+      if (!_selectedChartItemIds.contains(item.id)) continue;
+      if (!_itemMatchesBoard(item)) continue;
+      final points = <LiveChartPoint>[];
+      for (final sample in _liveSamples) {
+        final timeMs = sample.at.millisecondsSinceEpoch;
+        if (timeMs < cutoff) continue;
+        final value = sample.values[item.fieldName];
+        if (value == null) continue;
+        points.add(LiveChartPoint(timeMs, value));
+      }
+      result.add(
+        LiveChartSeries(
+          id: item.id,
+          label: item.shortLabel.isEmpty ? item.label : item.shortLabel,
+          unit: item.unit,
+          color: item.color,
+          rightAxis: item.isRightAxis,
+          points: points,
+          latest: points.isEmpty ? null : points.last.value,
+        ),
+      );
+    }
+    return result;
+  }
+
+  void _toggleChartItem(String id) {
+    setState(() {
+      if (_selectedChartItemIds.contains(id)) {
+        if (_selectedChartItemIds.length > 1) {
+          _selectedChartItemIds.remove(id);
+        }
+      } else if (_selectedChartItemIds.length < _maxChartSeries) {
+        _selectedChartItemIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _showFieldPicker() async {
+    final profile = _selectedVizProfile;
+    if (profile == null) return;
+    final candidates =
+        profile.items.where(_itemMatchesBoard).toList()
+          ..sort((a, b) => a.label.compareTo(b.label));
+    if (candidates.isEmpty) return;
+
+    final chosen = <String>{..._selectedChartItemIds};
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(ctx).size.height * 0.72,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Chart fields',
+                              style: Theme.of(ctx).textTheme.titleMedium,
+                            ),
+                          ),
+                          Text(
+                            '${chosen.length}/$_maxChartSeries',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: cs.onSurfaceVariant,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: candidates.length,
+                        itemBuilder: (ctx, index) {
+                          final item = candidates[index];
+                          final selected = chosen.contains(item.id);
+                          return CheckboxListTile(
+                            value: selected,
+                            dense: true,
+                            activeColor: item.color,
+                            title: Text(
+                              item.shortLabel.isEmpty
+                                  ? item.label
+                                  : item.shortLabel,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            subtitle: Text(
+                              item.fieldName,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                                color: cs.onSurfaceVariant.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                            ),
+                            secondary: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: item.color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            onChanged: (value) {
+                              setSheetState(() {
+                                if (value == true) {
+                                  if (chosen.length < _maxChartSeries) {
+                                    chosen.add(item.id);
+                                  }
+                                } else {
+                                  chosen.remove(item.id);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: chosen.isEmpty
+                              ? null
+                              : () => Navigator.pop(ctx),
+                          child: const Text('Apply'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (!mounted || chosen.isEmpty) return;
+    setState(() {
+      _selectedChartItemIds
+        ..clear()
+        ..addAll(chosen);
+    });
+  }
+
+  double _liveRate() {
+    final since = DateTime.now()
+        .subtract(const Duration(seconds: 5))
+        .millisecondsSinceEpoch;
+    var count = 0;
+    for (final sample in _liveSamples) {
+      if (sample.at.millisecondsSinceEpoch >= since) count++;
+    }
+    return count / 5;
   }
 
   String _onboardingErrorMessage(Object error) {
@@ -1096,7 +1484,11 @@ class _DeviceScreenState extends State<DeviceScreen>
   }
 
   void _onProtocolChanged(String? id) {
-    setState(() => _selectedProtoId = id);
+    setState(() {
+      _selectedProtoId = id;
+      _cachedParser = null;
+      _cachedParserKey = null;
+    });
   }
 
   String _protocolName(String? id) {
@@ -1307,7 +1699,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         tabs: const [
           Tab(text: 'Control'),
-          Tab(text: 'Data'),
+          Tab(text: 'Live'),
           Tab(text: 'Logs'),
         ],
       ),
@@ -2117,145 +2509,500 @@ class _DeviceScreenState extends State<DeviceScreen>
     );
   }
 
-  /* ── Data Tab ───────────────────────────────────────────────────── */
+  /* ── Live Tab ───────────────────────────────────────────────────── */
 
   Widget _buildDataTab(ColorScheme cs) {
-    return ListView.builder(
-      padding: EdgeInsets.zero,
-      itemCount: _uartLogs.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) return _buildDataHeader(cs);
-        final packetIndex = index - 1;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-          child: _buildPacketTile(cs, _uartLogs[packetIndex], packetIndex),
-        );
-      },
+    final series = _buildLiveSeries();
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        _buildSectionHeader(cs, 'Live Chart', Icons.show_chart_rounded),
+        const SizedBox(height: 12),
+        _buildLiveStatusCard(cs),
+        const SizedBox(height: 12),
+        _buildVizProfileCard(cs),
+        const SizedBox(height: 12),
+        if (_selectedVizProfile == null)
+          _buildEmptyChartCard(cs)
+        else
+          _buildLiveChartCard(cs, series),
+        if (series.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildLiveLegend(cs, series),
+        ],
+        if (_uartLogs.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildRawFrames(cs),
+        ],
+      ],
     );
   }
 
-  Widget _buildDataHeader(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _buildLiveStatusCard(ColorScheme cs) {
+    final active = _scanningUart;
+    final parser = _liveParser;
+    final rate = _liveRate();
+    return _buildGlassCard(cs, [
+      Row(
         children: [
-          _buildSectionHeader(cs, 'Raw UART', Icons.terminal_rounded),
-          const SizedBox(height: 12),
-          _buildGlassCard(cs, [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _scanningUart ? 'Streaming' : 'Idle',
-                        style: Theme.of(context).textTheme.bodyMedium,
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: active ? cs.secondary : cs.onSurfaceVariant.withValues(alpha: 0.35),
+              shape: BoxShape.circle,
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: cs.secondary.withValues(alpha: 0.45),
+                        blurRadius: 8,
                       ),
-                      Text(
-                        _scanningUart
-                            ? '${_uartLogs.length} packets received'
-                            : 'Start the stream to capture raw data',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  height: 40,
-                  child: _scanningUart
-                      ? FilledButton.tonalIcon(
-                          onPressed: () {
-                            _uartSub?.cancel();
-                            _uartSub = null;
-                            _uartRxBuffer = '';
-                            setState(() => _scanningUart = false);
-                          },
-                          icon: const Icon(Icons.stop_rounded, size: 16),
-                          label: const Text(
-                            'Stop',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                          style: FilledButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        )
-                      : FilledButton.icon(
-                          onPressed: _connected ? _startUartStream : null,
-                          icon: const Icon(Icons.play_arrow_rounded, size: 16),
-                          label: const Text(
-                            'Start',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                          style: FilledButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
-                ),
-              ],
+                    ]
+                  : null,
             ),
-          ]),
-          if (_uartLogs.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Row(
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${_uartLogs.length} packets · long press to copy',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                  ),
+                  active ? 'BLE live stream' : 'Stream stopped',
+                  style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => setState(() => _uartLogs.clear()),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.delete_sweep,
-                          size: 14,
-                          color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Clear',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
-                          ),
-                        ),
-                      ],
-                    ),
+                Text(
+                  active
+                      ? '${rate.toStringAsFixed(1)} frames/s · ${_liveSamples.length} parsed samples'
+                      : 'Start to receive live UART frames from the board',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.62),
                   ),
                 ),
               ],
             ),
-          ] else ...[
-            const SizedBox(height: 12),
-            Text(
-              'No packets yet. Start the UART stream above.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+          ),
+          SizedBox(
+            height: 40,
+            child: active
+                ? FilledButton.tonalIcon(
+                    onPressed: () {
+                      _uartSub?.cancel();
+                      _uartSub = null;
+                      _uartRxBuffer = '';
+                      setState(() => _scanningUart = false);
+                    },
+                    icon: const Icon(Icons.stop_rounded, size: 16),
+                    label: const Text('Stop', style: TextStyle(fontSize: 12)),
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  )
+                : FilledButton.icon(
+                    onPressed: _connected ? _startUartStream : null,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                    label: const Text('Start', style: TextStyle(fontSize: 12)),
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          _liveStat(cs, 'Frames', '$_liveParsedFrames'),
+          const SizedBox(width: 16),
+          _liveStat(cs, 'Parsed', '${_liveSamples.length}'),
+          const SizedBox(width: 16),
+          _liveStat(
+            cs,
+            'Errors',
+            '$_liveParseErrors',
+            color: _liveParseErrors > 0 ? cs.error : null,
+          ),
+          const Spacer(),
+          if (_liveSamples.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => setState(_liveSamples.clear),
+              icon: const Icon(Icons.delete_sweep_rounded, size: 15),
+              label: const Text('Clear', style: TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                foregroundColor: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
+        ],
+      ),
+      if (!_scanningUart && _uartLogs.isEmpty) ...[
+        const SizedBox(height: 8),
+        Text(
+          parser == null
+              ? 'Protocol parser is not loaded yet. Reload profiles after the server is reachable.'
+              : 'The chart only shows frames received from now on.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+            height: 1.35,
+          ),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _liveStat(ColorScheme cs, String label, String value, {Color? color}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            fontFamily: 'monospace',
+            color: color ?? cs.onSurface,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVizProfileCard(ColorScheme cs) {
+    final profile = _selectedVizProfile;
+    final bool mismatch = profile != null &&
+        profile.items.any(
+          (item) =>
+              item.protocolId.isNotEmpty &&
+              !_itemMatchesBoard(item),
+        );
+    return _buildGlassCard(cs, [
+      Row(
+        children: [
+          Icon(Icons.dashboard_customize_rounded, size: 16, color: cs.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Server chart profile',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+          if (_vizProfilesLoading)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            IconButton(
+              onPressed: _loadProtocols,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Reload protocols and profiles',
+            ),
+        ],
+      ),
+      if (_vizProfiles.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _selectedVizProfileId,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: 'Profile',
+            filled: true,
+            fillColor: cs.surface.withValues(alpha: 0.45),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+          ),
+          items: _vizProfiles
+              .map(
+                (p) => DropdownMenuItem(
+                  value: p.id,
+                  child: Text(
+                    '${p.name} · ${p.items.length} fields',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: _selectVizProfile,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _boardId == null
+                    ? 'Board ID is not resolved yet.'
+                    : 'Board ${_boardId!.length <= 8 ? _boardId! : _boardId!.substring(0, 8)} · ${_protocolName(_boardProtoId ?? _selectedProtoId)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                ),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _showFieldPicker,
+              icon: const Icon(Icons.tune_rounded, size: 15),
+              label: Text(
+                'Fields ${_selectedChartItemIds.length}/$_maxChartSeries',
+                style: const TextStyle(fontSize: 11),
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
               ),
             ),
           ],
+        ),
+      ],
+      if (_vizProfileError != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          _vizProfileError!,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.error,
+            height: 1.35,
+          ),
+        ),
+      ],
+      if (mismatch) ...[
+        const SizedBox(height: 8),
+        Text(
+          'Some profile fields use a different protocol than this board. They are excluded from the chart.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.tertiary,
+            height: 1.35,
+          ),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _buildEmptyChartCard(ColorScheme cs) {
+    return _buildGlassCard(cs, [
+      SizedBox(
+        height: 200,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.show_chart_rounded,
+                size: 34,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.35),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _vizProfilesLoading
+                    ? 'Loading chart profile…'
+                    : 'Select a server profile to start the live chart.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _buildLiveChartCard(
+    ColorScheme cs,
+    List<LiveChartSeries> series,
+  ) {
+    final profile = _selectedVizProfile;
+    return _buildGlassCard(cs, [
+      Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  profile?.name ?? 'Live',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                Text(
+                  'Receive-time axis · only live frames',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final seconds in const [30, 60, 120])
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: ChoiceChip(
+                label: Text(
+                  seconds < 60 ? '${seconds}s' : '${seconds ~/ 60}m',
+                  style: const TextStyle(fontSize: 10),
+                ),
+                selected: _chartWindowSeconds == seconds,
+                onSelected: (_) =>
+                    setState(() => _chartWindowSeconds = seconds),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      SizedBox(
+        height: 250,
+        child: LiveChart(
+          series: series,
+          windowSeconds: _chartWindowSeconds,
+        ),
+      ),
+      if (series.isEmpty) ...[
+        const SizedBox(height: 10),
+        Text(
+          _scanningUart
+              ? 'Waiting for frames that match the selected fields…'
+              : 'Start the live stream to populate this chart.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.55),
+          ),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _buildLiveLegend(ColorScheme cs, List<LiveChartSeries> series) {
+    return _buildGlassCard(cs, [
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final item in series)
+            GestureDetector(
+              onTap: () => _toggleChartItem(item.id),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: item.color.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: item.color.withValues(alpha: 0.3),
+                    width: 0.6,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: item.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      item.label,
+                      style: const TextStyle(fontSize: 10.5),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      item.latest == null
+                          ? '—'
+                          : '${_formatChartValue(item.latest!)}${item.unit.isEmpty ? '' : ' ${item.unit}'}',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'monospace',
+                        color: item.color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 6),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Tap a field to hide it.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant.withValues(alpha: 0.45),
+            fontSize: 10,
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  String _formatChartValue(double value) {
+    final abs = value.abs();
+    if (abs >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}M';
+    if (abs >= 10000) return '${(value / 1000).toStringAsFixed(1)}k';
+    if (abs >= 100) return value.toStringAsFixed(0);
+    if (abs >= 10) return value.toStringAsFixed(1);
+    return value.toStringAsFixed(2);
+  }
+
+  Widget _buildRawFrames(ColorScheme cs) {
+    final start = (_uartLogs.length - 10).clamp(0, _uartLogs.length).toInt();
+    final recent = _uartLogs.sublist(start);
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outline.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
+      ),
+      child: ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        title: Text(
+          'Raw frames (${_uartLogs.length})',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        subtitle: const Text(
+          'Latest 10 frames · long press to copy',
+          style: TextStyle(fontSize: 10),
+        ),
+        children: [
+          for (var i = 0; i < recent.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _buildPacketTile(
+                cs,
+                recent[i],
+                _uartLogs.length - start - 1 - i,
+              ),
+            ),
         ],
       ),
     );

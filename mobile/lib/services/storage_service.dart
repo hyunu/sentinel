@@ -7,6 +7,7 @@ class StorageService {
   static const _wifiProfilesKey = 'wifi_profiles';
   static const _onboardingProfilesKey = 'onboarding_profiles';
   static const _lastOnboardingProfileIdKey = 'last_onboarding_profile_id';
+  static const _vizProfilePrefix = 'viz_profile_';
 
   /// Trims whitespace, adds http:// when no scheme is present, and removes
   /// trailing slashes so endpoints never become `//api/v1/...`.
@@ -111,6 +112,18 @@ class StorageService {
   Future<void> setLastOnboardingProfileId(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastOnboardingProfileIdKey, id);
+  }
+
+  Future<String?> getLastVizProfileId(String boardId) async {
+    if (boardId.isEmpty) return null;
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('$_vizProfilePrefix$boardId');
+  }
+
+  Future<void> setLastVizProfileId(String boardId, String profileId) async {
+    if (boardId.isEmpty || profileId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_vizProfilePrefix$boardId', profileId);
   }
 
   Future<void> _migrateLegacyWifiProfiles(SharedPreferences prefs) async {
