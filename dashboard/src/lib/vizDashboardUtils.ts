@@ -93,6 +93,18 @@ export function applyVizItemTransform(raw: number, item: VizItem): number {
   return raw * item.weight + item.offset;
 }
 
+/**
+ * Chart-space value for a raw sample. On/off items are binarized; when they are
+ * drawn on a Y axis (explicit bounds) they also honor offset/weight so the
+ * auto-layout can stack them below analog series.
+ */
+export function vizChartValue(raw: number, item: VizItem): number {
+  if (!isDigitalVizItem(item)) return applyVizItemTransform(raw, item);
+  const binary = raw > 0.5 ? 1 : 0;
+  if (usesDigitalLane(item)) return binary;
+  return applyVizItemTransform(binary, item);
+}
+
 export function formatVizActualValue(value: number, unit?: string): string {
   const text = value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   const u = unit?.trim();
@@ -186,4 +198,72 @@ export function computeYAxisDomain(data: VizChartPoint[], axisItems: VizItem[]):
   }
   const pad = (max - min) * 0.05;
   return [min - pad, max + pad];
+}
+
+export interface AutoYLayoutUpdate {
+  id: string;
+  offset: number;
+  weight: number;
+  yAxisId: string;
+  min: number;
+  max: number;
+}
+
+export interface AutoYLayoutResult {
+  updates: AutoYLayoutUpdate[];
+  axis: [number, number];
+}
+
+/**
+ * Build a deterministic Y layout: visible on/off items are stacked below the
+ * visible analog series with a fixed band height and spacing, and their
+ * min/max are pinned so the axis stops re-deriving bounds from data.
+ *
+ * Returns undefined when there is no analog data or no visible on/off item.
+ */
+export function computeAutoYLayout(
+  items: VizItem[],
+  data: VizChartPoint[],
+  primaryAxisId: string = PRIMARY_Y_AXIS_ID,
+): AutoYLayoutResult | undefined {
+  if (data.length === 0) return undefined;
+  const digital = items.filter(i => i.visible && isDigitalVizItem(i));
+  if (digital.length === 0) return undefined;
+
+  const primaryAnalog = items.filter(i =>
+    i.visible && !isDigitalVizItem(i) && i.y_axis.id === primaryAxisId);
+  const analog = primaryAnalog.length > 0
+    ? primaryAnalog
+    : items.filter(i => i.visible && !isDigitalVizItem(i));
+
+  let analogMin = Infinity;
+  let analogMax = -Infinity;
+  for (const point of data) {
+    for (const item of analog) {
+      const v = point[item.id];
+      if (typeof v === 'number' && !Number.isNaN(v)) {
+        if (v < analogMin) analogMin = v;
+        if (v > analogMax) analogMax = v;
+      }
+    }
+  }
+  if (!Number.isFinite(analogMin) || !Number.isFinite(analogMax)) return undefined;
+
+  const span = analogMax - analogMin > 0 ? analogMax - analogMin : Math.abs(analogMax) || 1;
+  const band = span * 0.02;
+  const gap = band * 1.6;
+  const pad = span * 0.05;
+  const axisMin = analogMin - gap * digital.length - band - pad;
+  const axisMax = analogMax + pad;
+
+  const updates = digital.map((item, index) => ({
+    id: item.id,
+    offset: analogMin - gap * (index + 1) - band,
+    weight: band,
+    yAxisId: primaryAxisId,
+    min: axisMin,
+    max: axisMax,
+  }));
+
+  return { updates, axis: [axisMin, axisMax] };
 }

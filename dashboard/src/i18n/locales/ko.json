@@ -398,6 +398,10 @@
       "refreshingDetail": "refreshing detail",
       "zoomed": "zoomed",
       "polling": "polling every {{seconds}}s"
-    }
+    },
+    "autoLayout": "Y축 자동 배치",
+    "autoLayoutHint": "표시 중인 on/off 항목을 아날로그 값 아래에 일정 간격으로 배치하고 축 범위를 고정합니다.",
+    "autoLayoutDone": "{count}개 on/off를 아래에 배치했습니다. 프로파일 저장을 누르면 유지됩니다.",
+    "autoLayoutNoData": "배치할 아날로그 데이터가 없습니다. 데이터를 먼저 불러오세요."
   }
 }
