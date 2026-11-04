@@ -40,6 +40,20 @@ export function isDigitalVizItem(item: VizItem): boolean {
   return /(?:^|_)(?:is[a-z0-9]+|on|off|enabled|disabled)$/.test(field);
 }
 
+/** True when the profile pins this item's Y range explicitly. */
+export function hasExplicitYBounds(item: VizItem): boolean {
+  return item.y_axis.min != null || item.y_axis.max != null;
+}
+
+/**
+ * On/off items normally use a stacked digital lane. Setting an explicit Y
+ * min/max is an opt-out: the item is then drawn as a 0/1 line on its Y axis,
+ * so the configured range is actually visible.
+ */
+export function usesDigitalLane(item: VizItem): boolean {
+  return isDigitalVizItem(item) && !hasExplicitYBounds(item);
+}
+
 export const DIGITAL_LANE_STEP = 1.2;
 export const DIGITAL_LANE_HEIGHT = 0.8;
 

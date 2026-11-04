@@ -7,6 +7,7 @@ import {
   digitalLaneValue,
   isDigitalVizItem,
   parseOptionalNumber,
+  usesDigitalLane,
 } from './vizDashboardUtils';
 
 describe('clampChartZoom', () => {
@@ -132,5 +133,45 @@ describe('computeYAxisDomain', () => {
     expect(fullDomain).toEqual([-50, 1050]);
     expect(sliceDomain).toEqual([950, 1050]);
     expect(sliceDomain).not.toEqual(fullDomain);
+  });
+});
+
+describe('usesDigitalLane', () => {
+  const base: VizItem = {
+    id: 'd1',
+    label: 'aquavalve_ison',
+    color: '#fff',
+    visible: true,
+    field_ref: { protocol_id: 'p1', field_name: 'aquavalve_ison' },
+    chart_type: 'line',
+    y_axis: { id: 'y-right', label: 'Right' },
+    offset: 0,
+    weight: 1,
+  };
+
+  it('keeps plain on/off items on their lane', () => {
+    expect(isDigitalVizItem(base)).toBe(true);
+    expect(usesDigitalLane(base)).toBe(true);
+  });
+
+  it('moves on/off items onto the Y axis when bounds are explicit', () => {
+    const bounded: VizItem = {
+      ...base,
+      y_axis: { id: 'y-right', label: 'Right', min: -10, max: 20 },
+    };
+    expect(usesDigitalLane(bounded)).toBe(false);
+  });
+
+  it('treats a single-sided bound as an explicit range', () => {
+    const oneSided: VizItem = {
+      ...base,
+      y_axis: { id: 'y-right', label: 'Right', max: 0 },
+    };
+    expect(usesDigitalLane(oneSided)).toBe(false);
+  });
+
+  it('never routes analog items to a lane', () => {
+    const analog: VizItem = { ...base, field_ref: { protocol_id: 'p1', field_name: 'washmotor_getcurrpm' } };
+    expect(usesDigitalLane(analog)).toBe(false);
   });
 });
