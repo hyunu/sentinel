@@ -25,10 +25,12 @@ export { hasParseRules } from './types/ruleparser';
 
 interface RequestOptions extends RequestInit {
   timeoutMs?: number;
+  /** Called while the response body is downloading. total is null for chunked responses. */
+  onProgress?: (loaded: number, total: number | null) => void;
 }
 
 async function request<T>(path: string, options?: RequestOptions): Promise<T> {
-  const { timeoutMs, ...fetchOptions } = options ?? {};
+  const { timeoutMs, onProgress, ...fetchOptions } = options ?? {};
   const controller = new AbortController();
   const externalSignal = fetchOptions.signal;
   if (externalSignal) {
@@ -40,13 +42,56 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   }
   const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 30000);
 
-  let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    const res = await fetch(`${BASE}${path}`, {
       headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
       ...fetchOptions,
       signal: controller.signal,
     });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Request failed');
+    }
+
+    if (onProgress && res.body) {
+      const contentLength = Number(res.headers.get('Content-Length'));
+      const total = Number.isFinite(contentLength) && contentLength > 0
+        ? contentLength
+        : null;
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let loaded = 0;
+      let lastReport = 0;
+      const report = (force = false) => {
+        const now = Date.now();
+        if (force || now - lastReport >= 100) {
+          lastReport = now;
+          onProgress(loaded, total);
+        }
+      };
+
+      report(true);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        loaded += value.byteLength;
+        report();
+      }
+      report(true);
+
+      const buffer = new Uint8Array(loaded);
+      let offset = 0;
+      for (const chunk of chunks) {
+        buffer.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return JSON.parse(new TextDecoder().decode(buffer)) as T;
+    }
+
+    return await res.json() as T;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error('Request timeout or cancelled', { cause: error });
@@ -55,12 +100,6 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || 'Request failed');
-  }
-  return res.json();
 }
 
 export interface Board {
@@ -380,7 +419,11 @@ export const api = {
       aggregation?: 'avg' | 'min' | 'max';
       bucket_seconds?: number;
       mode?: 'live';
-    }, options?: { signal?: AbortSignal; timeoutMs?: number }) =>
+    }, options?: {
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      onProgress?: (loaded: number, total: number | null) => void;
+    }) =>
       request<{
         data: Array<{ timestamp: string; values: Record<string, number> }>;
         meta?: { total_matched: number; returned: number; downsampled: boolean };
@@ -390,6 +433,7 @@ export const api = {
           body: JSON.stringify(data),
           signal: options?.signal,
           timeoutMs: options?.timeoutMs,
+          onProgress: options?.onProgress,
         }
       ),
     spectrum: (data: {

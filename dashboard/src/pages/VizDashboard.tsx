@@ -137,6 +137,11 @@ const VIEWPORT_FINISH_DEBOUNCE_MS = 48;
 const WHEEL_GESTURE_QUIET_MS = 180;
 
 type FieldValuesLayout = 'bottom' | 'left';
+type ChartLoadProgress = {
+  phase: 'overview' | 'full' | 'detail';
+  loaded: number;
+  total: number | null;
+};
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
 const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
 const CONFIG_OPEN_STORAGE_KEY = 'sentinel.viz.config-open';
@@ -180,6 +185,12 @@ function axisUnitLabel(itemsOnAxis: VizItem[]): string {
   if (units.length === 1) return units[0];
   if (units.length > 1) return units.join(' / ');
   return '';
+}
+
+function formatLoadBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0KB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
 function formatYAxisTick(value: number | string): string {
@@ -339,7 +350,12 @@ type VizQueryParams = {
 
 async function queryVizDataset(
   params: VizQueryParams,
-  options?: { assessAllRange?: boolean; signal?: AbortSignal; timeoutMs?: number },
+  options?: {
+    assessAllRange?: boolean;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    onProgress?: (phase: 'overview' | 'full', loaded: number, total: number | null) => void;
+  },
 ): Promise<{
   data: VizDataRow[];
   meta: VizQueryMeta | null;
@@ -348,7 +364,11 @@ async function queryVizDataset(
 }> {
   const overview = await api.viz.queryItems(
     { ...params, limit: MAX_POINTS },
-    { signal: options?.signal, timeoutMs: options?.timeoutMs },
+    {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+      onProgress: (loaded, total) => options?.onProgress?.('overview', loaded, total),
+    },
   );
   const meta = overview.meta ?? null;
   const allRangeAssessment = options?.assessAllRange
@@ -363,12 +383,17 @@ async function queryVizDataset(
       allRangeAssessment,
     };
   }
+  options?.onProgress?.('full', 0, null);
   const full = await api.viz.queryItems(
     {
       ...params,
       limit: meta!.total_matched,
     },
-    { signal: options?.signal, timeoutMs: options?.timeoutMs },
+    {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+      onProgress: (loaded, total) => options?.onProgress?.('full', loaded, total),
+    },
   );
   return {
     data: full.data,
@@ -575,6 +600,7 @@ export default function VizDashboardPage() {
   /** After spectrum-driven query, fit the chart viewport to this time span. */
   const pendingSpectrumViewportRef = useRef<{ startMs: number; endMs: number } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [livePollError, setLivePollError] = useState<string | null>(null);
   const [liveMode, setLiveMode] = useState(false);
@@ -2102,6 +2128,9 @@ export default function VizDashboardPage() {
         assessAllRange: isAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
+        onProgress: (phase, loaded, total) => {
+          setChartLoadProgress({ phase, loaded, total });
+        },
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, isAllRange);
@@ -2112,6 +2141,7 @@ export default function VizDashboardPage() {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
         setLoading(false);
+        setChartLoadProgress(null);
       }
     }
   }, [applyQueryResult, t]);
@@ -2229,6 +2259,9 @@ export default function VizDashboardPage() {
         assessAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
+        onProgress: (phase, loaded, total) => {
+          setChartLoadProgress({ phase, loaded, total });
+        },
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, assessAllRange);
@@ -2242,6 +2275,7 @@ export default function VizDashboardPage() {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
         setLoading(false);
+        setChartLoadProgress(null);
       }
     }
   }, [selectedBoard, applyQueryResult, t, scheduleSpectrumViewportFit, aiAggregationParams]);
@@ -2851,6 +2885,7 @@ export default function VizDashboardPage() {
       applyDetail(cached.data, cached.meta, true);
       if (detailCacheRef.current.isFresh(cached)) {
         setDetailLoading(false);
+        setChartLoadProgress(null);
         return;
       }
     } else {
@@ -2886,7 +2921,13 @@ export default function VizDashboardPage() {
             time_range: { start: startTs, end: endTs },
             limit: detailLimit,
             ...aiAggregationParams,
-          }, { signal: controller.signal, timeoutMs: 30000 });
+          }, {
+            signal: controller.signal,
+            timeoutMs: 30000,
+            onProgress: (loaded, total) => {
+              setChartLoadProgress({ phase: 'detail', loaded, total });
+            },
+          });
           if (controller.signal.aborted) return;
           if (detailFetchSeqRef.current !== seq) return;
           applyDetail(result.data, result.meta ?? null, false);
@@ -2904,6 +2945,7 @@ export default function VizDashboardPage() {
           }
           if (detailFetchSeqRef.current === seq) {
             setDetailLoading(false);
+            setChartLoadProgress(null);
           }
         }
       })();
@@ -3176,6 +3218,19 @@ export default function VizDashboardPage() {
   const chartZoomActive = zoomWindow != null;
 
   const chartDataLoading = loading || detailLoading;
+  const chartProgressPercent = chartLoadProgress?.total && chartLoadProgress.total > 0
+    ? Math.max(0, Math.min(100, Math.round(chartLoadProgress.loaded / chartLoadProgress.total * 100)))
+    : null;
+  const chartProgressLabel = (() => {
+    if (!chartDataLoading) return '';
+    if (!chartLoadProgress) return t('viz.chartLoading');
+    const phase = t(`viz.loadPhase.${chartLoadProgress.phase}`);
+    const loaded = formatLoadBytes(chartLoadProgress.loaded);
+    if (chartProgressPercent != null && chartLoadProgress.total) {
+      return `${phase} ${chartProgressPercent}% (${loaded} / ${formatLoadBytes(chartLoadProgress.total)})`;
+    }
+    return `${phase} ${loaded}`;
+  })();
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
     && !inMemoryFull
@@ -4197,13 +4252,22 @@ export default function VizDashboardPage() {
         </div>
         <div className="viz-chart-panel">
         <div
-          className={`viz-chart-progress${chartDataLoading ? ' is-active' : ''}`}
+          className={`viz-chart-progress${chartDataLoading ? ' is-active' : ''}${chartProgressPercent != null ? ' is-determinate' : ''}`}
           role="progressbar"
-          aria-label={t('viz.chartLoading')}
+          aria-label={chartProgressLabel || t('viz.chartLoading')}
           aria-hidden={!chartDataLoading}
+          aria-valuemin={chartProgressPercent != null ? 0 : undefined}
+          aria-valuemax={chartProgressPercent != null ? 100 : undefined}
+          aria-valuenow={chartProgressPercent ?? undefined}
         >
-          <span className="viz-chart-progress-bar" />
+          <span
+            className="viz-chart-progress-bar"
+            style={chartProgressPercent != null ? { width: `${chartProgressPercent}%` } : undefined}
+          />
         </div>
+        {chartDataLoading && (
+          <span className="viz-chart-progress-label">{chartProgressLabel}</span>
+        )}
         <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
         <div className="viz-chart-main">
         <div

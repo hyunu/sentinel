@@ -291,6 +291,11 @@
     "resetZoom": "줌 초기화 (Home / 0)",
     "detailLoading": "상세 데이터 불러오는 중…",
     "chartLoading": "차트 데이터 불러오는 중",
+    "loadPhase": {
+      "overview": "개요",
+      "full": "전체",
+      "detail": "상세"
+    },
     "detailRefreshing": "상세 데이터 갱신 중…",
     "tooltip": "툴팁",
     "tooltipToggle": "호버 시 값 팝업 표시 (T)",

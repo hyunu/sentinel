@@ -291,6 +291,11 @@
     "resetZoom": "Reset zoom (Home / 0)",
     "detailLoading": "Loading detail data…",
     "chartLoading": "Loading chart data",
+    "loadPhase": {
+      "overview": "Overview",
+      "full": "Full",
+      "detail": "Detail"
+    },
     "detailRefreshing": "Refreshing detail data…",
     "tooltip": "Tooltip",
     "tooltipToggle": "Show value popup on hover (T)",

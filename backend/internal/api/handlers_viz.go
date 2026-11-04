@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -274,10 +276,17 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	payload, err := json.Marshal(gin.H{
 		"data": results,
 		"meta": meta,
 	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "response encode failed"})
+		return
+	}
+	// The dashboard reads this to render a byte-accurate loading progress bar.
+	c.Header("Content-Length", strconv.Itoa(len(payload)))
+	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 }
 
 // VizSpectrum returns the data presence distribution (which time buckets have
