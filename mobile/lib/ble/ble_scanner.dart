@@ -165,9 +165,22 @@ class BleScanner {
     return null;
   }
 
-  Future<Stream<List<int>>> subscribeToUartData(BluetoothDevice device) async {
+  Future<BluetoothCharacteristic> uartNotifyCharacteristic(
+    BluetoothDevice device,
+  ) async {
     final ch = await _findChar(device, kUartNotifyCharUuid);
     if (ch == null) throw Exception('UART data characteristic not found');
+    return ch;
+  }
+
+  Future<Stream<List<int>>> subscribeToUartData(BluetoothDevice device) async {
+    final ch = await uartNotifyCharacteristic(device);
+    // iOS can keep a stale CCCD across reconnects; bounce notify off/on.
+    if (ch.isNotifying) {
+      try {
+        await ch.setNotifyValue(false);
+      } catch (_) {}
+    }
     await ch.setNotifyValue(true);
     return ch.onValueReceived;
   }
@@ -186,6 +199,11 @@ class BleScanner {
   Future<Stream<String>> subscribeToDeviceLogs(BluetoothDevice device) async {
     final ch = await _findChar(device, kUartLogCharUuid);
     if (ch == null) throw Exception('Board log characteristic not found');
+    if (ch.isNotifying) {
+      try {
+        await ch.setNotifyValue(false);
+      } catch (_) {}
+    }
     await ch.setNotifyValue(true);
     return ch.onValueReceived.transform(
       StreamTransformer<List<int>, String>.fromHandlers(

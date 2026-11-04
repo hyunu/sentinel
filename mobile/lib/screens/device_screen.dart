@@ -12,9 +12,19 @@ import '../services/protocol_parser.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/live_chart.dart';
+import 'live_chart_fullscreen.dart';
 
 const String kTemperatureProtocolId = 'temperature-telemetry-v1';
+const String kLcpMonitoringV2Id = 'lcp-monitoring-v2';
 const String kDefaultServerUrl = 'http://116.39.187.5:50000';
+
+bool _isPreferredLcpVizProfile(VizProfile profile) {
+  final name = profile.name.trim().toLowerCase();
+  return name.contains('lcp') &&
+      (name.contains('단축') ||
+          name.contains('단순') ||
+          name.contains('short'));
+}
 
 class _ProtocolField {
   final String name;
@@ -91,7 +101,7 @@ class _LiveSample {
 }
 
 const int _maxLiveSamples = 1800;
-const int _maxChartSeries = 8;
+const int _maxChartSeries = 12;
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
@@ -103,7 +113,7 @@ class DeviceScreen extends StatefulWidget {
 }
 
 class _DeviceScreenState extends State<DeviceScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final BleScanner _scanner = BleScanner();
   final StorageService _storage = StorageService();
   final OnboardingProfiler _onboardingProfiler = OnboardingProfiler();
@@ -130,9 +140,15 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _vizProfilesLoading = false;
   final Set<String> _selectedChartItemIds = {};
   int _chartWindowSeconds = 60;
+  bool _chartFollow = true;
+  int _chartFollowResetToken = 0;
+  bool _liveFullscreen = false;
+  bool _orientationFullscreenArmed = false;
   final List<_LiveSample> _liveSamples = [];
   int _liveParsedFrames = 0;
   int _liveParseErrors = 0;
+  Timer? _liveUiFlushTimer;
+  bool _liveUiDirty = false;
   ProtocolParser? _cachedParser;
   String? _cachedParserKey;
   StreamSubscription? _uartSub;
@@ -158,6 +174,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final adData = widget.advertisementData;
     if (adData != null) {
       final state = BleScanner.parseStateFromAdData(adData);
@@ -175,6 +192,28 @@ class _DeviceScreenState extends State<DeviceScreen>
     _connect();
   }
 
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return;
+    final view = views.first;
+    final logical = view.physicalSize / view.devicePixelRatio;
+    final isLandscape = logical.width > logical.height;
+    final canAnalyze =
+        _selectedVizProfile != null &&
+        (_scanningUart || _liveSamples.isNotEmpty);
+
+    if (isLandscape && canAnalyze && !_liveFullscreen) {
+      _enterLiveFullscreen(fromOrientation: true);
+    } else if (!isLandscape &&
+        _liveFullscreen &&
+        _orientationFullscreenArmed) {
+      _exitLiveFullscreen();
+    }
+  }
+
   void _onFieldChanged() {
     if (mounted) setState(() {});
   }
@@ -185,10 +224,15 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (_liveFullscreen) {
+      LiveChartFullscreen.exitImmersive();
+    }
     _onboardingProfiler.removeListener(_onProfilerUpdated);
     for (final c in [_ssidCtrl, _passCtrl, _baudCtrl, _urlCtrl]) {
       c.removeListener(_onFieldChanged);
     }
+    _liveUiFlushTimer?.cancel();
     _uartSub?.cancel();
     _connSub?.cancel();
     _logSub?.cancel();
@@ -202,6 +246,35 @@ class _DeviceScreenState extends State<DeviceScreen>
     widget.device.disconnect();
     _scanner.clearCache();
     super.dispose();
+  }
+
+  Future<void> _enterLiveFullscreen({bool fromOrientation = false}) async {
+    if (_liveFullscreen || _selectedVizProfile == null) return;
+    _orientationFullscreenArmed = fromOrientation;
+    setState(() => _liveFullscreen = true);
+    // Button expand locks landscape; rotation-triggered keeps free rotation
+    // so returning to portrait can exit automatically.
+    await LiveChartFullscreen.enterImmersive(lockLandscape: !fromOrientation);
+  }
+
+  Future<void> _exitLiveFullscreen() async {
+    if (!_liveFullscreen) return;
+    _orientationFullscreenArmed = false;
+    setState(() => _liveFullscreen = false);
+    await LiveChartFullscreen.exitImmersive();
+  }
+
+  void _setChartWindowSeconds(int seconds) {
+    setState(() {
+      _chartWindowSeconds = seconds;
+      _chartFollow = true;
+      _chartFollowResetToken++;
+    });
+  }
+
+  double? _latestFieldValue(String fieldName) {
+    if (_liveSamples.isEmpty || fieldName.isEmpty) return null;
+    return _liveSamples.last.values[fieldName];
   }
 
   Future<void> _loadSaved() async {
@@ -594,8 +667,12 @@ class _DeviceScreenState extends State<DeviceScreen>
     _scanner.clearCache();
     _connSub = widget.device.connectionState.listen((s) {
       if (mounted) {
+        final connected = s == BluetoothConnectionState.connected;
+        if (!connected) {
+          _stopUartStream();
+        }
         setState(() {
-          _connected = s == BluetoothConnectionState.connected;
+          _connected = connected;
           if (!_connected) {
             _connecting = false;
             _boardWifi = false;
@@ -620,13 +697,12 @@ class _DeviceScreenState extends State<DeviceScreen>
             _protocols = list
                 .map((p) => _Protocol.fromJson(p as Map<String, dynamic>))
                 .toList();
-            if (_selectedProtoId == null || _selectedProtoId!.isEmpty) {
-              final defaultProto = _protocols.where(
-                (p) => p.id == kTemperatureProtocolId,
-              );
-              _selectedProtoId = defaultProto.isNotEmpty
-                  ? defaultProto.first.id
-                  : (_protocols.isNotEmpty ? _protocols.first.id : null);
+            final lcpV2 = _protocols.where((p) => p.id == kLcpMonitoringV2Id);
+            if (lcpV2.isNotEmpty) {
+              _selectedProtoId = kLcpMonitoringV2Id;
+            } else if (_selectedProtoId == null || _selectedProtoId!.isEmpty) {
+              _selectedProtoId =
+                  _protocols.isNotEmpty ? _protocols.first.id : null;
             }
             _cachedParser = null;
             _cachedParserKey = null;
@@ -635,6 +711,9 @@ class _DeviceScreenState extends State<DeviceScreen>
       }
     } catch (_) {}
     await _syncBoardFromServer();
+    if (_selectedVizProfileId == null) {
+      await _loadVizProfiles();
+    }
   }
 
   Future<void> _syncBoardFromServer() async {
@@ -682,9 +761,41 @@ class _DeviceScreenState extends State<DeviceScreen>
     } catch (_) {}
   }
 
+  Future<List<VizProfile>> _fetchVizProfiles({String? boardId}) async {
+    final uri = boardId == null || boardId.isEmpty
+        ? Uri.parse('$_baseUrl/api/v1/viz/profiles')
+        : Uri.parse(
+            '$_baseUrl/api/v1/viz/profiles?board_id=${Uri.encodeQueryComponent(boardId)}',
+          );
+    final res = await http.get(uri).timeout(const Duration(seconds: 6));
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}');
+    }
+    final rawList = json.decode(res.body) as List;
+    return rawList
+        .whereType<Map>()
+        .map((e) => VizProfile.fromJson(Map<String, dynamic>.from(e)))
+        .where((p) => p.id.isNotEmpty)
+        .toList();
+  }
+
+  VizProfile? _pickPreferredVizProfile(
+    List<VizProfile> profiles, {
+    String? savedId,
+  }) {
+    for (final profile in profiles) {
+      if (_isPreferredLcpVizProfile(profile)) return profile;
+    }
+    if (savedId != null) {
+      for (final profile in profiles) {
+        if (profile.id == savedId) return profile;
+      }
+    }
+    return profiles.isNotEmpty ? profiles.first : null;
+  }
+
   Future<void> _loadVizProfiles() async {
     final boardId = _boardId;
-    if (boardId == null || boardId.isEmpty) return;
     if (mounted) {
       setState(() {
         _vizProfilesLoading = true;
@@ -692,32 +803,27 @@ class _DeviceScreenState extends State<DeviceScreen>
       });
     }
     try {
-      final res = await http
-          .get(
-            Uri.parse(
-              '$_baseUrl/api/v1/viz/profiles?board_id=${Uri.encodeQueryComponent(boardId)}',
-            ),
-          )
-          .timeout(const Duration(seconds: 6));
-      if (res.statusCode != 200) {
-        throw Exception('HTTP ${res.statusCode}');
-      }
-      final rawList = json.decode(res.body) as List;
-      final profiles = rawList
-          .whereType<Map>()
-          .map((e) => VizProfile.fromJson(Map<String, dynamic>.from(e)))
-          .where((p) => p.id.isNotEmpty)
-          .toList();
+      var profiles = boardId == null || boardId.isEmpty
+          ? await _fetchVizProfiles()
+          : await _fetchVizProfiles(boardId: boardId);
 
-      final savedId = await _storage.getLastVizProfileId(boardId);
-      VizProfile? selected;
-      for (final profile in profiles) {
-        if (profile.id == savedId) {
-          selected = profile;
-          break;
+      // Always try to include / prefer "LCP (단축|단순)" even if it belongs to
+      // another board_id on the server.
+      final hasPreferred = profiles.any(_isPreferredLcpVizProfile);
+      if (!hasPreferred) {
+        final all = await _fetchVizProfiles();
+        for (final profile in all) {
+          if (_isPreferredLcpVizProfile(profile) &&
+              !profiles.any((p) => p.id == profile.id)) {
+            profiles = [profile, ...profiles];
+          }
         }
       }
-      selected ??= profiles.isNotEmpty ? profiles.first : null;
+
+      final savedId = boardId == null
+          ? null
+          : await _storage.getLastVizProfileId(boardId);
+      final selected = _pickPreferredVizProfile(profiles, savedId: savedId);
 
       if (!mounted) return;
       setState(() {
@@ -727,11 +833,13 @@ class _DeviceScreenState extends State<DeviceScreen>
             ? 'No chart profile is registered for this board.'
             : null;
         _selectedVizProfileId = selected?.id;
+        _cachedParser = null;
+        _cachedParserKey = null;
         _selectedChartItemIds
           ..clear()
           ..addAll(_defaultChartItemIds(selected));
       });
-      if (selected != null) {
+      if (selected != null && boardId != null) {
         await _storage.setLastVizProfileId(boardId, selected.id);
       }
     } catch (e) {
@@ -768,9 +876,12 @@ class _DeviceScreenState extends State<DeviceScreen>
   }
 
   bool _itemMatchesBoard(VizProfileItem item) {
+    if (item.protocolId.isEmpty) return true;
+    // Live parsing is forced to LCP monitoring v2 — keep those fields selectable
+    // even when the board record still points at an older protocol id.
+    if (item.protocolId == kLcpMonitoringV2Id) return true;
     final boardProtocol = _boardProtoId ?? _selectedProtoId;
     if (boardProtocol == null || boardProtocol.isEmpty) return true;
-    if (item.protocolId.isEmpty) return true;
     return item.protocolId == boardProtocol;
   }
 
@@ -796,19 +907,38 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
   }
 
-  ProtocolParser? get _liveParser {
-    var protocolId = _boardProtoId ?? _selectedProtoId;
-    if (protocolId == null || protocolId.isEmpty) {
-      final profile = _selectedVizProfile;
-      if (profile != null) {
-        for (final item in profile.items) {
-          if (item.protocolId.isNotEmpty) {
-            protocolId = item.protocolId;
-            break;
-          }
-        }
+  /// Live UART chart always parses with LCP Monitoring v2 when available.
+  String? _resolveLiveProtocolId() {
+    for (final protocol in _protocols) {
+      if (protocol.id == kLcpMonitoringV2Id && protocol.hasParseRules) {
+        return kLcpMonitoringV2Id;
       }
     }
+    final profile = _selectedVizProfile;
+    if (profile != null) {
+      for (final item in profile.items) {
+        if (item.protocolId.isNotEmpty) return item.protocolId;
+      }
+    }
+    if (_boardProtoId != null && _boardProtoId!.isNotEmpty) {
+      return _boardProtoId;
+    }
+    final selected = _selectedProtoId;
+    if (selected != null &&
+        selected.isNotEmpty &&
+        selected != kTemperatureProtocolId) {
+      return selected;
+    }
+    for (final protocol in _protocols) {
+      if (protocol.hasParseRules && protocol.id != kTemperatureProtocolId) {
+        return protocol.id;
+      }
+    }
+    return selected;
+  }
+
+  ProtocolParser? get _liveParser {
+    final protocolId = _resolveLiveProtocolId();
     if (protocolId == null || protocolId.isEmpty) return null;
     if (_cachedParserKey == protocolId && _cachedParser != null) {
       return _cachedParser;
@@ -826,6 +956,22 @@ class _DeviceScreenState extends State<DeviceScreen>
       }
     }
     return null;
+  }
+
+  /// LCP monitoring frames are AA [LEN] CA …. Other FIDs on the wire are not
+  /// chart errors — skip them quietly.
+  int? _peekFrameFid(String hex) {
+    final compact = hex.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length < 6) return null;
+    return int.tryParse(compact.substring(4, 6), radix: 16);
+  }
+
+  bool _isSkippableLiveFrame(String hex, Object error) {
+    final msg = error.toString();
+    if (msg.contains('validation failed: fid')) return true;
+    final fid = _peekFrameFid(hex);
+    if (fid != null && fid != 0xCA) return true;
+    return false;
   }
 
   Future<bool> _serverHasRecentHeartbeat(
@@ -1191,70 +1337,149 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
   }
 
+  Future<void> _stopUartStream() async {
+    await _uartSub?.cancel();
+    _uartSub = null;
+    _uartRxBuffer = '';
+    if (mounted && _scanningUart) {
+      setState(() => _scanningUart = false);
+    } else {
+      _scanningUart = false;
+    }
+  }
+
   Future<void> _startUartStream() async {
-    if (_uartSub != null) return;
+    if (!_connected) {
+      _showError('Connect to the board before starting the live stream.');
+      return;
+    }
+    await _stopUartStream();
     _uartRxBuffer = '';
     try {
-      final stream = await _scanner.subscribeToUartData(widget.device);
-      if (mounted) setState(() => _scanningUart = true);
-      _uartSub = stream.listen((data) {
-        if (!mounted) return;
-        // The firmware sends ASCII hex terminated by '\n'.
-        _uartRxBuffer += String.fromCharCodes(data);
-
-        while (true) {
-          final newline = _uartRxBuffer.indexOf('\n');
-          if (newline < 0) break;
-          final line = _uartRxBuffer
-              .substring(0, newline)
-              .replaceAll('\r', '')
-              .trim()
-              .toUpperCase();
-          _uartRxBuffer = _uartRxBuffer.substring(newline + 1);
-
-          if (line.isEmpty || line.startsWith('EVENT:')) continue;
-          final compact = line.replaceAll(RegExp(r'\s+'), '');
-          if (compact.length.isOdd ||
-              !RegExp(r'^[0-9A-F]+$').hasMatch(compact)) {
-            continue;
-          }
-          _handleLiveFrame(compact);
-        }
-
-        if (_uartRxBuffer.length > 16384) {
-          _uartRxBuffer = '';
-        }
-      });
+      _scanner.clearCache();
+      final ch = await _scanner.uartNotifyCharacteristic(widget.device);
+      // Listen before enabling notifications (flutter_blue_plus iOS guidance).
+      _uartSub = ch.onValueReceived.listen(
+        _onUartChunk,
+        onError: (Object error) {
+          _addLog('UART stream error: $error');
+          _stopUartStream();
+        },
+        onDone: () {
+          _addLog('UART stream closed.');
+          _stopUartStream();
+        },
+      );
+      widget.device.cancelWhenDisconnected(_uartSub!);
+      if (ch.isNotifying) {
+        try {
+          await ch.setNotifyValue(false);
+        } catch (_) {}
+      }
+      await ch.setNotifyValue(true);
+      if (mounted) {
+        setState(() => _scanningUart = true);
+        _addLog('UART live stream started.');
+      }
     } catch (e) {
-      if (mounted) _showError('Failed to start the UART stream.');
+      await _stopUartStream();
+      _addLog('UART stream failed: $e');
+      if (mounted) _showError('Failed to start the UART stream: $e');
     }
+  }
+
+  void _onUartChunk(List<int> data) {
+    if (!mounted) return;
+    // The firmware sends ASCII hex terminated by '\n'.
+    _uartRxBuffer += String.fromCharCodes(data);
+
+    while (true) {
+      final newline = _uartRxBuffer.indexOf('\n');
+      if (newline < 0) break;
+      final line = _uartRxBuffer
+          .substring(0, newline)
+          .replaceAll('\r', '')
+          .trim()
+          .toUpperCase();
+      _uartRxBuffer = _uartRxBuffer.substring(newline + 1);
+
+      if (line.isEmpty || line.startsWith('EVENT:')) continue;
+      final compact = line.replaceAll(RegExp(r'\s+'), '');
+      if (compact.length.isOdd || !RegExp(r'^[0-9A-F]+$').hasMatch(compact)) {
+        if (_liveParseErrors < 5) {
+          _addLog('UART skipped non-hex line (${line.length} chars)');
+        }
+        _liveParseErrors++;
+        continue;
+      }
+      _handleLiveFrame(compact);
+    }
+
+    if (_uartRxBuffer.length > 16384) {
+      _uartRxBuffer = '';
+    }
+  }
+
+  void _scheduleLiveUiFlush() {
+    _liveUiDirty = true;
+    if (_liveUiFlushTimer != null) return;
+    // Batch chart/status rebuilds so dense UART bursts don't stutter the UI.
+    _liveUiFlushTimer = Timer(const Duration(milliseconds: 100), () {
+      _liveUiFlushTimer = null;
+      if (!mounted || !_liveUiDirty) return;
+      _liveUiDirty = false;
+      setState(() {});
+    });
   }
 
   void _handleLiveFrame(String hex) {
     final now = DateTime.now();
     final parser = _liveParser;
     Map<String, double>? values;
-    if (parser != null) {
-      try {
-        values = parser.parseHex(hex);
-      } catch (_) {
-        _liveParseErrors++;
+    var skipped = false;
+    if (parser == null) {
+      _liveParseErrors++;
+      if (_liveParseErrors <= 3) {
+        _addLog('UART parse skipped: no protocol parser loaded');
+      }
+    } else {
+      final fid = _peekFrameFid(hex);
+      if (fid != null && fid != 0xCA) {
+        skipped = true;
+      } else {
+        try {
+          values = parser.parseHex(hex);
+        } catch (e) {
+          if (_isSkippableLiveFrame(hex, e)) {
+            skipped = true;
+          } else {
+            _liveParseErrors++;
+            if (_liveParseErrors <= 5) {
+              _addLog(
+                'UART parse error (${_resolveLiveProtocolId()}): $e',
+              );
+            }
+          }
+        }
       }
     }
 
-    setState(() {
-      _liveParsedFrames++;
-      if (values != null && values.isNotEmpty) {
-        _liveSamples.add(_LiveSample(now, values));
-        if (_liveSamples.length > _maxLiveSamples) {
-          _liveSamples.removeRange(0, _liveSamples.length - _maxLiveSamples);
-        }
+    if (!skipped) _liveParsedFrames++;
+    if (values != null && values.isNotEmpty) {
+      _liveSamples.add(_LiveSample(now, values));
+      if (_liveSamples.length > _maxLiveSamples) {
+        _liveSamples.removeRange(0, _liveSamples.length - _maxLiveSamples);
       }
+    }
+    if (!skipped || values != null) {
       _uartLogs.add(_UartPacket(now, _spaceHex(hex)));
       if (_uartLogs.length > 500) {
         _uartLogs = _uartLogs.sublist(_uartLogs.length - 500);
       }
-    });
+    }
+    if (!skipped || values != null) {
+      _scheduleLiveUiFlush();
+    }
   }
 
   String _spaceHex(String hex) {
@@ -1269,9 +1494,6 @@ class _DeviceScreenState extends State<DeviceScreen>
   List<LiveChartSeries> _buildLiveSeries() {
     final profile = _selectedVizProfile;
     if (profile == null) return const [];
-    final cutoff = DateTime.now()
-        .subtract(Duration(seconds: _chartWindowSeconds))
-        .millisecondsSinceEpoch;
 
     final result = <LiveChartSeries>[];
     for (final item in profile.items) {
@@ -1280,7 +1502,6 @@ class _DeviceScreenState extends State<DeviceScreen>
       final points = <LiveChartPoint>[];
       for (final sample in _liveSamples) {
         final timeMs = sample.at.millisecondsSinceEpoch;
-        if (timeMs < cutoff) continue;
         final value = sample.values[item.fieldName];
         if (value == null) continue;
         points.add(LiveChartPoint(timeMs, value));
@@ -1321,6 +1542,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     if (candidates.isEmpty) return;
 
     final chosen = <String>{..._selectedChartItemIds};
+    var query = '';
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1329,6 +1551,14 @@ class _DeviceScreenState extends State<DeviceScreen>
         final cs = Theme.of(ctx).colorScheme;
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
+            final filtered = query.trim().isEmpty
+                ? candidates
+                : candidates.where((item) {
+                    final q = query.trim().toLowerCase();
+                    return item.label.toLowerCase().contains(q) ||
+                        item.shortLabel.toLowerCase().contains(q) ||
+                        item.fieldName.toLowerCase().contains(q);
+                  }).toList();
             return SafeArea(
               child: SizedBox(
                 height: MediaQuery.of(ctx).size.height * 0.72,
@@ -1358,54 +1588,94 @@ class _DeviceScreenState extends State<DeviceScreen>
                         ],
                       ),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      child: TextField(
+                        autofocus: true,
+                        onChanged: (value) =>
+                            setSheetState(() => query = value),
+                        decoration: InputDecoration(
+                          hintText: 'Search label or field name',
+                          prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                          isDense: true,
+                          filled: true,
+                          fillColor: cs.surface.withValues(alpha: 0.55),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+                      ),
+                    ),
                     Expanded(
-                      child: ListView.builder(
-                        itemCount: candidates.length,
-                        itemBuilder: (ctx, index) {
-                          final item = candidates[index];
-                          final selected = chosen.contains(item.id);
-                          return CheckboxListTile(
-                            value: selected,
-                            dense: true,
-                            activeColor: item.color,
-                            title: Text(
-                              item.shortLabel.isEmpty
-                                  ? item.label
-                                  : item.shortLabel,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            subtitle: Text(
-                              item.fieldName,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontFamily: 'monospace',
-                                color: cs.onSurfaceVariant.withValues(
-                                  alpha: 0.6,
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Text(
+                                'No fields match “$query”',
+                                style: TextStyle(
+                                  color: cs.onSurfaceVariant.withValues(
+                                    alpha: 0.65,
+                                  ),
                                 ),
                               ),
+                            )
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (ctx, index) {
+                                final item = filtered[index];
+                                final selected = chosen.contains(item.id);
+                                final latest =
+                                    _latestFieldValue(item.fieldName);
+                                final latestText = latest == null
+                                    ? '—'
+                                    : latest.abs() >= 100
+                                        ? latest.toStringAsFixed(0)
+                                        : latest.toStringAsFixed(2);
+                                return CheckboxListTile(
+                                  value: selected,
+                                  dense: true,
+                                  activeColor: item.color,
+                                  title: Text(
+                                    item.shortLabel.isEmpty
+                                        ? item.label
+                                        : item.shortLabel,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                  subtitle: Text(
+                                    '${item.fieldName} · latest $latestText',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontFamily: 'monospace',
+                                      color: cs.onSurfaceVariant.withValues(
+                                        alpha: 0.6,
+                                      ),
+                                    ),
+                                  ),
+                                  secondary: Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: item.color,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  onChanged: (value) {
+                                    setSheetState(() {
+                                      if (value == true) {
+                                        if (chosen.length < _maxChartSeries) {
+                                          chosen.add(item.id);
+                                        }
+                                      } else {
+                                        chosen.remove(item.id);
+                                      }
+                                    });
+                                  },
+                                );
+                              },
                             ),
-                            secondary: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: item.color,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            onChanged: (value) {
-                              setSheetState(() {
-                                if (value == true) {
-                                  if (chosen.length < _maxChartSeries) {
-                                    chosen.add(item.id);
-                                  }
-                                } else {
-                                  chosen.remove(item.id);
-                                }
-                              });
-                            },
-                          );
-                        },
-                      ),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
@@ -1502,6 +1772,30 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
+    if (_liveFullscreen) {
+      final profile = _selectedVizProfile;
+      return Scaffold(
+        body: LiveChartFullscreen(
+          title: profile?.name ?? 'Live chart',
+          subtitle: _scanningUart ? 'Streaming' : 'Buffer',
+          series: _buildLiveSeries(),
+          windowSeconds: _chartWindowSeconds,
+          follow: _chartFollow,
+          followResetToken: _chartFollowResetToken,
+          onWindowSecondsChanged: _setChartWindowSeconds,
+          onFollowChanged: (follow) {
+            if (_chartFollow != follow) {
+              setState(() => _chartFollow = follow);
+            }
+          },
+          onOpenFields: _showFieldPicker,
+          onClose: _exitLiveFullscreen,
+          fieldsLabel:
+              'Fields ${_selectedChartItemIds.length}/$_maxChartSeries',
+        ),
+      );
+    }
 
     return Scaffold(
       body: Column(
@@ -2572,7 +2866,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                 ),
                 Text(
                   active
-                      ? '${rate.toStringAsFixed(1)} frames/s · ${_liveSamples.length} parsed samples'
+                      ? '${rate.toStringAsFixed(1)} frames/s · ${_liveSamples.length} parsed · proto ${_resolveLiveProtocolId() ?? "none"}'
                       : 'Start to receive live UART frames from the board',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant.withValues(alpha: 0.62),
@@ -2585,12 +2879,7 @@ class _DeviceScreenState extends State<DeviceScreen>
             height: 40,
             child: active
                 ? FilledButton.tonalIcon(
-                    onPressed: () {
-                      _uartSub?.cancel();
-                      _uartSub = null;
-                      _uartRxBuffer = '';
-                      setState(() => _scanningUart = false);
-                    },
+                    onPressed: _stopUartStream,
                     icon: const Icon(Icons.stop_rounded, size: 16),
                     label: const Text('Stop', style: TextStyle(fontSize: 12)),
                     style: FilledButton.styleFrom(
@@ -2841,13 +3130,21 @@ class _DeviceScreenState extends State<DeviceScreen>
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  'Receive-time axis · only live frames',
+                  _chartFollow
+                      ? 'Following live · pinch zoom · drag pan'
+                      : 'Viewport paused · double-tap to follow',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant.withValues(alpha: 0.55),
                   ),
                 ),
               ],
             ),
+          ),
+          IconButton(
+            onPressed: () => _enterLiveFullscreen(),
+            icon: const Icon(Icons.fullscreen_rounded, size: 20),
+            tooltip: 'Fullscreen analyze',
+            visualDensity: VisualDensity.compact,
           ),
           for (final seconds in const [30, 60, 120])
             Padding(
@@ -2858,8 +3155,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                   style: const TextStyle(fontSize: 10),
                 ),
                 selected: _chartWindowSeconds == seconds,
-                onSelected: (_) =>
-                    setState(() => _chartWindowSeconds = seconds),
+                onSelected: (_) => _setChartWindowSeconds(seconds),
                 visualDensity: VisualDensity.compact,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -2869,18 +3165,28 @@ class _DeviceScreenState extends State<DeviceScreen>
       ),
       const SizedBox(height: 10),
       SizedBox(
-        height: 250,
+        height: 300,
         child: LiveChart(
           series: series,
-          windowSeconds: _chartWindowSeconds,
+          initialWindowSeconds: _chartWindowSeconds,
+          followResetToken: _chartFollowResetToken,
+          onFollowChanged: (follow) {
+            if (_chartFollow != follow) {
+              setState(() => _chartFollow = follow);
+            }
+          },
         ),
       ),
-      if (series.isEmpty) ...[
+      if (series.isEmpty || series.every((s) => s.points.isEmpty)) ...[
         const SizedBox(height: 10),
         Text(
-          _scanningUart
-              ? 'Waiting for frames that match the selected fields…'
-              : 'Start the live stream to populate this chart.',
+          !_scanningUart
+              ? 'Start the live stream to populate this chart.'
+              : _liveParsedFrames == 0
+                  ? 'Waiting for UART frames…'
+                  : _liveSamples.isEmpty
+                      ? 'Received $_liveParsedFrames frames but none parsed. Check protocol assignment and Errors ($_liveParseErrors).'
+                      : 'Parsed ${_liveSamples.length} samples, but selected fields have no values. Open Fields and pick matching names.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: cs.onSurfaceVariant.withValues(alpha: 0.55),
           ),
