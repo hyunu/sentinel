@@ -12,7 +12,7 @@ import type { VizItem } from '../api';
 import { formatChartAxisTime } from '../utils/date';
 import { readCssVar } from '../lib/themeColors';
 import { useTheme } from '../theme';
-import { digitalLaneDomain, digitalLaneValue, isDigitalVizItem } from '../lib/vizDashboardUtils';
+import { digitalLaneDomain, digitalLaneValue } from '../lib/vizDashboardUtils';
 
 export type VizChartPoint = { timeKey: string } & Record<string, string | number>;
 
@@ -757,13 +757,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const xRange = xWindowTimeKeys
       ? xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end)
       : imperativeXRangeRef.current;
-    const hasAnalogSeries = chartItems.some(
-      item => item.visible && !isDigitalVizItem(item),
-    );
-    const digitalDomain = digitalLaneDomain(
-      digitalLaneCount,
-      hasAnalogSeries ? 0.35 : 1,
-    );
+    const digitalDomain = digitalLaneDomain(digitalLaneCount, 1);
 
     const axisColor = readCssVar('--chart-axis', '#888aa0');
     const gridColor = readCssVar('--chart-grid', '#2e3040');
@@ -862,6 +856,23 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           labelSize: 14,
           labelFont: '10px system-ui, sans-serif',
         },
+        {
+          // Digital lanes keep the right axis visible even when the profile
+          // has no analog right-axis items.
+          scale: 'y3',
+          side: 1,
+          show: digitalLaneCount > 0 && !usesRight,
+          stroke: axisColor,
+          grid: { show: false },
+          ticks: { stroke: axisColor },
+          border: axisBorder,
+          font: '9px system-ui, sans-serif',
+          size: 30,
+          values: (_u, splits) => splits.map(v => formatYTick(v)),
+          label: 'DIGITAL',
+          labelSize: 14,
+          labelFont: '10px system-ui, sans-serif',
+        },
       ],
       series: buildSeriesConfig(
         chartItems,
@@ -872,23 +883,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         getGapThresholdSec,
       ),
       hooks: {
-        drawClear: [(u) => {
-          if (!hasAnalogSeries || digitalLaneCount <= 0) return;
-          const { left, top, width, height } = u.bbox;
-          const bandHeight = height * 0.35;
-          const ctx = u.ctx;
-          ctx.save();
-          ctx.fillStyle = 'rgba(129, 140, 248, 0.045)';
-          ctx.fillRect(left, top, width, bandHeight);
-          ctx.strokeStyle = 'rgba(129, 140, 248, 0.22)';
-          ctx.lineWidth = Math.max(1, uPlot.pxRatio);
-          ctx.setLineDash([4 * uPlot.pxRatio, 4 * uPlot.pxRatio]);
-          ctx.beginPath();
-          ctx.moveTo(left, top + bandHeight);
-          ctx.lineTo(left + width, top + bandHeight);
-          ctx.stroke();
-          ctx.restore();
-        }],
         drawAxes: [(u) => drawXAxisGridBehind(u, gridColor)],
         ready: [syncPlotAndBreaks],
         setSize: [syncPlotAndBreaks],

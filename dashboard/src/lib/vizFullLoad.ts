@@ -18,6 +18,8 @@ export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 export const FULL_LOAD_MAX_POINTS = 100_000;
 /** Time-sliced full-load chunk size. Keep each response comfortably below the single-response budget. */
 export const FULL_LOAD_CHUNK_ROWS = 4_000;
+/** Concurrent chunk requests. Each chunk is ~14 MB, so keep the fan-out small. */
+export const FULL_LOAD_CONCURRENCY = 3;
 
 export function estimateVizPayloadBytes(data: VizFullLoadRow[]): number {
   if (data.length === 0) return 0;

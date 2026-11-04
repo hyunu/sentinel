@@ -72,6 +72,7 @@ import {
   formatFullLoadBytes,
   FULL_LOAD_BYTE_BUDGET,
   FULL_LOAD_CHUNK_ROWS,
+  FULL_LOAD_CONCURRENCY,
   FULL_LOAD_MAX_POINTS,
   shouldChunkedFullLoad,
   shouldFullLoadInMemory,
@@ -356,6 +357,14 @@ type VizQueryParams = {
 };
 
 type VizLoadProgressHandler = (progress: ChartLoadProgress) => void;
+type VizDataHandler = (data: VizDataRow[], meta: VizQueryMeta) => void;
+
+function mergeVizRows(rows: VizDataRow[]): VizDataRow[] {
+  const byTimestamp = new Map<string, VizDataRow>();
+  for (const row of rows) byTimestamp.set(row.timestamp, row);
+  return Array.from(byTimestamp.values())
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+}
 
 async function queryFullDatasetChunked(
   params: VizQueryParams,
@@ -365,6 +374,7 @@ async function queryFullDatasetChunked(
     signal?: AbortSignal;
     timeoutMs?: number;
     onProgress?: VizLoadProgressHandler;
+    onPartial?: VizDataHandler;
   },
 ): Promise<{ data: VizDataRow[]; meta: VizQueryMeta }> {
   const range = params.time_range ?? (
@@ -396,8 +406,32 @@ async function queryFullDatasetChunked(
     DETAIL_MAX_POINTS,
     Math.max(MAX_POINTS, Math.ceil(meta.total_matched / chunkCount * 3)),
   );
-  const rows: VizDataRow[] = [];
+  let mergedRows: VizDataRow[] = [];
   let completedBytes = 0;
+  let reportedOverallBytes = 0;
+  let nextChunk = 0;
+  let failed = false;
+  const inFlightBytes = new Map<number, number>();
+
+  const reportProgress = (
+    chunkIndex: number,
+    loaded: number,
+    total: number | null,
+    baseBytes: number,
+  ) => {
+    inFlightBytes.set(chunkIndex, baseBytes + loaded);
+    let overall = completedBytes;
+    for (const bytes of inFlightBytes.values()) overall += bytes;
+    reportedOverallBytes = Math.max(reportedOverallBytes, overall);
+    options?.onProgress?.({
+      phase: 'full',
+      loaded,
+      total,
+      overallLoaded: reportedOverallBytes,
+      chunkIndex,
+      chunkCount,
+    });
+  };
 
   const fetchRange = async (
     rangeStartMs: number,
@@ -405,7 +439,7 @@ async function queryFullDatasetChunked(
     chunkIndex: number,
     depth: number,
     baseBytes: number,
-  ): Promise<number> => {
+  ): Promise<{ rows: VizDataRow[]; bytes: number }> => {
     if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
     let lastLoaded = 0;
     const result = await api.viz.queryItems({
@@ -420,14 +454,7 @@ async function queryFullDatasetChunked(
       timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
       onProgress: (loaded, total) => {
         lastLoaded = loaded;
-        options?.onProgress?.({
-          phase: 'full',
-          loaded,
-          total,
-          overallLoaded: completedBytes + baseBytes + loaded,
-          chunkIndex,
-          chunkCount,
-        });
+        reportProgress(chunkIndex, loaded, total, baseBytes);
       },
     });
     // Coalescing nearby timestamps also reduces returned rows; only recurse
@@ -441,30 +468,58 @@ async function queryFullDatasetChunked(
       && !options?.signal?.aborted
     ) {
       const midMs = rangeStartMs + (rangeEndMs - rangeStartMs) / 2;
-      const leftBytes = await fetchRange(
+      const left = await fetchRange(
         rangeStartMs, midMs, chunkIndex, depth + 1, baseBytes,
       );
-      return leftBytes + await fetchRange(
-        midMs, rangeEndMs, chunkIndex, depth + 1, baseBytes + leftBytes,
+      const right = await fetchRange(
+        midMs, rangeEndMs, chunkIndex, depth + 1, baseBytes + left.bytes,
       );
+      return {
+        rows: [...left.rows, ...right.rows],
+        bytes: left.bytes + right.bytes,
+      };
     }
-    rows.push(...result.data);
-    return lastLoaded;
+    return { rows: result.data, bytes: lastLoaded };
   };
 
-  for (let i = 0; i < chunkCount; i++) {
-    if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
-    const chunkStart = startMs + (endMs - startMs) * i / chunkCount;
-    const chunkEnd = i === chunkCount - 1
-      ? endMs
-      : startMs + (endMs - startMs) * (i + 1) / chunkCount;
-    completedBytes += await fetchRange(chunkStart, chunkEnd, i + 1, 0, 0);
-  }
+  const publishPartial = () => {
+    if (!options?.onPartial) return;
+    options.onPartial(mergedRows, {
+      total_matched: meta.total_matched,
+      returned: mergedRows.length,
+      downsampled: mergedRows.length < meta.total_matched,
+    });
+  };
 
-  const byTimestamp = new Map<string, VizDataRow>();
-  for (const row of rows) byTimestamp.set(row.timestamp, row);
-  const merged = Array.from(byTimestamp.values())
-    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const worker = async () => {
+    try {
+      for (;;) {
+        if (failed || options?.signal?.aborted) {
+          throw new Error('Request timeout or cancelled');
+        }
+        const index = nextChunk++;
+        if (index >= chunkCount) return;
+        const chunkStart = startMs + (endMs - startMs) * index / chunkCount;
+        const chunkEnd = index === chunkCount - 1
+          ? endMs
+          : startMs + (endMs - startMs) * (index + 1) / chunkCount;
+        const chunk = await fetchRange(chunkStart, chunkEnd, index + 1, 0, 0);
+        if (failed || options?.signal?.aborted) return;
+        inFlightBytes.delete(index + 1);
+        completedBytes += chunk.bytes;
+        mergedRows = mergeVizRows([...mergedRows, ...chunk.rows]);
+        publishPartial();
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    }
+  };
+
+  const workerCount = Math.min(FULL_LOAD_CONCURRENCY, chunkCount);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+
+  const merged = mergeVizRows(mergedRows);
 
   return {
     data: merged,
@@ -483,6 +538,8 @@ async function queryVizDataset(
     signal?: AbortSignal;
     timeoutMs?: number;
     onProgress?: VizLoadProgressHandler;
+    onOverview?: (data: VizDataRow[], meta: VizQueryMeta | null, willLoadFull: boolean) => void;
+    onPartial?: VizDataHandler;
   },
 ): Promise<{
   data: VizDataRow[];
@@ -507,10 +564,18 @@ async function queryVizDataset(
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
     : null;
+  const willLoadFull = !!meta
+    && (shouldFullLoadInMemory(meta, overview.data) || shouldChunkedFullLoad(meta));
+  options?.onOverview?.(overview.data, meta, willLoadFull);
 
   if (!meta || !shouldFullLoadInMemory(meta, overview.data)) {
     if (meta && shouldChunkedFullLoad(meta)) {
-      const full = await queryFullDatasetChunked(params, overview.data, meta, options);
+      const full = await queryFullDatasetChunked(params, overview.data, meta, {
+        signal: options?.signal,
+        timeoutMs: options?.timeoutMs,
+        onProgress: options?.onProgress,
+        onPartial: options?.onPartial,
+      });
       return {
         data: full.data,
         meta: full.meta,
@@ -769,6 +834,7 @@ export default function VizDashboardPage() {
   const pendingSpectrumViewportRef = useRef<{ startMs: number; endMs: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
+  const [fullLoadBytesEstimate, setFullLoadBytesEstimate] = useState<number | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [livePollError, setLivePollError] = useState<string | null>(null);
   const [liveMode, setLiveMode] = useState(false);
@@ -2242,6 +2308,38 @@ export default function VizDashboardPage() {
     lastDetailCanvasPointsRef.current = [];
   }, []);
 
+  const applyProgressiveData = useCallback((data: VizDataRow[], meta: VizQueryMeta) => {
+    setRawVizData(data);
+    setQueryMeta(meta);
+    // While chunks are still arriving, keep pan/zoom on the data we already
+    // have instead of firing detail-window requests.
+    setInMemoryFull(true);
+    if (data.length > 0) {
+      lastTimestampRef.current = data[data.length - 1].timestamp;
+    }
+  }, []);
+
+  const handleOverviewData = useCallback((
+    data: VizDataRow[],
+    meta: VizQueryMeta | null,
+    willLoadFull: boolean,
+  ) => {
+    applyOverviewResult(data, meta, willLoadFull);
+    if (
+      willLoadFull
+      && meta
+      && data.length > 0
+      && meta.downsampled
+      && meta.total_matched > meta.returned
+    ) {
+      const sample = data.length > 500 ? data.slice(0, 500) : data;
+      const bytesPerRow = estimateVizPayloadBytes(sample) / sample.length;
+      setFullLoadBytesEstimate(Math.ceil(bytesPerRow * meta.total_matched));
+    } else {
+      setFullLoadBytesEstimate(null);
+    }
+  }, [applyOverviewResult]);
+
   // Only a different board/field set invalidates cached detail windows.
   // Refreshes and time-range changes keep reusable high-resolution data.
   useEffect(() => {
@@ -2271,6 +2369,7 @@ export default function VizDashboardPage() {
     overviewAbortRef.current?.abort();
     const controller = new AbortController();
     overviewAbortRef.current = controller;
+    setFullLoadBytesEstimate(null);
     try {
       const p = await api.viz.getProfile(id);
       setSelectedBoard(p.board_id);
@@ -2297,6 +2396,10 @@ export default function VizDashboardPage() {
         signal: controller.signal,
         timeoutMs: 45000,
         onProgress: progress => setChartLoadProgress(progress),
+        onOverview: handleOverviewData,
+        onPartial: (data, meta) => {
+          if (!controller.signal.aborted) applyProgressiveData(data, meta);
+        },
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, isAllRange);
@@ -2310,7 +2413,7 @@ export default function VizDashboardPage() {
         setChartLoadProgress(null);
       }
     }
-  }, [applyQueryResult, t]);
+  }, [applyQueryResult, applyProgressiveData, handleOverviewData, t]);
 
   const dismissQueryError = useCallback(() => {
     setQueryError(null);
@@ -2415,6 +2518,7 @@ export default function VizDashboardPage() {
     overviewAbortRef.current = controller;
     setLoading(true);
     setQueryError(null);
+    setFullLoadBytesEstimate(null);
     try {
       const result = await queryVizDataset({
         board_id: selectedBoard,
@@ -2426,6 +2530,10 @@ export default function VizDashboardPage() {
         signal: controller.signal,
         timeoutMs: 45000,
         onProgress: progress => setChartLoadProgress(progress),
+        onOverview: handleOverviewData,
+        onPartial: (data, meta) => {
+          if (!controller.signal.aborted) applyProgressiveData(data, meta);
+        },
       });
       if (controller.signal.aborted) return;
       applyQueryResult(result, assessAllRange);
@@ -2442,7 +2550,7 @@ export default function VizDashboardPage() {
         setChartLoadProgress(null);
       }
     }
-  }, [selectedBoard, applyQueryResult, t, scheduleSpectrumViewportFit, aiAggregationParams]);
+  }, [selectedBoard, applyQueryResult, applyProgressiveData, handleOverviewData, t, scheduleSpectrumViewportFit, aiAggregationParams]);
 
   const applyTimePresetQuery = useCallback(async (id: TimePresetId) => {
     if (liveModeRef.current || !selectedBoard || !itemsRef.current.length) return;
@@ -3458,32 +3566,29 @@ export default function VizDashboardPage() {
   const chartDataLoading = loading || detailLoading;
   const chartProgressPercent = (() => {
     const progress = chartLoadProgress;
-    if (!progress?.total || progress.total <= 0) return null;
-    const ratio = Math.max(0, Math.min(1, progress.loaded / progress.total));
-    if (progress.chunkCount && progress.chunkIndex) {
-      return ((progress.chunkIndex - 1 + ratio) / progress.chunkCount) * 100;
+    if (!progress) return null;
+    if (progress.chunkCount) {
+      if (!fullLoadBytesEstimate || fullLoadBytesEstimate <= 0) return null;
+      return Math.max(
+        0,
+        Math.min(100, progress.overallLoaded / fullLoadBytesEstimate * 100),
+      );
     }
-    return ratio * 100;
+    if (!progress.total || progress.total <= 0) return null;
+    return Math.max(0, Math.min(100, progress.loaded / progress.total * 100));
   })();
-  const estimatedFullBytes = useMemo(() => {
-    if (!chartDataLoading || !queryMeta?.total_matched || rawVizData.length === 0) {
-      return null;
-    }
-    // Only estimate from the compact overview; never stringify a full 90k-row
-    // dataset on the rendering thread.
-    if (rawVizData.length > MAX_POINTS * 2) return null;
-    const bytesPerRow = estimateVizPayloadBytes(rawVizData) / rawVizData.length;
-    return Math.ceil(bytesPerRow * queryMeta.total_matched);
-  }, [chartDataLoading, rawVizData, queryMeta?.total_matched]);
   const chartProgressPercentDisplay = chartProgressPercent != null
     ? `${String(Math.floor(chartProgressPercent)).padStart(2, '0')}%`
     : '';
   const chartProgressSizeText = (() => {
     if (!chartDataLoading || !chartLoadProgress) return '';
-    const loadedMB = (chartLoadProgress.overallLoaded / 1024 / 1024).toFixed(1);
     const totalBytes = chartLoadProgress.chunkCount
-      ? estimatedFullBytes
+      ? fullLoadBytesEstimate
       : chartLoadProgress.total;
+    const loadedBytes = totalBytes
+      ? Math.min(chartLoadProgress.overallLoaded, totalBytes)
+      : chartLoadProgress.overallLoaded;
+    const loadedMB = (loadedBytes / 1024 / 1024).toFixed(1);
     if (!totalBytes) return `${loadedMB} MB`;
     const totalMB = Math.round(totalBytes / 1024 / 1024);
     return `${loadedMB}/${String(totalMB).padStart(3, '0')} MB`;
