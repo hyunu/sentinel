@@ -3385,6 +3385,16 @@ export default function VizDashboardPage() {
   const chartProgressPercentText = chartProgressPercent != null
     ? chartProgressPercent.toFixed(1)
     : null;
+  const estimatedFullBytes = useMemo(() => {
+    if (!chartDataLoading || !queryMeta?.total_matched || rawVizData.length === 0) {
+      return null;
+    }
+    // Only estimate from the compact overview; never stringify a full 90k-row
+    // dataset on the rendering thread.
+    if (rawVizData.length > MAX_POINTS * 2) return null;
+    const bytesPerRow = estimateVizPayloadBytes(rawVizData) / rawVizData.length;
+    return Math.ceil(bytesPerRow * queryMeta.total_matched);
+  }, [chartDataLoading, rawVizData, queryMeta?.total_matched]);
   const chartProgressLabel = (() => {
     if (!chartDataLoading) return '';
     if (!chartLoadProgress) return t('viz.chartLoading');
@@ -3393,13 +3403,16 @@ export default function VizDashboardPage() {
       ? ` ${chartLoadProgress.chunkIndex}/${chartLoadProgress.chunkCount}`
       : '';
     const overallLoaded = formatLoadBytes(chartLoadProgress.overallLoaded);
-    if (chartProgressPercentText != null && chartLoadProgress.total) {
-      if (chartLoadProgress.chunkCount) {
-        return `${phase}${chunk} ${chartProgressPercentText}% · 누적 ${overallLoaded}`;
-      }
-      return `${phase} ${chartProgressPercentText}% · 누적 ${overallLoaded} / ${formatLoadBytes(chartLoadProgress.total)}`;
+    const overallTotal = chartLoadProgress.chunkCount
+      ? estimatedFullBytes
+      : chartLoadProgress.total;
+    const totalText = overallTotal
+      ? ` / ${chartLoadProgress.chunkCount ? '약 ' : ''}${formatLoadBytes(overallTotal)}`
+      : '';
+    if (chartProgressPercentText != null) {
+      return `${phase}${chunk} ${chartProgressPercentText}% · 누적 ${overallLoaded}${totalText}`;
     }
-    return `${phase}${chunk} · 누적 ${overallLoaded}`;
+    return `${phase}${chunk} · 누적 ${overallLoaded}${totalText}`;
   })();
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
