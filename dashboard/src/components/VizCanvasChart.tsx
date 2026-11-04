@@ -12,11 +12,13 @@ import type { VizItem } from '../api';
 import { formatChartAxisTime } from '../utils/date';
 import { readCssVar } from '../lib/themeColors';
 import { useTheme } from '../theme';
+import { digitalLaneDomain, digitalLaneValue, isDigitalVizItem } from '../lib/vizDashboardUtils';
 
 export type VizChartPoint = { timeKey: string } & Record<string, string | number>;
 
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
+export type VizSeriesYScale = 'y' | 'y2' | 'y3';
 import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
 import { chartSessionGapThresholdSec, shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
 import { filterChartPointsByTimeRange } from '../lib/vizChartZoomTime';
@@ -148,8 +150,11 @@ export interface VizCanvasChartProps {
   maxVisibleSeries: number;
   yAxisDomains: Record<string, [number, number] | undefined>;
   yAxes: Array<{ id: string; orientation: 'left' | 'right'; unitLabel: string }>;
+  /** Visible on/off items mapped to a zero-based lane index. */
+  digitalLanes: ReadonlyMap<string, number>;
+  digitalLaneCount: number;
   chartLabel: (item: VizItem) => string;
-  resolveYScale: (item: VizItem) => typeof PRIMARY_SCALE | typeof SECONDARY_SCALE;
+  resolveYScale: (item: VizItem) => VizSeriesYScale;
   height: number;
   tooltipEnabled: boolean;
   hideTooltip: boolean;
@@ -222,6 +227,8 @@ function positionTooltipNearCursor(
 function buildAlignedData(
   points: VizChartPoint[],
   chartItems: VizItem[],
+  digitalLanes: ReadonlyMap<string, number>,
+  digitalLaneCount: number,
 ): AlignedData {
   const xs = new Array<number>(points.length);
   const seriesValues = chartItems.map(() => new Array<number | null>(points.length));
@@ -230,8 +237,16 @@ function buildAlignedData(
     const point = points[i];
     xs[i] = timeSec(point.timeKey);
     for (let s = 0; s < chartItems.length; s++) {
-      const value = point[chartItems[s].id];
-      seriesValues[s][i] = typeof value === 'number' && !Number.isNaN(value) ? value : null;
+      const item = chartItems[s];
+      const value = point[item.id];
+      if (typeof value !== 'number' || Number.isNaN(value)) {
+        seriesValues[s][i] = null;
+        continue;
+      }
+      const laneIndex = digitalLanes.get(item.id);
+      seriesValues[s][i] = laneIndex == null
+        ? value
+        : digitalLaneValue(value, laneIndex, digitalLaneCount);
     }
   }
 
@@ -241,7 +256,7 @@ function buildAlignedData(
 function buildSeriesConfig(
   chartItems: VizItem[],
   chartLabel: (item: VizItem) => string,
-  resolveYScale: (item: VizItem) => typeof PRIMARY_SCALE | typeof SECONDARY_SCALE,
+  resolveYScale: (item: VizItem) => VizSeriesYScale,
   maxVisibleSeries: number,
   getSessionBreakTimesSec: () => readonly number[],
   getGapThresholdSec: () => number,
@@ -343,6 +358,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     maxVisibleSeries,
     yAxisDomains,
     yAxes,
+    digitalLanes,
+    digitalLaneCount,
     chartLabel,
     resolveYScale,
     height,
@@ -710,9 +727,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     if (el) el.hidden = true;
   }, []);
 
+  const digitalLayoutKey = [
+    digitalLaneCount,
+    ...[...digitalLanes.entries()].map(([id, lane]) => `${id}:${lane}`),
+  ].join(',');
   const seriesLayoutKey = chartItems.map(
     i => `${i.id}:${i.color}:${i.chart_type}:${i.y_axis.id}`,
-  ).join('|');
+  ).join('|') + `|digital:${digitalLayoutKey}`;
   const visibilityKey = chartItems.map(i => `${i.id}:${i.visible ? 1 : 0}`).join('|');
   const yAxisLayoutKey = yAxes.map(a => `${a.id}:${a.unitLabel}`).join('|');
   const yDomainKey = [
@@ -736,6 +757,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const xRange = xWindowTimeKeys
       ? xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end)
       : imperativeXRangeRef.current;
+    const hasAnalogSeries = chartItems.some(
+      item => item.visible && !isDigitalVizItem(item),
+    );
+    const digitalDomain = digitalLaneDomain(
+      digitalLaneCount,
+      hasAnalogSeries ? 0.35 : 1,
+    );
 
     const axisColor = readCssVar('--chart-axis', '#888aa0');
     const gridColor = readCssVar('--chart-grid', '#2e3040');
@@ -781,6 +809,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
             ? () => rightDomain
             : (_u, dataMin, dataMax) => uPlot.rangeNum(dataMin, dataMax, 0.05, true),
         },
+        y3: {
+          auto: false,
+          range: () => digitalDomain,
+        },
       },
       axes: [
         {
@@ -803,6 +835,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         {
           scale: PRIMARY_SCALE,
           side: 3,
+          show: !!leftAxis,
           stroke: axisColor,
           grid: { show: false },
           ticks: { stroke: axisColor },
@@ -916,7 +949,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     yUserAdjustedRef.current = false;
     const plot = new uPlot(
       makeOptions(initialWidth > 0 ? initialWidth : 640),
-      buildAlignedData(plotPoints, chartItems),
+      buildAlignedData(plotPoints, chartItems, digitalLanes, digitalLaneCount),
       container,
     );
     plot.root.classList.add('viz-canvas-chart');
@@ -945,7 +978,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec, getGapThresholdSec]);
+  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, digitalLanes, digitalLaneCount, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec, getGapThresholdSec]);
 
   useEffect(() => {
     const u = plotRef.current;
@@ -965,7 +998,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const u = plotRef.current;
     if (!u || plotPoints.length === 0) return;
     const savedX = imperativeXRangeRef.current;
-    u.setData(buildAlignedData(plotPoints, chartItems));
+    u.setData(buildAlignedData(plotPoints, chartItems, digitalLanes, digitalLaneCount));
     if (savedX) {
       u.setScale('x', savedX);
     } else if (xWindowTimeKeys) {
@@ -976,7 +1009,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       }
     }
     syncPlotAndBreaks(u);
-  }, [plotPoints, chartItems, seriesLayoutKey, syncPlotAndBreaks, xWindowTimeKeys]);
+  }, [plotPoints, chartItems, seriesLayoutKey, digitalLanes, digitalLaneCount, syncPlotAndBreaks, xWindowTimeKeys]);
 
   useEffect(() => {
     const u = plotRef.current;

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { VizItem } from '../api';
-import { clampChartZoom, computeYAxisDomain, parseOptionalNumber } from './vizDashboardUtils';
+import {
+  clampChartZoom,
+  computeYAxisDomain,
+  digitalLaneDomain,
+  digitalLaneValue,
+  isDigitalVizItem,
+  parseOptionalNumber,
+} from './vizDashboardUtils';
 
 describe('clampChartZoom', () => {
   it('clamps indices to data length', () => {
@@ -14,6 +21,44 @@ describe('parseOptionalNumber', () => {
     expect(parseOptionalNumber('12.5')).toBe(12.5);
     expect(parseOptionalNumber('')).toBeUndefined();
     expect(parseOptionalNumber('abc')).toBeUndefined();
+  });
+});
+
+describe('digital lanes', () => {
+  const item: VizItem = {
+    id: 'd1',
+    label: 'valve',
+    color: '#fff',
+    visible: true,
+    field_ref: { protocol_id: 'p1', field_name: 'aquavalve_ison' },
+    chart_type: 'line',
+    y_axis: { id: 'y-right', label: 'Right' },
+    offset: 0,
+    weight: 1,
+  };
+
+  it('detects on/off fields by protocol name', () => {
+    expect(isDigitalVizItem(item)).toBe(true);
+    expect(isDigitalVizItem({
+      ...item,
+      field_ref: { protocol_id: 'p1', field_name: 'drainmotor_getmotorcurrent' },
+    })).toBe(false);
+  });
+
+  it('stacks digital values on distinct fixed lanes', () => {
+    const lane0 = digitalLaneValue(1, 0, 7);
+    const lane1 = digitalLaneValue(1, 1, 7);
+    const lane0Off = digitalLaneValue(0, 0, 7);
+    expect(lane0).toBeGreaterThan(lane1);
+    expect(lane0).toBeGreaterThan(lane0Off);
+    expect(lane0 - lane1).toBeGreaterThan(1);
+  });
+
+  it('reserves a band for digital lanes above analog data', () => {
+    const [min, max] = digitalLaneDomain(7, 0.35);
+    expect(max).toBeCloseTo(8.4);
+    expect(min).toBeLessThan(0);
+    expect(min).toBeCloseTo(-15.6);
   });
 });
 

@@ -271,6 +271,14 @@
     "yMax": "Y Max",
     "yMinAria": "{{label}} Y축 최소",
     "yMaxAria": "{{label}} Y축 최대",
+    "axisRange": {
+      "title": "Y축 범위",
+      "apply": "적용",
+      "auto": "자동",
+      "invalid": "최소값과 최대값을 확인하세요. 최대값은 최소값보다 커야 합니다.",
+      "hint": "고정하면 X 이동/확대와 관계없이 해당 축 범위를 유지합니다. 자동을 선택하면 데이터 전체 범위로 계산합니다.",
+      "digitalHint": "on/off(_ison, _isopen 등) 신호는 RPM/아날로그 축과 분리된 고정 디지털 레인으로 자동 배치됩니다."
+    },
     "offset": "Offset",
     "weight": "Weight",
     "color": "Color",

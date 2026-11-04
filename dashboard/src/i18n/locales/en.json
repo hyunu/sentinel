@@ -271,6 +271,14 @@
     "yMax": "Y Max",
     "yMinAria": "{{label}} Y-axis minimum",
     "yMaxAria": "{{label}} Y-axis maximum",
+    "axisRange": {
+      "title": "Y-axis range",
+      "apply": "Apply",
+      "auto": "Auto",
+      "invalid": "Check the min and max values. Max must be greater than min.",
+      "hint": "Fixed keeps this axis range regardless of horizontal pan/zoom. Auto computes it from the full data range.",
+      "digitalHint": "On/off signals (_ison, _isopen, etc.) are placed on fixed digital lanes separate from RPM/analog axes."
+    },
     "offset": "Offset",
     "weight": "Weight",
     "color": "Color",

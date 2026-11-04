@@ -5,6 +5,7 @@ import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../a
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
+import Modal from '../components/Modal';
 import ChartSeriesGroup from '../components/ChartSeriesGroup';
 import VizFieldPicker from '../components/VizFieldPicker';
 import { buildCursorValueRows } from '../components/ChartCursorValues';
@@ -82,6 +83,7 @@ import {
   parseOptionalNumber,
   vizErrorMessage,
   yAxisOptionLabel,
+  isDigitalVizItem,
   applyVizItemTransform,
   formatVizActualValue,
   formatVizItemActualValue,
@@ -139,6 +141,9 @@ const VIEWPORT_FINISH_DEBOUNCE_MS = 48;
 const WHEEL_GESTURE_QUIET_MS = 180;
 
 type FieldValuesLayout = 'bottom' | 'left';
+type AxisRange = { min: number; max: number };
+type AxisRangeDraft = { auto: boolean; min: string; max: string };
+const AXIS_RANGE_STORAGE_PREFIX = 'sentinel.viz.axis-range.';
 type ChartLoadProgress = {
   phase: 'overview' | 'full' | 'detail';
   /** Bytes downloaded in the current request/chunk. */
@@ -563,7 +568,11 @@ function toChartPoints(
     for (const item of visible) {
       const raw = row.values[item.label];
       if (typeof raw === 'number' && !Number.isNaN(raw)) {
-        point[item.id] = applyVizItemTransform(raw, item);
+        // Digital signals keep their raw 0/1 value. The canvas turns them into
+        // stacked lanes on their own fixed scale.
+        point[item.id] = isDigitalVizItem(item)
+          ? (raw > 0.5 ? 1 : 0)
+          : applyVizItemTransform(raw, item);
       }
     }
     return point;
@@ -734,6 +743,17 @@ export default function VizDashboardPage() {
   const [yAxisZoomed, setYAxisZoomed] = useState(false);
   const [profiles, setProfiles] = useState<VizProfile[]>([]);
   const [savedProfileId, setSavedProfileId] = useState<string | null>(null);
+  const [axisRangeOpen, setAxisRangeOpen] = useState(false);
+  const [axisRangeLeft, setAxisRangeLeft] = useState<AxisRange | null>(null);
+  const [axisRangeRight, setAxisRangeRight] = useState<AxisRange | null>(null);
+  const [axisRangeDraft, setAxisRangeDraft] = useState<{
+    left: AxisRangeDraft;
+    right: AxisRangeDraft;
+  }>({
+    left: { auto: true, min: '', max: '' },
+    right: { auto: true, min: '', max: '' },
+  });
+  const [axisRangeError, setAxisRangeError] = useState('');
   const [timeRangePresetId, setTimeRangePresetId] = useState<TimePresetId>(TIME_PRESET_ALL);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -2914,6 +2934,34 @@ export default function VizDashboardPage() {
     () => profiles.find(p => p.id === savedProfileId) ?? null,
     [profiles, savedProfileId],
   );
+  const axisRangeStorageKey = useMemo(
+    () => `${AXIS_RANGE_STORAGE_PREFIX}${savedProfileId ?? selectedBoard ?? 'default'}`,
+    [savedProfileId, selectedBoard],
+  );
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(axisRangeStorageKey);
+      if (!raw) {
+        setAxisRangeLeft(null);
+        setAxisRangeRight(null);
+        return;
+      }
+      const parsed = JSON.parse(raw) as { left?: AxisRange; right?: AxisRange };
+      const valid = (range: AxisRange | undefined) => (
+        !!range
+        && Number.isFinite(range.min)
+        && Number.isFinite(range.max)
+        && range.max > range.min
+          ? range
+          : null
+      );
+      setAxisRangeLeft(valid(parsed.left));
+      setAxisRangeRight(valid(parsed.right));
+    } catch {
+      setAxisRangeLeft(null);
+      setAxisRangeRight(null);
+    }
+  }, [axisRangeStorageKey]);
   const profileDirty = useMemo(() => {
     if (!activeProfile) return false;
     const current = checkedOnly ? items.filter(i => i.visible) : items;
@@ -2922,6 +2970,33 @@ export default function VizDashboardPage() {
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name);
+  };
+  const applyAxisRanges = () => {
+    const parseDraft = (draft: AxisRangeDraft): AxisRange | null => {
+      if (draft.auto) return null;
+      const min = parseOptionalNumber(draft.min);
+      const max = parseOptionalNumber(draft.max);
+      if (min == null || max == null || max <= min) {
+        throw new Error(t('viz.axisRange.invalid'));
+      }
+      return { min, max };
+    };
+    try {
+      const left = parseDraft(axisRangeDraft.left);
+      const right = parseDraft(axisRangeDraft.right);
+      setAxisRangeLeft(left);
+      setAxisRangeRight(right);
+      setAxisRangeError('');
+      setAxisRangeOpen(false);
+      try {
+        localStorage.setItem(axisRangeStorageKey, JSON.stringify({ left, right }));
+      } catch {
+        /* ignore storage failures */
+      }
+      chartCanvasRef.current?.resetYAxes();
+    } catch (error) {
+      setAxisRangeError(vizErrorMessage(error, t('viz.axisRange.invalid')));
+    }
   };
 
   const visibleItems = useMemo(
@@ -2939,6 +3014,18 @@ export default function VizDashboardPage() {
   const activeChartItems = useMemo(
     () => items.filter(i => i.visible).slice(0, MAX_CHART_SERIES),
     [items],
+  );
+  const digitalChartItems = useMemo(
+    () => activeChartItems.filter(isDigitalVizItem),
+    [activeChartItems],
+  );
+  const digitalLanes = useMemo(
+    () => new Map(digitalChartItems.map((item, index) => [item.id, index] as const)),
+    [digitalChartItems],
+  );
+  const analogChartItems = useMemo(
+    () => activeChartItems.filter(item => !isDigitalVizItem(item)),
+    [activeChartItems],
   );
   const chartSeriesTruncated = visibleItems.length > MAX_CHART_SERIES;
 
@@ -3359,7 +3446,9 @@ export default function VizDashboardPage() {
   }, [chartZoom?.startTs, chartZoom?.endTs, inMemoryFull, chartData]);
 
   const resolveCanvasYScale = useCallback((item: VizItem) => (
-    item.y_axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y'
+    isDigitalVizItem(item)
+      ? 'y3'
+      : item.y_axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y'
   ), []);
 
   const chartInteractionHidden = isChartPanning || isChartSelecting || isChartMeasuring || isChartYZooming;
@@ -3590,10 +3679,10 @@ export default function VizDashboardPage() {
   const yAxisOptions = useMemo(() => PRESET_Y_AXES.map(axis => axis.id), []);
 
   const chartYAxes = useMemo(() => {
-    if (activeChartItems.length === 0) return [];
-    const usesRight = activeChartItems.some(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
-    const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
-    const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    if (analogChartItems.length === 0) return [];
+    const usesRight = analogChartItems.some(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    const leftItems = analogChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+    const rightItems = analogChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
     const axes: Array<{ id: string; orientation: 'left' | 'right'; unitLabel: string }> = [
       { id: PRIMARY_Y_AXIS_ID, orientation: 'left', unitLabel: axisUnitLabel(leftItems) },
     ];
@@ -3605,18 +3694,22 @@ export default function VizDashboardPage() {
       });
     }
     return axes;
-  }, [activeChartItems]);
+  }, [analogChartItems]);
 
   const chartYAxisDomains = useMemo(() => {
-    const leftItems = activeChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
-    const rightItems = activeChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+    const leftItems = analogChartItems.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+    const rightItems = analogChartItems.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
     // X 줌/팬과 무관하게 불러온 전체 구간으로 고정한다. 화면에 보이는 값에
     // 맞춰 축이 재계산되면 같은 변화가 다른 값처럼 읽히기 때문이다.
     return {
-      [PRIMARY_Y_AXIS_ID]: computeYAxisDomain(chartData, leftItems),
-      [SECONDARY_Y_AXIS_ID]: computeYAxisDomain(chartData, rightItems),
+      [PRIMARY_Y_AXIS_ID]: axisRangeLeft
+        ? [axisRangeLeft.min, axisRangeLeft.max] as [number, number]
+        : computeYAxisDomain(chartData, leftItems),
+      [SECONDARY_Y_AXIS_ID]: axisRangeRight
+        ? [axisRangeRight.min, axisRangeRight.max] as [number, number]
+        : computeYAxisDomain(chartData, rightItems),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, activeChartItems]);
+  }, [chartData, analogChartItems, axisRangeLeft, axisRangeRight]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -4364,6 +4457,33 @@ export default function VizDashboardPage() {
               >
                 <IconZoomReset />
               </button>
+              <button
+                type="button"
+                className={`viz-chart-icon-btn viz-chart-axis-range-btn${axisRangeLeft || axisRangeRight ? ' active' : ''}`}
+                onClick={() => {
+                  const left = chartYAxisDomains[PRIMARY_Y_AXIS_ID];
+                  const right = chartYAxisDomains[SECONDARY_Y_AXIS_ID];
+                  setAxisRangeDraft({
+                    left: {
+                      auto: !axisRangeLeft,
+                      min: (axisRangeLeft?.min ?? left?.[0])?.toFixed(3) ?? '',
+                      max: (axisRangeLeft?.max ?? left?.[1])?.toFixed(3) ?? '',
+                    },
+                    right: {
+                      auto: !axisRangeRight,
+                      min: (axisRangeRight?.min ?? right?.[0])?.toFixed(3) ?? '',
+                      max: (axisRangeRight?.max ?? right?.[1])?.toFixed(3) ?? '',
+                    },
+                  });
+                  setAxisRangeError('');
+                  setAxisRangeOpen(true);
+                }}
+                title={t('viz.axisRange.title')}
+                aria-label={t('viz.axisRange.title')}
+                aria-pressed={!!(axisRangeLeft || axisRangeRight)}
+              >
+                <span className="viz-chart-axis-range-glyph">Y</span>
+              </button>
               {showDetailLoadingIndicator && (
                 <span
                   className="viz-chart-detail-loading-indicator"
@@ -4475,6 +4595,8 @@ export default function VizDashboardPage() {
             maxVisibleSeries={MAX_CHART_SERIES}
             yAxisDomains={canvasYAxisDomains}
             yAxes={canvasYAxes}
+            digitalLanes={digitalLanes}
+            digitalLaneCount={digitalChartItems.length}
             chartLabel={chartLabel}
             resolveYScale={resolveCanvasYScale}
             height={chartViewportHeight}
@@ -4597,6 +4719,74 @@ export default function VizDashboardPage() {
           {fieldTooltip.text}
         </div>
       )}
+      <Modal
+        open={axisRangeOpen}
+        onClose={() => setAxisRangeOpen(false)}
+        title={t('viz.axisRange.title')}
+        footer={(
+          <>
+            <button type="button" className="btn-ghost" onClick={() => setAxisRangeOpen(false)}>
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="btn-primary" onClick={applyAxisRanges}>
+              {t('viz.axisRange.apply')}
+            </button>
+          </>
+        )}
+      >
+        <p className="muted viz-axis-range-hint">{t('viz.axisRange.hint')}</p>
+        {axisRangeError && <p className="viz-axis-range-error">{axisRangeError}</p>}
+        <div className="viz-axis-range-grid">
+          {([
+            ['left', t('viz.yAxisSide.left'), axisRangeDraft.left],
+            ['right', t('viz.yAxisSide.right'), axisRangeDraft.right],
+          ] as const).map(([side, label, draft]) => (
+            <div className="viz-axis-range-card" key={side}>
+              <div className="viz-axis-range-card-head">
+                <strong>{label}</strong>
+                <label className="viz-axis-range-auto">
+                  <input
+                    type="checkbox"
+                    checked={draft.auto}
+                    onChange={e => setAxisRangeDraft(prev => ({
+                      ...prev,
+                      [side]: { ...prev[side], auto: e.target.checked },
+                    }))}
+                  />
+                  {t('viz.axisRange.auto')}
+                </label>
+              </div>
+              <div className="viz-axis-range-inputs">
+                <label className="settings-field">
+                  <span>{t('viz.yMin')}</span>
+                  <input
+                    type="number"
+                    value={draft.min}
+                    disabled={draft.auto}
+                    onChange={e => setAxisRangeDraft(prev => ({
+                      ...prev,
+                      [side]: { ...prev[side], min: e.target.value, auto: false },
+                    }))}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t('viz.yMax')}</span>
+                  <input
+                    type="number"
+                    value={draft.max}
+                    disabled={draft.auto}
+                    onChange={e => setAxisRangeDraft(prev => ({
+                      ...prev,
+                      [side]: { ...prev[side], max: e.target.value, auto: false },
+                    }))}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="muted viz-axis-range-hint">{t('viz.axisRange.digitalHint')}</p>
+      </Modal>
       <ChartHelpManual open={chartManualOpen} onClose={() => setChartManualOpen(false)} />
     </div>
   );

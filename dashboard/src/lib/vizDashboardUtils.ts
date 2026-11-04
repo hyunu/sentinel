@@ -30,6 +30,38 @@ export function yAxisOptionLabel(axisId: string, tr: (key: string) => string): s
   return axisId;
 }
 
+/**
+ * On/off fields are detected by their protocol field name. LCP exposes them as
+ * `*_ison`, `*_isopen`, `*_isempty`, `*_iscomplete...`, etc. These are rendered
+ * as stacked digital lanes so they never share a scale with RPM/analog values.
+ */
+export function isDigitalVizItem(item: VizItem): boolean {
+  const field = item.field_ref.field_name.toLowerCase();
+  return /(?:^|_)(?:is[a-z0-9]+|on|off|enabled|disabled)$/.test(field);
+}
+
+export const DIGITAL_LANE_STEP = 1.2;
+export const DIGITAL_LANE_HEIGHT = 0.8;
+
+/** Fixed digital-lane value for an on/off raw value (0/1). */
+export function digitalLaneValue(
+  raw: number,
+  laneIndex: number,
+  laneCount: number,
+): number {
+  const count = Math.max(1, laneCount);
+  const max = count * DIGITAL_LANE_STEP;
+  const base = max - (laneIndex + 1) * DIGITAL_LANE_STEP;
+  return base + (raw > 0.5 ? DIGITAL_LANE_HEIGHT : 0);
+}
+
+export function digitalLaneDomain(laneCount: number, reservedRatio: number): [number, number] {
+  const count = Math.max(1, laneCount);
+  const max = count * DIGITAL_LANE_STEP;
+  const ratio = Math.max(0.05, Math.min(1, reservedRatio));
+  return [-max * (1 / ratio - 1), max];
+}
+
 /** Raw field value from a timestamp row (before offset/weight). */
 export function resolveVizItemRawValue(
   item: VizItem,
