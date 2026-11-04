@@ -2025,6 +2025,22 @@ tbody tr:last-child td {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
+.viz-chart-progress-percent {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.viz-chart-progress-size {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  opacity: 0.55;
+}
+
 @keyframes viz-chart-progress-slide {
   0% {
     left: -34%;

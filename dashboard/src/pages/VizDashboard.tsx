@@ -195,12 +195,6 @@ function axisUnitLabel(itemsOnAxis: VizItem[]): string {
   return '';
 }
 
-function formatLoadBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0KB';
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
-}
-
 function formatYAxisTick(value: number | string): string {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return String(value);
@@ -3382,9 +3376,6 @@ export default function VizDashboardPage() {
     }
     return ratio * 100;
   })();
-  const chartProgressPercentText = chartProgressPercent != null
-    ? chartProgressPercent.toFixed(1)
-    : null;
   const estimatedFullBytes = useMemo(() => {
     if (!chartDataLoading || !queryMeta?.total_matched || rawVizData.length === 0) {
       return null;
@@ -3395,25 +3386,33 @@ export default function VizDashboardPage() {
     const bytesPerRow = estimateVizPayloadBytes(rawVizData) / rawVizData.length;
     return Math.ceil(bytesPerRow * queryMeta.total_matched);
   }, [chartDataLoading, rawVizData, queryMeta?.total_matched]);
-  const chartProgressLabel = (() => {
-    if (!chartDataLoading) return '';
-    if (!chartLoadProgress) return t('viz.chartLoading');
-    const phase = t(`viz.loadPhase.${chartLoadProgress.phase}`);
-    const chunk = chartLoadProgress.chunkCount
-      ? ` ${chartLoadProgress.chunkIndex}/${chartLoadProgress.chunkCount}`
-      : '';
-    const overallLoaded = formatLoadBytes(chartLoadProgress.overallLoaded);
-    const overallTotal = chartLoadProgress.chunkCount
+  const chartProgressPercentDisplay = chartProgressPercent != null
+    ? `${String(Math.floor(chartProgressPercent)).padStart(2, '0')}%`
+    : '';
+  const chartProgressSizeText = (() => {
+    if (!chartDataLoading || !chartLoadProgress) return '';
+    const loadedMB = (chartLoadProgress.overallLoaded / 1024 / 1024).toFixed(1);
+    const totalBytes = chartLoadProgress.chunkCount
       ? estimatedFullBytes
       : chartLoadProgress.total;
-    const totalText = overallTotal
-      ? ` / ${chartLoadProgress.chunkCount ? '약 ' : ''}${formatLoadBytes(overallTotal)}`
-      : '';
-    if (chartProgressPercentText != null) {
-      return `${phase}${chunk} ${chartProgressPercentText}% · 누적 ${overallLoaded}${totalText}`;
-    }
-    return `${phase}${chunk} · 누적 ${overallLoaded}${totalText}`;
+    if (!totalBytes) return `${loadedMB} MB`;
+    const totalMB = Math.round(totalBytes / 1024 / 1024);
+    return `${loadedMB}/${String(totalMB).padStart(3, '0')} MB`;
   })();
+  const chartProgressLabel = [
+    chartProgressPercentDisplay,
+    chartProgressSizeText ? `(${chartProgressSizeText})` : '',
+  ].filter(Boolean).join(' ') || t('viz.chartLoading');
+  const chartProgressNode = (
+    <>
+      {chartProgressPercentDisplay && (
+        <span className="viz-chart-progress-percent">{chartProgressPercentDisplay}</span>
+      )}
+      {chartProgressSizeText && (
+        <span className="viz-chart-progress-size">({chartProgressSizeText})</span>
+      )}
+    </>
+  );
   const showDetailLoadingIndicator = detailLoading
     && chartZoomActive
     && !inMemoryFull
@@ -4449,7 +4448,7 @@ export default function VizDashboardPage() {
           />
         </div>
         {chartDataLoading && rawVizData.length > 0 && (
-          <span className="viz-chart-progress-label">{chartProgressLabel}</span>
+          <span className="viz-chart-progress-label">{chartProgressNode}</span>
         )}
         <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
         <div className="viz-chart-main">
@@ -4496,7 +4495,7 @@ export default function VizDashboardPage() {
             <div className="viz-chart-empty muted viz-chart-loading-state">
               <span>{chartEmptyMessage}</span>
               {chartDataLoading && chartProgressLabel && (
-                <span className="viz-chart-loading-detail">{chartProgressLabel}</span>
+                <span className="viz-chart-loading-detail">{chartProgressNode}</span>
               )}
             </div>
           ) : null}
