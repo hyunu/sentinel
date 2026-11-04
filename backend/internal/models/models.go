@@ -152,9 +152,12 @@ type CounterSeq struct {
 }
 
 type YAxisConfig struct {
-	ID    string  `json:"id" bson:"id"`
-	Label string  `json:"label" bson:"label"`
-	Unit  string  `json:"unit,omitempty" bson:"unit,omitempty"`
-	Min   float64 `json:"min,omitempty" bson:"min,omitempty"`
-	Max   float64 `json:"max,omitempty" bson:"max,omitempty"`
+	ID    string `json:"id" bson:"id"`
+	Label string `json:"label" bson:"label"`
+	Unit  string `json:"unit,omitempty" bson:"unit,omitempty"`
+	// Min/Max are pointers so an explicit 0 survives JSON/BSON round trips.
+	// Plain float64 with omitempty dropped 0 and made a fixed axis min of 0
+	// silently fall back to the auto range.
+	Min *float64 `json:"min,omitempty" bson:"min,omitempty"`
+	Max *float64 `json:"max,omitempty" bson:"max,omitempty"`
 }
