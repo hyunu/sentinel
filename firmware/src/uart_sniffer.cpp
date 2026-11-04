@@ -129,6 +129,16 @@ static void apply_pending_baud() {
     AppLog.printf("[UART] Baud changed to %lu\n", (unsigned long)current_baud);
 }
 
+static void emit_frame(FrameParser &parser, const char *direction) {
+    if (direction[0] == 'T') {
+        tx_frames++;
+    } else {
+        rx_frames++;
+    }
+    on_frame_received(parser.buf, parser.pos, direction);
+    reset_parser(parser);
+}
+
 static void process_byte(FrameParser &parser, uint8_t b,
                          const char *direction) {
     if (parser.pos == 0) {
@@ -142,32 +152,24 @@ static void process_byte(FrameParser &parser, uint8_t b,
 
     parser.buf[parser.pos++] = b;
 
-    if (parser.pos == 3 && parser.expected_len == 0) {
-        parser.expected_len = (parser.buf[1] << 8) | parser.buf[2];
+    // LCP monitoring uses AA [LEN:1] FID … BB where LEN is the total frame
+    // size including STX (e.g. 0x8A == 138). Do not treat every 0xBB as an
+    // end marker — payload bytes can legally contain 0xBB.
+    if (parser.pos == 2) {
+        parser.expected_len = parser.buf[1];
+        if (parser.expected_len < 5 ||
+            parser.expected_len > (int)sizeof(parser.buf)) {
+            reset_parser(parser);
+            return;
+        }
     }
 
-    if (b == FRAME_END_BYTE && parser.pos > 4) {
-        if (direction[0] == 'T') {
-            tx_frames++;
+    if (parser.expected_len > 0 && parser.pos >= parser.expected_len) {
+        if (parser.buf[parser.pos - 1] == FRAME_END_BYTE) {
+            emit_frame(parser, direction);
         } else {
-            rx_frames++;
+            reset_parser(parser);
         }
-        on_frame_received(parser.buf, parser.pos, direction);
-        reset_parser(parser);
-        return;
-    }
-
-    if (parser.expected_len > 0 &&
-        parser.pos >= parser.expected_len + 1) {
-        if (b == FRAME_END_BYTE) {
-            if (direction[0] == 'T') {
-                tx_frames++;
-            } else {
-                rx_frames++;
-            }
-            on_frame_received(parser.buf, parser.pos, direction);
-        }
-        reset_parser(parser);
         return;
     }
 
