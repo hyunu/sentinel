@@ -297,6 +297,110 @@ func coalesceVizPointsByTimestamp(points []vizDataPoint) []vizDataPoint {
 	return out
 }
 
+// queryVizSeriesSampled returns actual parsed samples spread across the whole
+// range instead of bucket averages. This keeps the rough overview silhouette
+// (peaks, on/off edges, start/end) close to the detailed data.
+func (h *Handler) queryVizSeriesSampled(
+	ctx context.Context,
+	filter bson.M,
+	items []models.VizItem,
+	limit int,
+) ([]vizDataPoint, vizQueryMeta, error) {
+	effectiveLimit := normalizeVizPointLimit(limit)
+	if len(items) == 0 {
+		return []vizDataPoint{}, vizQueryMeta{}, nil
+	}
+
+	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	if total == 0 {
+		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
+	}
+	if total <= int64(effectiveLimit) {
+		return h.queryVizSeries(ctx, filter, items, effectiveLimit)
+	}
+
+	// Two boundary samples per bucket (first/last) keep both ends of sharp
+	// transitions while still bounding the response size.
+	buckets := effectiveLimit / 2
+	if buckets < 1 {
+		buckets = 1
+	}
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: buildVizProjection(items)}},
+		{{Key: "$bucketAuto", Value: bson.M{
+			"groupBy": "$timestamp",
+			"buckets": buckets,
+			"output": bson.M{
+				"first": bson.M{"$first": bson.M{
+					"timestamp":     "$timestamp",
+					"parsed_fields": "$parsed_fields",
+				}},
+				"last": bson.M{"$last": bson.M{
+					"timestamp":     "$timestamp",
+					"parsed_fields": "$parsed_fields",
+				}},
+			},
+		}}},
+	}
+
+	cursor, err := h.db.UartData().Aggregate(
+		ctx, pipeline,
+		options.Aggregate().SetAllowDiskUse(true).SetBatchSize(500),
+	)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	defer cursor.Close(ctx)
+
+	results := make([]vizDataPoint, 0, effectiveLimit)
+	for cursor.Next(ctx) {
+		var group struct {
+			First vizBucketDocEntry `bson:"first"`
+			Last  vizBucketDocEntry `bson:"last"`
+		}
+		if err := cursor.Decode(&group); err != nil {
+			continue
+		}
+		for _, doc := range []vizBucketDocEntry{group.First, group.Last} {
+			if doc.Timestamp.IsZero() {
+				continue
+			}
+			vals := vizValuesFromDoc(&vizSampleDoc{
+				Timestamp:    doc.Timestamp,
+				ParsedFields: doc.ParsedFields,
+			}, items)
+			if len(vals) == 0 {
+				continue
+			}
+			results = append(results, vizDataPoint{Timestamp: doc.Timestamp, Values: vals})
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+
+	results = coalesceVizPointsByTimestamp(results)
+	if len(results) > 1 {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].Timestamp.Before(results[j].Timestamp)
+		})
+	}
+	if len(results) > effectiveLimit {
+		results = results[:effectiveLimit]
+	}
+
+	return results, vizQueryMeta{
+		TotalMatched: total,
+		Returned:     len(results),
+		Downsampled:  total > int64(len(results)),
+	}, nil
+}
+
 func (h *Handler) queryVizSeries(
 	ctx context.Context,
 	filter bson.M,

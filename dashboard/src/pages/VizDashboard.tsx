@@ -74,6 +74,7 @@ import {
   FULL_LOAD_CHUNK_ROWS,
   FULL_LOAD_CONCURRENCY,
   FULL_LOAD_MAX_POINTS,
+  OVERVIEW_SAMPLE_POINTS,
   shouldChunkedFullLoad,
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
@@ -354,6 +355,7 @@ type VizQueryParams = {
   since?: string;
   aggregation?: 'avg' | 'min' | 'max';
   bucket_seconds?: number;
+  sampling?: 'raw-sample';
 };
 
 type VizLoadProgressHandler = (progress: ChartLoadProgress) => void;
@@ -548,7 +550,7 @@ async function queryVizDataset(
   allRangeAssessment: AllRangeLoadAssessment | null;
 }> {
   const overview = await api.viz.queryItems(
-    { ...params, limit: MAX_POINTS },
+    { ...params, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
     {
       signal: options?.signal,
       timeoutMs: options?.timeoutMs,

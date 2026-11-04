@@ -16,6 +16,9 @@ export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
 export const FULL_LOAD_MAX_POINTS = 100_000;
+/** Rough whole-range sample size. Kept below the detailed chunk size so the
+ *  first phase stays fast while preserving peaks and start/end of the range. */
+export const OVERVIEW_SAMPLE_POINTS = 4_000;
 /** Time-sliced full-load chunk size. Keep each response comfortably below the single-response budget. */
 export const FULL_LOAD_CHUNK_ROWS = 4_000;
 /** Concurrent chunk requests. Each chunk is ~14 MB, so keep the fan-out small. */

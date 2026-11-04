@@ -224,6 +224,9 @@ type VizQueryItemsRequest struct {
 	BucketSeconds int               `json:"bucket_seconds,omitempty"`
 	// Mode "live" returns raw parsed samples (never min/avg/max rollups).
 	Mode string `json:"mode,omitempty"`
+	// Sampling "raw-sample" returns actual samples spread over the full range.
+	// Used for the rough overview so it keeps the detailed chart silhouette.
+	Sampling string `json:"sampling,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -266,6 +269,8 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	)
 	if live {
 		results, meta, err = h.queryVizSeriesRaw(ctx, filter, req.Items, limit)
+	} else if req.Sampling == "raw-sample" {
+		results, meta, err = h.queryVizSeriesSampled(ctx, filter, req.Items, limit)
 	} else if isVizAggregation(req.Aggregation) {
 		results, meta, err = h.queryVizSeriesAggregated(ctx, filter, req.Items, req.Aggregation, req.BucketSeconds, limit)
 	} else {
@@ -338,7 +343,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 	}
 
 	filter := bson.M{
-		"board_id": req.BoardID,
+		"board_id":  req.BoardID,
 		"timestamp": bson.M{"$gte": start, "$lte": end},
 	}
 

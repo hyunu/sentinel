@@ -419,6 +419,7 @@ export const api = {
       aggregation?: 'avg' | 'min' | 'max';
       bucket_seconds?: number;
       mode?: 'live';
+      sampling?: 'raw-sample';
     }, options?: {
       signal?: AbortSignal;
       timeoutMs?: number;
