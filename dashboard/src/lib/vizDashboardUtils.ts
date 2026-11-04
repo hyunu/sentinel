@@ -155,7 +155,21 @@ export function computeYAxisDomain(data: VizChartPoint[], axisItems: VizItem[]):
     return [min - pad, max + pad];
   }
   const bothFixed = fixedMins.length > 0 && fixedMaxs.length > 0;
-  if (bothFixed) return [min, max];
+  if (bothFixed) {
+    // Both ends are explicit. Keep them ordered: an inverted pair would make
+    // uPlot draw an empty axis (e.g. min=10, max=-10).
+    return min < max ? [min, max] : [max, min];
+  }
+  if (max < min) {
+    // A one-sided bound can sit outside the data (only max=-5 with positive
+    // data). Widen the other end instead of returning an inverted range.
+    const span = Math.max(Math.abs(min), Math.abs(max), 1) * 0.05;
+    if (fixedMins.length > 0) {
+      max = min + span;
+    } else {
+      min = max - span;
+    }
+  }
   const pad = (max - min) * 0.05;
   return [min - pad, max + pad];
 }

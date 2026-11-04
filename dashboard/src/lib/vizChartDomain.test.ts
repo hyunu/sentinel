@@ -92,6 +92,35 @@ describe('computeYAxisDomain', () => {
     expect(domain).toEqual([0, 500]);
   });
 
+  it('honors negative fixed bounds', () => {
+    const fixed: VizItem = {
+      ...item,
+      y_axis: { id: 'y-left', label: 'Left', min: -10, max: 0 },
+    };
+    const domain = computeYAxisDomain([{ timeKey: 't1', a1: 30 }], [fixed]);
+    expect(domain).toEqual([-10, 0]);
+  });
+
+  it('widens a one-sided negative max instead of inverting the axis', () => {
+    const fixed: VizItem = {
+      ...item,
+      y_axis: { id: 'y-left', label: 'Left', max: -5 },
+    };
+    const domain = computeYAxisDomain([{ timeKey: 't1', a1: 100 }], [fixed]);
+    expect(domain).toBeDefined();
+    expect(domain![0]).toBeLessThan(domain![1]);
+    expect(domain![1]).toBeGreaterThan(-5 - 10);
+  });
+
+  it('keeps inverted explicit bounds ordered', () => {
+    const fixed: VizItem = {
+      ...item,
+      y_axis: { id: 'y-left', label: 'Left', min: 10, max: -10 },
+    };
+    const domain = computeYAxisDomain([{ timeKey: 't1', a1: 1 }], [fixed]);
+    expect(domain).toEqual([-10, 10]);
+  });
+
   it('uses full timeline range so zoom window does not shrink domain', () => {
     const full = [
       { timeKey: 't1', a1: 0 },

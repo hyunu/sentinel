@@ -3880,6 +3880,14 @@ export default function VizDashboardPage() {
     y2: chartYAxisDomains[SECONDARY_Y_AXIS_ID],
   }), [chartYAxisDomains]);
 
+  // Bump when the user changes explicit axis bounds so the chart drops any
+  // manual Y zoom and applies the new profile settings.
+  const yDomainOverrideKey = useMemo(() => JSON.stringify({
+    left: axisRangeLeft,
+    right: axisRangeRight,
+    items: analogChartItems.map(i => [i.id, i.y_axis.min ?? null, i.y_axis.max ?? null]),
+  }), [analogChartItems, axisRangeLeft, axisRangeRight]);
+
   const sparkValueMax = useMemo(() => {
     const domain = chartYAxisDomains[PRIMARY_Y_AXIS_ID];
     return domain?.[1];
@@ -4751,6 +4759,7 @@ export default function VizDashboardPage() {
             fullTimeline={inMemoryFull && chartData.length > 0 ? chartData : undefined}
             windowIndices={canvasWindowIndices}
             xWindowTimeKeys={canvasXWindowTimeKeys}
+            yDomainOverrideKey={yDomainOverrideKey}
             filterPointsToXWindow={!canvasClipViewport}
             chartItems={chartItems}
             maxVisibleSeries={MAX_CHART_SERIES}

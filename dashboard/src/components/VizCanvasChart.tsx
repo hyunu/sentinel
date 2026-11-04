@@ -144,6 +144,8 @@ export interface VizCanvasChartProps {
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
   xWindowTimeKeys?: { start: string; end: string } | null;
+  /** Changes whenever explicit Y min/max (profile or global range) change. */
+  yDomainOverrideKey?: string;
   /** When false, uPlot x-scale clips full detail — avoids per-zoom point filtering. */
   filterPointsToXWindow?: boolean;
   chartItems: VizItem[];
@@ -353,6 +355,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     fullTimeline,
     windowIndices,
     xWindowTimeKeys,
+    yDomainOverrideKey = '',
     filterPointsToXWindow = true,
     chartItems,
     maxVisibleSeries,
@@ -1022,6 +1025,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     syncPlotAndBreaks(u);
   }, [plotPoints, chartItems, seriesLayoutKey, digitalLanes, digitalLaneCount, syncPlotAndBreaks, xWindowTimeKeys]);
 
+  // Explicit Y min/max (profile item settings or the global axis range) must win
+  // over an earlier manual Y zoom; otherwise the domain effect below keeps
+  // returning early and new bounds never reach uPlot.
+  useEffect(() => {
+    yUserAdjustedRef.current = false;
+  }, [yDomainOverrideKey]);
+
   useEffect(() => {
     const u = plotRef.current;
     if (!u || plotPoints.length === 0) return;
@@ -1033,7 +1043,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     if (rightDomain) u.setScale('y2', { min: rightDomain[0], max: rightDomain[1] });
     u.redraw();
     syncPlotAndBreaks(u);
-  }, [plotPoints.length, yDomainKey, syncPlotAndBreaks, yAxisDomains]);
+  }, [plotPoints.length, yDomainKey, yDomainOverrideKey, syncPlotAndBreaks, yAxisDomains]);
 
   useEffect(() => {
     const u = plotRef.current;
