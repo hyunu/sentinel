@@ -8,6 +8,7 @@
 #include "config.h"
 #include "ble_service.h"
 #include "logger.h"
+#include "status_led.h"
 
 static int http_post(const String &path, const String &body, String *responseOut = nullptr);
 static void flush_uart_batch();
@@ -150,6 +151,7 @@ void wifi_connect(const String &ssid, const String &password) {
     nvs_save_string("pass", password);
 
     connecting = true;
+    status_led_set(true);
     AppLog.printf("[WiFi] Connecting to %s...\n", ssid.c_str());
     WiFi.disconnect(false);
     delay(100);
@@ -169,6 +171,7 @@ void wifi_loop() {
         // The STA netif may finalize its locally-administered MAC only after
         // association. Keep the BLE-readable MAC in sync with heartbeats.
         ble_set_wifi_mac(WiFi.macAddress());
+        status_led_set(false);
         AppLog.printf("[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
         ble_set_wifi_connected(true);
         ble_send_uart_data(String("EVENT:WIFI_CONNECTED"));
@@ -179,6 +182,7 @@ void wifi_loop() {
         pendingInitialHeartbeat = false;
         WiFi.setAutoReconnect(false);
         WiFi.disconnect(false);
+        status_led_set(false);
         ble_set_wifi_connected(false);
         ble_send_uart_data(String("EVENT:WIFI_FAILED"));
         AppLog.println("[WiFi] Connection timed out; waiting for new onboarding config");
@@ -256,6 +260,7 @@ void wifi_clear_board_registration() {
     pendingInitialHeartbeat = false;
     WiFi.setAutoReconnect(false);
     WiFi.disconnect(false);
+    status_led_set(false);
     ble_set_wifi_connected(false);
     AppLog.println("[WiFi] Board registration and WiFi credentials cleared");
 }
@@ -365,6 +370,7 @@ void wifi_force_reconnect() {
     if (ssid.length() == 0) return;
 
     AppLog.println("[WiFi] Link watchdog: forcing reconnect");
+    status_led_set(true);
     WiFi.disconnect(false);
     delay(100);
     WiFi.begin(ssid.c_str(), pass.c_str());

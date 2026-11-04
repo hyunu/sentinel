@@ -18,6 +18,11 @@
 #define HEARTBEAT_INTERVAL_MS  10000
 #define TEMP_INTERVAL_MS       3000
 
+// On-board single-color status LED. The C3 module used here has a blue LED
+// on GPIO8 wired active-low (3V3 -> LED -> GPIO8).
+#define STATUS_LED_PIN         8
+#define STATUS_LED_ACTIVE_LOW  1
+
 // Set to 1 to transmit captured UART frames to the server/BLE.
 #define ENABLE_TEST_SENSOR_DATA 1
 // Keep fake temperature frames out of uart_data while testing LCP capture.

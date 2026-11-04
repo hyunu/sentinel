@@ -14,6 +14,7 @@
 #include "wifi_manager.h"
 #include "temp_sensor.h"
 #include "display_manager.h"
+#include "status_led.h"
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -83,6 +84,7 @@ void setup() {
                   UART_BAUD_RATE, UART_CAPTURE_RX_PIN,
                   UART_CAPTURE_TX_PIN);
 
+    status_led_init();
     display_init();
     // wifi_init must run before ble_init so WiFi.macAddress() is valid for
     // the BLE MAC characteristic (6e400004).
