@@ -299,9 +299,10 @@
     "resetZoom": "Reset zoom (Home / 0)",
     "detailLoading": "Loading detail data…",
     "chartLoading": "Loading chart data",
+    "roughSampling": "Sampling the full range…",
     "loadPhase": {
-      "overview": "Overview",
-      "full": "Full",
+      "overview": "Rough sampling",
+      "full": "Detailed load",
       "detail": "Detail"
     },
     "detailRefreshing": "Refreshing detail data…",

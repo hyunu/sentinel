@@ -833,6 +833,7 @@ export default function VizDashboardPage() {
   /** After spectrum-driven query, fit the chart viewport to this time span. */
   const pendingSpectrumViewportRef = useRef<{ startMs: number; endMs: number } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [awaitingRoughData, setAwaitingRoughData] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
   const [fullLoadBytesEstimate, setFullLoadBytesEstimate] = useState<number | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
@@ -2325,6 +2326,7 @@ export default function VizDashboardPage() {
     willLoadFull: boolean,
   ) => {
     applyOverviewResult(data, meta, willLoadFull);
+    setAwaitingRoughData(false);
     if (
       willLoadFull
       && meta
@@ -2366,6 +2368,7 @@ export default function VizDashboardPage() {
     setProfileError('');
     setQueryError(null);
     setLoading(true);
+    setAwaitingRoughData(true);
     overviewAbortRef.current?.abort();
     const controller = new AbortController();
     overviewAbortRef.current = controller;
@@ -2410,6 +2413,7 @@ export default function VizDashboardPage() {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
         setLoading(false);
+        setAwaitingRoughData(false);
         setChartLoadProgress(null);
       }
     }
@@ -2517,6 +2521,7 @@ export default function VizDashboardPage() {
     const controller = new AbortController();
     overviewAbortRef.current = controller;
     setLoading(true);
+    setAwaitingRoughData(true);
     setQueryError(null);
     setFullLoadBytesEstimate(null);
     try {
@@ -2547,6 +2552,7 @@ export default function VizDashboardPage() {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
         setLoading(false);
+        setAwaitingRoughData(false);
         setChartLoadProgress(null);
       }
     }
@@ -4687,7 +4693,14 @@ export default function VizDashboardPage() {
         >
           {selectionOverlay.overlayNode}
           {timeMeasureOverlay.overlayNode}
-          {canvasChartData.length > 0 && activeChartItems.length > 0 ? (
+          {awaitingRoughData ? (
+            <div className="viz-chart-empty muted viz-chart-loading-state">
+              <span>{t('viz.roughSampling')}</span>
+              {chartDataLoading && chartProgressLabel && (
+                <span className="viz-chart-loading-detail">{chartProgressNode}</span>
+              )}
+            </div>
+          ) : canvasChartData.length > 0 && activeChartItems.length > 0 ? (
           <VizCanvasChart
             ref={chartCanvasRef}
             points={canvasChartData}

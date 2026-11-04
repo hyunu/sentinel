@@ -299,9 +299,10 @@
     "resetZoom": "줌 초기화 (Home / 0)",
     "detailLoading": "상세 데이터 불러오는 중…",
     "chartLoading": "차트 데이터 불러오는 중",
+    "roughSampling": "전체 영역 러프 샘플링 중…",
     "loadPhase": {
-      "overview": "개요",
-      "full": "전체",
+      "overview": "러프 샘플링",
+      "full": "상세 적재",
       "detail": "상세"
     },
     "detailRefreshing": "상세 데이터 갱신 중…",
