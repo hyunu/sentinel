@@ -417,9 +417,12 @@ async function queryFullDatasetChunked(
         'full', loaded, total, chunkIndex, chunkCount,
       ),
     });
+    // Coalescing nearby timestamps also reduces returned rows; only recurse
+    // when the request actually hit the point limit.
+    const hitPointLimit = !!result.meta && result.meta.total_matched > chunkLimit;
     if (
-      result.meta?.downsampled
-      && result.meta.total_matched > result.data.length
+      hitPointLimit
+      && result.meta!.downsampled
       && depth < 3
       && rangeEndMs - rangeStartMs > 60_000
       && !options?.signal?.aborted
