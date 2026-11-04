@@ -86,6 +86,7 @@ import {
   vizErrorMessage,
   yAxisOptionLabel,
   isDigitalVizItem,
+  usesDigitalLane,
   applyVizItemTransform,
   formatVizActualValue,
   formatVizItemActualValue,
@@ -3183,7 +3184,7 @@ export default function VizDashboardPage() {
     [items],
   );
   const digitalChartItems = useMemo(
-    () => activeChartItems.filter(isDigitalVizItem),
+    () => activeChartItems.filter(usesDigitalLane),
     [activeChartItems],
   );
   const digitalLanes = useMemo(
@@ -3191,7 +3192,7 @@ export default function VizDashboardPage() {
     [digitalChartItems],
   );
   const analogChartItems = useMemo(
-    () => activeChartItems.filter(item => !isDigitalVizItem(item)),
+    () => activeChartItems.filter(item => !usesDigitalLane(item)),
     [activeChartItems],
   );
   const chartSeriesTruncated = visibleItems.length > MAX_CHART_SERIES;
@@ -3613,7 +3614,7 @@ export default function VizDashboardPage() {
   }, [chartZoom?.startTs, chartZoom?.endTs, inMemoryFull, chartData]);
 
   const resolveCanvasYScale = useCallback((item: VizItem) => (
-    isDigitalVizItem(item)
+    usesDigitalLane(item)
       ? 'y3'
       : item.y_axis.id === SECONDARY_Y_AXIS_ID ? 'y2' : 'y'
   ), []);
