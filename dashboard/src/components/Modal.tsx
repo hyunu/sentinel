@@ -30,6 +30,11 @@ export default function Modal({ open, onClose, title, children, footer, wide }: 
 
   if (!open) return null;
 
+  // While the chart card is in the Fullscreen API, only its subtree is painted
+  // above the page. Portaling to document.body would put the dialog behind the
+  // fullscreen chart, so mount it inside the fullscreen element when present.
+  const portalTarget = (document.fullscreenElement as HTMLElement | null) ?? document.body;
+
   return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div
@@ -49,6 +54,6 @@ export default function Modal({ open, onClose, title, children, footer, wide }: 
         {footer ? <div className="modal-footer">{footer}</div> : null}
       </div>
     </div>,
-    document.body,
+    portalTarget,
   );
 }
