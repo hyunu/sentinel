@@ -110,16 +110,28 @@ type Temperature struct {
 	ValueCelsius float64   `json:"value_celsius" bson:"value_celsius"`
 }
 
+type VizAxisBounds struct {
+	Min float64 `json:"min" bson:"min"`
+	Max float64 `json:"max" bson:"max"`
+}
+
+// VizAxisRange pins the analog Y axes for a profile. Nil sides mean Auto.
+type VizAxisRange struct {
+	Left  *VizAxisBounds `json:"left,omitempty" bson:"left,omitempty"`
+	Right *VizAxisBounds `json:"right,omitempty" bson:"right,omitempty"`
+}
+
 type VizProfile struct {
-	ID          string     `json:"id" bson:"_id"`
-	Name        string     `json:"name" bson:"name"`
-	Description string     `json:"description,omitempty" bson:"description,omitempty"`
-	BoardID     string     `json:"board_id" bson:"board_id"`
-	SessionIDs  []string   `json:"session_ids,omitempty" bson:"session_ids,omitempty"`
-	TimeRange   *TimeRange `json:"time_range,omitempty" bson:"time_range,omitempty"`
-	Items       []VizItem  `json:"items" bson:"items"`
-	CreatedAt   time.Time  `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at" bson:"updated_at"`
+	ID          string        `json:"id" bson:"_id"`
+	Name        string        `json:"name" bson:"name"`
+	Description string        `json:"description,omitempty" bson:"description,omitempty"`
+	BoardID     string        `json:"board_id" bson:"board_id"`
+	SessionIDs  []string      `json:"session_ids,omitempty" bson:"session_ids,omitempty"`
+	TimeRange   *TimeRange    `json:"time_range,omitempty" bson:"time_range,omitempty"`
+	YAxisRange  *VizAxisRange `json:"y_axis_range,omitempty" bson:"y_axis_range,omitempty"`
+	Items       []VizItem     `json:"items" bson:"items"`
+	CreatedAt   time.Time     `json:"created_at" bson:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at" bson:"updated_at"`
 }
 
 type TimeRange struct {

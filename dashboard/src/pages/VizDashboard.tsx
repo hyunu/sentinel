@@ -155,6 +155,17 @@ type FieldValuesLayout = 'bottom' | 'left';
 type AxisRange = { min: number; max: number };
 type AxisRangeDraft = { auto: boolean; min: string; max: string };
 const AXIS_RANGE_STORAGE_PREFIX = 'sentinel.viz.axis-range.';
+
+function normalizeAxisRange(range?: { min: number; max: number } | null): AxisRange | null {
+  if (!range) return null;
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return null;
+  if (range.max <= range.min) return null;
+  return { min: range.min, max: range.max };
+}
+
+function axisRangeStorageKeyFor(id?: string | null): string {
+  return `${AXIS_RANGE_STORAGE_PREFIX}${id ?? 'default'}`;
+}
 type ChartLoadProgress = {
   phase: 'overview' | 'full' | 'detail';
   /** Bytes downloaded in the current request/chunk. */
@@ -2608,6 +2619,25 @@ export default function VizDashboardPage() {
     try {
       const p = await api.viz.getProfile(id);
       overviewItemsRef.current = itemsForOverviewQuery(p.items);
+      // The profile owns the fixed Y ranges. Mirror them into localStorage so
+      // the existing per-profile storage effect and the toolbar state agree.
+      const loadedLeftRange = normalizeAxisRange(p.y_axis_range?.left);
+      const loadedRightRange = normalizeAxisRange(p.y_axis_range?.right);
+      if (loadedLeftRange || loadedRightRange) {
+        // A profile-saved range wins over any browser-local fallback.
+        setAxisRangeLeft(loadedLeftRange);
+        setAxisRangeRight(loadedRightRange);
+        try {
+          localStorage.setItem(axisRangeStorageKeyFor(p.id), JSON.stringify({
+            left: loadedLeftRange,
+            right: loadedRightRange,
+          }));
+        } catch {
+          /* ignore storage failures */
+        }
+      }
+      // With no profile range, leave the per-profile local value in place;
+      // the axisRangeStorageKey effect loads it (or clears to Auto).
       setSelectedBoard(p.board_id);
       setItems(normalizeVizItems(p.items));
       setAiChartLink(null);
@@ -3234,6 +3264,12 @@ export default function VizDashboardPage() {
         board_id: selectedBoard,
         items: profileItems,
         time_range: buildTimeRange(),
+        y_axis_range: (axisRangeLeft || axisRangeRight)
+          ? {
+              left: axisRangeLeft ?? undefined,
+              right: axisRangeRight ?? undefined,
+            }
+          : undefined,
       };
       if (existing) {
         await api.viz.updateProfile(existing.id, { ...existing, ...data });
@@ -3292,7 +3328,7 @@ export default function VizDashboardPage() {
     [profiles, savedProfileId],
   );
   const axisRangeStorageKey = useMemo(
-    () => `${AXIS_RANGE_STORAGE_PREFIX}${savedProfileId ?? selectedBoard ?? 'default'}`,
+    () => axisRangeStorageKeyFor(savedProfileId ?? selectedBoard),
     [savedProfileId, selectedBoard],
   );
   useEffect(() => {
@@ -3304,16 +3340,8 @@ export default function VizDashboardPage() {
         return;
       }
       const parsed = JSON.parse(raw) as { left?: AxisRange; right?: AxisRange };
-      const valid = (range: AxisRange | undefined) => (
-        !!range
-        && Number.isFinite(range.min)
-        && Number.isFinite(range.max)
-        && range.max > range.min
-          ? range
-          : null
-      );
-      setAxisRangeLeft(valid(parsed.left));
-      setAxisRangeRight(valid(parsed.right));
+      setAxisRangeLeft(normalizeAxisRange(parsed.left));
+      setAxisRangeRight(normalizeAxisRange(parsed.right));
     } catch {
       setAxisRangeLeft(null);
       setAxisRangeRight(null);
@@ -3322,8 +3350,17 @@ export default function VizDashboardPage() {
   const profileDirty = useMemo(() => {
     if (!activeProfile) return false;
     const current = checkedOnly ? items.filter(i => i.visible) : items;
-    return JSON.stringify(current) !== JSON.stringify(activeProfile.items);
-  }, [items, activeProfile, checkedOnly]);
+    const itemsDirty = JSON.stringify(current) !== JSON.stringify(activeProfile.items);
+    const normalizeRange = (range?: { left?: AxisRange; right?: AxisRange }) => JSON.stringify({
+      left: range?.left ? { min: range.left.min, max: range.left.max } : null,
+      right: range?.right ? { min: range.right.min, max: range.right.max } : null,
+    });
+    const rangeDirty = normalizeRange({
+      left: axisRangeLeft ?? undefined,
+      right: axisRangeRight ?? undefined,
+    }) !== normalizeRange(activeProfile.y_axis_range);
+    return itemsDirty || rangeDirty;
+  }, [items, activeProfile, checkedOnly, axisRangeLeft, axisRangeRight]);
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name);
@@ -3380,6 +3417,18 @@ export default function VizDashboardPage() {
         },
       };
     }));
+    if (result.axis) {
+      const leftRange = { min: result.axis[0], max: result.axis[1] };
+      setAxisRangeLeft(leftRange);
+      try {
+        localStorage.setItem(axisRangeStorageKey, JSON.stringify({
+          left: leftRange,
+          right: axisRangeRight,
+        }));
+      } catch {
+        /* ignore storage failures */
+      }
+    }
     setAutoLayoutNote(t('viz.autoLayoutDone', { count: result.updates.length }));
   };
 
@@ -4477,6 +4526,16 @@ export default function VizDashboardPage() {
                 {t('viz.autoLayout')}
               </button>
               {autoLayoutNote && <span className="muted">{autoLayoutNote}</span>}
+              {autoLayoutNote && savedProfileId && (
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  onClick={() => void saveCurrentProfile()}
+                  disabled={profileSaving || !profileDirty}
+                >
+                  {t('viz.saveNow')}
+                </button>
+              )}
               <label className="viz-checked-only-toggle">
                 <input
                   type="checkbox"

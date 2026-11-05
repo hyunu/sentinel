@@ -200,6 +200,11 @@ export interface VizProfile {
   board_id: string;
   session_ids?: string[];
   time_range?: { start: string; end: string };
+  /** Server-persisted fixed analog Y ranges. Missing side means Auto. */
+  y_axis_range?: {
+    left?: { min: number; max: number };
+    right?: { min: number; max: number };
+  };
   items: VizItem[];
   created_at: string;
   updated_at: string;

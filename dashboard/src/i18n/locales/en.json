@@ -276,7 +276,7 @@
       "apply": "Apply",
       "auto": "Auto",
       "invalid": "Check the min and max values. Max must be greater than min.",
-      "hint": "To pin an axis, turn Auto off and enter Y Min/Max. Fixed keeps this range regardless of horizontal pan/zoom.",
+      "hint": "To pin an axis, turn Auto off and enter Y Min/Max. Fixed keeps this range regardless of horizontal pan/zoom. Save changes to store it in the profile.",
       "digitalHint": "On/off signals (_ison, _isopen, etc.) are placed on fixed digital lanes separate from RPM/analog axes.",
       "digitalCard": "digital fixed",
       "digitalOnlyNote": "On/off signals on this side are drawn as fixed digital lanes. Analog range settings do not apply.",
@@ -404,7 +404,8 @@
     },
     "autoLayout": "Auto Y layout",
     "autoLayoutHint": "Stacks visible on/off items below the analog range with even spacing and pins the axis bounds.",
-    "autoLayoutDone": "Placed {count} on/off items below. Save the profile to keep it.",
+    "autoLayoutDone": "Placed {{count}} on/off items below. Save the profile to keep it.",
+    "saveNow": "Save now",
     "autoLayoutNoData": "No analog data to lay out. Load data first."
   }
 }
