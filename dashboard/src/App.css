@@ -2218,6 +2218,16 @@ tbody tr:last-child td {
   background: var(--surface);
 }
 
+.viz-axis-range-card.is-unavailable {
+  opacity: 0.65;
+}
+
+.viz-axis-range-card-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .viz-axis-range-card-head {
   display: flex;
   align-items: center;

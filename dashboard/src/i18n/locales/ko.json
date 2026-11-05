@@ -276,8 +276,11 @@
       "apply": "적용",
       "auto": "자동",
       "invalid": "최소값과 최대값을 확인하세요. 최대값은 최소값보다 커야 합니다.",
-      "hint": "고정하면 X 이동/확대와 관계없이 해당 축 범위를 유지합니다. 자동을 선택하면 데이터 전체 범위로 계산합니다.",
-      "digitalHint": "on/off(_ison, _isopen 등) 신호는 RPM/아날로그 축과 분리된 고정 디지털 레인으로 자동 배치됩니다."
+      "hint": "고정하려면 자동을 해제하고 Y Min/Max를 입력하세요. 고정하면 X 이동/확대와 관계없이 해당 축 범위를 유지합니다.",
+      "digitalHint": "on/off(_ison, _isopen 등) 신호는 RPM/아날로그 축과 분리된 고정 디지털 레인으로 자동 배치됩니다.",
+      "digitalCard": "디지털 고정",
+      "digitalOnlyNote": "이 축의 on/off 신호는 디지털 레인으로 고정 표시됩니다. 아날로그 범위 설정은 적용되지 않습니다.",
+      "noAnalogNote": "이 축에 표시할 아날로그 항목이 없습니다."
     },
     "offset": "Offset",
     "weight": "Weight",

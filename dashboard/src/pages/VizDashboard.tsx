@@ -3339,8 +3339,10 @@ export default function VizDashboardPage() {
       return { min, max };
     };
     try {
-      const left = parseDraft(axisRangeDraft.left);
-      const right = parseDraft(axisRangeDraft.right);
+      // A profile with no analog series on a side must not store a range for
+      // that side; otherwise the toolbar shows a fixed axis that does not exist.
+      const left = hasAnalogLeftAxis ? parseDraft(axisRangeDraft.left) : null;
+      const right = hasAnalogRightAxis ? parseDraft(axisRangeDraft.right) : null;
       setAxisRangeLeft(left);
       setAxisRangeRight(right);
       setAxisRangeError('');
@@ -3408,6 +3410,14 @@ export default function VizDashboardPage() {
   const analogChartItems = useMemo(
     () => activeChartItems.filter(item => !usesDigitalLane(item)),
     [activeChartItems],
+  );
+  const hasAnalogLeftAxis = useMemo(
+    () => analogChartItems.some(item => item.y_axis.id !== SECONDARY_Y_AXIS_ID),
+    [analogChartItems],
+  );
+  const hasAnalogRightAxis = useMemo(
+    () => analogChartItems.some(item => item.y_axis.id === SECONDARY_Y_AXIS_ID),
+    [analogChartItems],
   );
   const chartSeriesTruncated = visibleItems.length > MAX_CHART_SERIES;
 
@@ -5185,52 +5195,66 @@ export default function VizDashboardPage() {
         {axisRangeError && <p className="viz-axis-range-error">{axisRangeError}</p>}
         <div className="viz-axis-range-grid">
           {([
-            ['left', t('viz.yAxisSide.left'), axisRangeDraft.left],
-            ['right', t('viz.yAxisSide.right'), axisRangeDraft.right],
-          ] as const).map(([side, label, draft]) => (
-            <div className="viz-axis-range-card" key={side}>
-              <div className="viz-axis-range-card-head">
-                <strong>{label}</strong>
-                <label className="viz-axis-range-auto">
-                  <input
-                    type="checkbox"
-                    checked={draft.auto}
-                    onChange={e => setAxisRangeDraft(prev => ({
-                      ...prev,
-                      [side]: { ...prev[side], auto: e.target.checked },
-                    }))}
-                  />
-                  {t('viz.axisRange.auto')}
-                </label>
+            ['left', t('viz.yAxisSide.left'), axisRangeDraft.left, hasAnalogLeftAxis, false],
+            ['right', t('viz.yAxisSide.right'), axisRangeDraft.right, hasAnalogRightAxis, digitalChartItems.length > 0],
+          ] as const).map(([side, label, draft, available, hasDigital]) => {
+            const digitalOnly = side === 'right' && hasDigital && !available;
+            return (
+              <div className={`viz-axis-range-card${available ? '' : ' is-unavailable'}`} key={side}>
+                <div className="viz-axis-range-card-head">
+                  <strong>
+                    {label}
+                    {digitalOnly ? ` · ${t('viz.axisRange.digitalCard')}` : ''}
+                  </strong>
+                  <label className="viz-axis-range-auto">
+                    <input
+                      type="checkbox"
+                      checked={draft.auto}
+                      disabled={!available}
+                      onChange={e => setAxisRangeDraft(prev => ({
+                        ...prev,
+                        [side]: { ...prev[side], auto: e.target.checked },
+                      }))}
+                    />
+                    {t('viz.axisRange.auto')}
+                  </label>
+                </div>
+                <div className="viz-axis-range-inputs">
+                  <label className="settings-field">
+                    <span>{t('viz.yMin')}</span>
+                    <input
+                      type="number"
+                      value={draft.min}
+                      disabled={!available || draft.auto}
+                      onChange={e => setAxisRangeDraft(prev => ({
+                        ...prev,
+                        [side]: { ...prev[side], min: e.target.value, auto: false },
+                      }))}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>{t('viz.yMax')}</span>
+                    <input
+                      type="number"
+                      value={draft.max}
+                      disabled={!available || draft.auto}
+                      onChange={e => setAxisRangeDraft(prev => ({
+                        ...prev,
+                        [side]: { ...prev[side], max: e.target.value, auto: false },
+                      }))}
+                    />
+                  </label>
+                </div>
+                {!available && (
+                  <p className="muted viz-axis-range-card-note">
+                    {digitalOnly
+                      ? t('viz.axisRange.digitalOnlyNote')
+                      : t('viz.axisRange.noAnalogNote')}
+                  </p>
+                )}
               </div>
-              <div className="viz-axis-range-inputs">
-                <label className="settings-field">
-                  <span>{t('viz.yMin')}</span>
-                  <input
-                    type="number"
-                    value={draft.min}
-                    disabled={draft.auto}
-                    onChange={e => setAxisRangeDraft(prev => ({
-                      ...prev,
-                      [side]: { ...prev[side], min: e.target.value, auto: false },
-                    }))}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>{t('viz.yMax')}</span>
-                  <input
-                    type="number"
-                    value={draft.max}
-                    disabled={draft.auto}
-                    onChange={e => setAxisRangeDraft(prev => ({
-                      ...prev,
-                      [side]: { ...prev[side], max: e.target.value, auto: false },
-                    }))}
-                  />
-                </label>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <p className="muted viz-axis-range-hint">{t('viz.axisRange.digitalHint')}</p>
       </Modal>

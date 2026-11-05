@@ -276,8 +276,11 @@
       "apply": "Apply",
       "auto": "Auto",
       "invalid": "Check the min and max values. Max must be greater than min.",
-      "hint": "Fixed keeps this axis range regardless of horizontal pan/zoom. Auto computes it from the full data range.",
-      "digitalHint": "On/off signals (_ison, _isopen, etc.) are placed on fixed digital lanes separate from RPM/analog axes."
+      "hint": "To pin an axis, turn Auto off and enter Y Min/Max. Fixed keeps this range regardless of horizontal pan/zoom.",
+      "digitalHint": "On/off signals (_ison, _isopen, etc.) are placed on fixed digital lanes separate from RPM/analog axes.",
+      "digitalCard": "digital fixed",
+      "digitalOnlyNote": "On/off signals on this side are drawn as fixed digital lanes. Analog range settings do not apply.",
+      "noAnalogNote": "There is no analog series on this axis."
     },
     "offset": "Offset",
     "weight": "Weight",
