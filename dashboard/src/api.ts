@@ -205,6 +205,8 @@ export interface VizProfile {
     left?: { min: number; max: number };
     right?: { min: number; max: number };
   };
+  /** Per-profile overrides for protocol-declared event overlays. */
+  event_overlays?: Record<string, { type?: string; visible?: boolean }>;
   items: VizItem[];
   created_at: string;
   updated_at: string;
@@ -222,6 +224,15 @@ export interface VizCommandResult {
   error_code?: number;
   is_error?: boolean;
   is_monitor?: boolean;
+}
+
+export interface VizCommandConfig {
+  fid: string;
+  kind: string;
+  type: string;
+  visible: boolean;
+  color?: string;
+  label?: string;
 }
 
 export interface VizCommandEvent {
@@ -449,7 +460,7 @@ export const api = {
       if (params.since) qs.set('since', params.since);
       if (params.until) qs.set('until', params.until);
       if (params.direction) qs.set('direction', params.direction);
-      return request<{ items: VizCommandEvent[]; total: number }>(
+      return request<{ items: VizCommandEvent[]; total: number; config?: VizCommandConfig[] }>(
         `/viz/commands?${qs.toString()}`,
         { signal: options?.signal },
       );

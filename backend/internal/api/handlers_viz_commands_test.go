@@ -20,19 +20,16 @@ const (
 func TestOverlayConfigDrivesFIDs(t *testing.T) {
 	spec := protocol.MonitoringControlProtocolSpec()
 	overlays := overlayConfigsFromSpec(&spec)
-	// ACK is configured as visible=false, so only CF/CD remain.
-	if len(overlays) != 2 {
-		t.Fatalf("overlays: want 2, got %d", len(overlays))
+	// Hidden overlays stay in the config so the dashboard can enable them.
+	if len(overlays) != 3 {
+		t.Fatalf("overlays: want 3, got %d", len(overlays))
 	}
 
 	re := overlayFIDRegexp(overlays)
-	for _, fid := range []string{"CF", "CD"} {
+	for _, fid := range []string{"CF", "CD", "CC"} {
 		if !strings.Contains(re, fid) {
 			t.Fatalf("regex %q missing FID %s", re, fid)
 		}
-	}
-	if strings.Contains(re, "CC") {
-		t.Fatalf("hidden overlay leaked into regex: %s", re)
 	}
 }
 
@@ -49,6 +46,7 @@ func TestCommandEventLabelsComeFromConfig(t *testing.T) {
 	}{
 		{"call", commandTestCF, "call", "fn 31"},
 		{"result", commandTestCD, "result", "res 11"},
+		{"ack", commandTestCC, "ack", "ack 0xCE"},
 	}
 	for _, tc := range cases {
 		event, ok := commandEventFromFrame(ts, "RX", tc.frame, &spec, overlays)
@@ -61,10 +59,6 @@ func TestCommandEventLabelsComeFromConfig(t *testing.T) {
 		if event.Color == "" {
 			t.Fatalf("%s: color not taken from config", tc.name)
 		}
-	}
-
-	if _, ok := commandEventFromFrame(ts, "RX", commandTestCC, &spec, overlays); ok {
-		t.Fatal("ACK should be hidden by the visible flag")
 	}
 }
 
@@ -133,22 +127,19 @@ func TestSeriesClassificationSkipsOverlay(t *testing.T) {
 	}
 }
 
-func TestVisibleFlagCanEnableHiddenOverlay(t *testing.T) {
+func TestVisibleFlagIsExposedPerOverlay(t *testing.T) {
 	spec := protocol.MonitoringControlProtocolSpec()
-	overlays := overlayMeta(t, &spec)
+	overlays := overlayConfigsFromSpec(&spec)
 	for _, overlay := range overlays {
-		if overlay["fid"] == "0xCC" {
-			overlay["visible"] = true
+		switch overlay.fidNum {
+		case 0xCC:
+			if overlay.Visible == nil || *overlay.Visible {
+				t.Fatal("ACK should default to visible=false")
+			}
+		case 0xCF, 0xCD:
+			if overlay.Visible != nil && !*overlay.Visible {
+				t.Fatalf("FID 0x%02X should default to visible", overlay.fidNum)
+			}
 		}
-	}
-	spec.ParseRules.Meta["overlays"] = overlays
-
-	configs := overlayConfigsFromSpec(&spec)
-	if len(configs) != 3 {
-		t.Fatalf("overlays: want 3 after enabling ACK, got %d", len(configs))
-	}
-	event, ok := commandEventFromFrame(time.Unix(0, 0).UTC(), "RX", commandTestCC, &spec, configs)
-	if !ok || event.Kind != "ack" || event.Summary != "ack 0xCE" {
-		t.Fatalf("ack overlay: ok=%v %+v", ok, event)
 	}
 }
