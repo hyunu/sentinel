@@ -210,6 +210,32 @@ export interface VizProfile {
   updated_at: string;
 }
 
+export interface VizCommandFunction {
+  function_id: number;
+  arg_count?: number;
+  args?: string[];
+}
+
+export interface VizCommandResult {
+  function_id?: number;
+  flag?: number;
+  error_code?: number;
+  is_error?: boolean;
+  is_monitor?: boolean;
+}
+
+export interface VizCommandEvent {
+  timestamp: string;
+  direction: 'TX' | 'RX';
+  fid: number;
+  kind: 'call' | 'result' | 'ack';
+  summary: string;
+  functions?: VizCommandFunction[];
+  results?: VizCommandResult[];
+  recv_fid?: number;
+  error_code?: number;
+}
+
 export interface Temperature {
   id: string;
   board_id: string;
@@ -411,6 +437,21 @@ export const api = {
     updateProfile: (id: string, data: VizProfile) =>
       request<void>(`/viz/profiles/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteProfile: (id: string) => request<void>(`/viz/profiles/${id}`, { method: 'DELETE' }),
+    commands: (params: {
+      board_id: string;
+      since?: string;
+      until?: string;
+      direction?: 'TX' | 'RX';
+    }, options?: { signal?: AbortSignal }) => {
+      const qs = new URLSearchParams({ board_id: params.board_id });
+      if (params.since) qs.set('since', params.since);
+      if (params.until) qs.set('until', params.until);
+      if (params.direction) qs.set('direction', params.direction);
+      return request<{ items: VizCommandEvent[]; total: number }>(
+        `/viz/commands?${qs.toString()}`,
+        { signal: options?.signal },
+      );
+    },
     apply: (id: string) =>
       request<{ profile: VizProfile; data: Array<{ timestamp: string; values: Record<string, number> }> }>(
         `/viz/profiles/${id}/apply`, { method: 'POST' }

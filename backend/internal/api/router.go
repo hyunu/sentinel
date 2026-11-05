@@ -76,6 +76,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 			viz.POST("/query", h.VizQuery)
 			viz.POST("/query-items", h.VizQueryItems)
 			viz.POST("/spectrum", h.VizSpectrum)
+		viz.GET("/commands", h.VizCommands)
 		}
 
 		v1.GET("/ai/status", h.AIStatus)

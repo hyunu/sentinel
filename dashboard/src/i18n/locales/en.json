@@ -406,6 +406,7 @@
     "autoLayoutHint": "Stacks visible on/off items below the analog range with even spacing and pins the axis bounds.",
     "autoLayoutDone": "Placed {{count}} on/off items below. Save the profile to keep it.",
     "saveNow": "Save now",
-    "autoLayoutNoData": "No analog data to lay out. Load data first."
+    "autoLayoutNoData": "No analog data to lay out. Load data first.",
+    "commandOverlayToggle": "Show control commands (TX/RX markers)"
   }
 }

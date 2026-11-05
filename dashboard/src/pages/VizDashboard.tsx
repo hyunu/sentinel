@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization -- legacy imperative canvas + data-fetch effects */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
-import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig } from '../api';
+import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig, VizCommandEvent } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
@@ -1052,6 +1052,8 @@ export default function VizDashboardPage() {
   const [livePollError, setLivePollError] = useState<string | null>(null);
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
+  const [commandEvents, setCommandEvents] = useState<VizCommandEvent[]>([]);
+  const [showCommands, setShowCommands] = useState(true);
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
   const [fieldValuesLayout, setFieldValuesLayout] = useState<FieldValuesLayout>(readFieldValuesLayout);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
@@ -2982,6 +2984,30 @@ export default function VizDashboardPage() {
       && isAllTimeRangeSelection(timeRangePresetId, customStart, customEnd);
     await runVizQuery(buildTimeRange(), isAllRange);
   }, [runVizQuery, buildTimeRange, chartQueryTimeRange, timeRangePresetId, customStart, customEnd]);
+
+  // Control-command overlay: fetch call/result/ack frames for the chart range.
+  useEffect(() => {
+    if (!selectedBoard) {
+      setCommandEvents([]);
+      return;
+    }
+    const range = buildTimeRange();
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      api.viz.commands(
+        { board_id: selectedBoard, since: range?.start, until: range?.end },
+        { signal: controller.signal },
+      )
+        .then(res => {
+          if (!controller.signal.aborted) setCommandEvents(res.items);
+        })
+        .catch(() => {});
+    }, 400);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [selectedBoard, buildTimeRange]);
 
   useEffect(() => {
     autoQueryRef.current = () => {
@@ -5097,6 +5123,16 @@ export default function VizDashboardPage() {
                   </button>
                   <button
                     type="button"
+                    className={`viz-chart-icon-btn${showCommands ? ' active' : ''}`}
+                    onClick={() => setShowCommands(v => !v)}
+                    title={t('viz.commandOverlayToggle')}
+                    aria-label={t('viz.commandOverlayToggle')}
+                    aria-pressed={showCommands}
+                  >
+                    <span className="viz-chart-axis-range-glyph">C</span>
+                  </button>
+                  <button
+                    type="button"
                     className={`viz-chart-icon-btn${seriesValuesOpen ? ' active' : ''}`}
                     onClick={() => setSeriesValuesOpen(v => !v)}
                     title={t('viz.seriesGroup.valuesToggle')}
@@ -5196,6 +5232,8 @@ export default function VizDashboardPage() {
             resolveYScale={resolveCanvasYScale}
             height={chartViewportHeight}
             tooltipEnabled={chartTooltipEnabled}
+            commandEvents={commandEvents}
+            showCommands={showCommands}
             hideTooltip={chartInteractionHidden}
             itemById={tooltipItemById}
             rawValuesByTimeKey={rawValuesByTimeKey}
