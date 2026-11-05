@@ -5,6 +5,14 @@ export const SECONDARY_Y_AXIS_ID = 'y-right';
 
 export type VizChartPoint = { timeKey: string } & Record<string, string | number>;
 
+export function vizFidKey(fid: number | string): string {
+  if (typeof fid === 'number') {
+    return `0x${fid.toString(16).toUpperCase().padStart(2, '0')}`;
+  }
+  const hex = fid.replace(/^0x/i, '').toUpperCase();
+  return `0x${hex.padStart(2, '0')}`;
+}
+
 export function clampChartZoom(start: number, end: number, length: number): { start: number; end: number } {
   if (length <= 0) return { start: 0, end: 0 };
   const s = Math.max(0, Math.min(start, length - 1));

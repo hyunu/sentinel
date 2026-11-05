@@ -10,6 +10,7 @@ import {
   usesDigitalLane,
   vizChartValue,
   computeAutoYLayout,
+  vizFidKey,
 } from './vizDashboardUtils';
 
 describe('clampChartZoom', () => {
@@ -271,5 +272,14 @@ describe('computeAutoYLayout', () => {
     expect(computeAutoYLayout([digital('d1')], data)).toBeUndefined();
     expect(computeAutoYLayout([analog], data)).toBeUndefined();
     expect(computeAutoYLayout([analog, digital('d1')], [])).toBeUndefined();
+  });
+});
+
+describe('vizFidKey', () => {
+  it('normalizes numeric and string FIDs for map lookups', () => {
+    expect(vizFidKey(0xCC)).toBe('0xCC');
+    expect(vizFidKey('0xCC')).toBe('0xCC');
+    expect(vizFidKey('cc')).toBe('0xCC');
+    expect(vizFidKey(7)).toBe('0x07');
   });
 });

@@ -93,6 +93,7 @@ import {
   usesDigitalLane,
   computeAutoYLayout,
   vizChartValue,
+  vizFidKey,
   formatVizActualValue,
   formatVizItemActualValue,
   resolveVizItemRawValue,
@@ -3466,9 +3467,9 @@ export default function VizDashboardPage() {
   }, [activeProfile?.id, activeProfile?.updated_at]);
   const chartCommandEvents = useMemo(() => {
     if (!showCommands) return [];
-    const configByFid = new Map(eventConfig.map(cfg => [cfg.fid.toUpperCase(), cfg]));
+    const configByFid = new Map(eventConfig.map(cfg => [vizFidKey(cfg.fid), cfg]));
     return commandEvents.filter(event => {
-      const key = `0x${event.fid.toString(16).toUpperCase().padStart(2, '0')}`;
+      const key = vizFidKey(event.fid);
       const config = configByFid.get(key);
       const override = eventOverrides[key] ?? eventOverrides[key.toLowerCase()];
       const type = override?.type ?? config?.type ?? 'event';
@@ -5483,7 +5484,7 @@ export default function VizDashboardPage() {
         <p className="muted">{t('viz.eventSettingsHint')}</p>
         <div className="viz-event-settings-list">
           {eventConfig.map(cfg => {
-            const key = cfg.fid.toUpperCase();
+            const key = vizFidKey(cfg.fid);
             const override = eventOverrides[key] ?? {};
             const type = override.type ?? cfg.type ?? 'event';
             const visible = override.visible ?? cfg.visible;
