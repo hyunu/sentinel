@@ -1054,7 +1054,7 @@ export default function VizDashboardPage() {
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
   const [commandEvents, setCommandEvents] = useState<VizCommandEvent[]>([]);
-  const [showCommands, setShowCommands] = useState(true);
+  const [showCommands, setShowCommands] = useState(false);
   const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
   const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
   const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
