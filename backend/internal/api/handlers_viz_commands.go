@@ -163,6 +163,7 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		return
 	}
 	enums := enumsFromMeta(spec.ParseRules.Meta)
+	functionArgs := functionArgsFromMeta(spec.ParseRules.Meta)
 	fieldsByFID := make(map[int][]eventFieldSpec)
 	fidSet := make(map[int]bool)
 	for _, field := range eventFields {
@@ -274,13 +275,25 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		fid := asInt(result.Fields["fid"])
 		if specs := fieldsByFID[fid]; len(specs) > 0 {
 			for _, fieldSpec := range specs {
-				for _, value := range extractEventValues(result.Fields, fieldSpec.Path) {
+				for _, entry := range extractEventEntries(result.Fields, fieldSpec.Path) {
+					argsText := ""
+					if fid == 0xCF && entry.Row != nil {
+						if argSpec, ok := functionArgs[asInt(entry.Value)]; ok {
+							argsText = formatFunctionArgs(entry.Row, &argSpec, enums)
+						} else {
+							argsText = formatFunctionArgs(entry.Row, nil, enums)
+						}
+					}
+					label := renderEventLabel(fieldSpec, entry.Value, enums)
+					if argsText != "" {
+						label = fmt.Sprintf("%s (%s)", label, argsText)
+					}
 					events = append(events, vizCommandEvent{
 						Timestamp: doc.Timestamp,
 						Direction: doc.Direction,
 						FID:       fid,
 						Kind:      "event",
-						Summary:   renderEventLabel(fieldSpec, value, enums),
+						Summary:   label,
 						Color:     colorForFID(fid),
 						Style:     "vline",
 					})

@@ -158,6 +158,111 @@
         "0": "단계 0",
         "1": "단계 1",
         "2": "단계 2"
+      },
+      "Direction": {
+        "0": "CW",
+        "1": "CCW"
+      }
+    },
+    "function_args": {
+      "0": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "1": {
+        "arg": 0,
+        "enum": "AodAction"
+      },
+      "2": {
+        "arg": 0,
+        "enum": "Direction"
+      },
+      "4": {
+        "arg": 0,
+        "format": "u16le"
+      },
+      "5": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "6": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "7": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "8": {
+        "arg": 0,
+        "enum": "Direction"
+      },
+      "9": {
+        "arg": 0,
+        "format": "u16le",
+        "suffix": "rpm"
+      },
+      "11": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "12": {
+        "arg": 0,
+        "format": "u8",
+        "suffix": "%"
+      },
+      "14": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "15": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "17": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "18": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "19": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "20": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "21": {
+        "arg": 0,
+        "enum": "TubLampLevel"
+      },
+      "22": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "24": {
+        "arg": 0,
+        "enum": "VarioCmdRequest"
+      },
+      "25": {
+        "arg": 1,
+        "enum": "VarioPosition"
+      },
+      "26": {
+        "arg": 0,
+        "format": "u16le",
+        "suffix": "rpm"
+      },
+      "27": {
+        "arg": 0,
+        "enum": "OnOff"
+      },
+      "29": {
+        "arg": 0,
+        "enum": "OnOff"
       }
     }
   },
@@ -687,7 +792,8 @@
                     "name": "function_id",
                     "type": "U8",
                     "display": "event",
-                    "enum": "FunctionId"
+                    "enum": "FunctionId",
+                    "event_label": "결과: {enum}"
                   },
                   {
                     "name": "result_data",
@@ -709,7 +815,8 @@
                     "name": "function_id",
                     "type": "U8",
                     "display": "event",
-                    "enum": "FunctionId"
+                    "enum": "FunctionId",
+                    "event_label": "결과: {enum}"
                   },
                   {
                     "name": "error_code",

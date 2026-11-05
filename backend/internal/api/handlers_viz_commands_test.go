@@ -188,12 +188,42 @@ func TestEventFieldsUseProtocolEnumLabels(t *testing.T) {
 		}
 		for _, value := range extractEventValues(cd.Fields, field.Path) {
 			cdCount++
-			if got := renderEventLabel(field, value, enums); got != "헹굼" {
-				t.Fatalf("CD label: want 헹굼, got %q", got)
+			if got := renderEventLabel(field, value, enums); got != "결과: 헹굼" {
+				t.Fatalf("CD label: want 결과: 헹굼, got %q", got)
 			}
 		}
 	}
 	if cdCount != 1 {
 		t.Fatalf("CD event values: want 1, got %d", cdCount)
+	}
+}
+
+func TestFormatFunctionArgs(t *testing.T) {
+	enums := map[string]map[string]string{
+		"OnOff":         {"0": "OFF", "1": "ON"},
+		"VarioPosition": {"1": "UPPER"},
+	}
+	row := map[string]interface{}{
+		"args": []interface{}{
+			map[string]interface{}{"val": "01"},
+			map[string]interface{}{"val": "02"},
+		},
+	}
+
+	if got := formatFunctionArgs(row, &functionArgSpec{Arg: 0, Enum: "OnOff"}, enums); got != "ON" {
+		t.Fatalf("OnOff arg: want ON, got %q", got)
+	}
+	if got := formatFunctionArgs(row, &functionArgSpec{Arg: 1, Enum: "VarioPosition"}, enums); got != "02" {
+		t.Fatalf("missing enum value should fall back to raw: got %q", got)
+	}
+	if got := formatFunctionArgs(row, nil, enums); got != "01, 02" {
+		t.Fatalf("raw args: want 01, 02, got %q", got)
+	}
+
+	rpmRow := map[string]interface{}{
+		"args": []interface{}{map[string]interface{}{"val": "A406"}},
+	}
+	if got := formatFunctionArgs(rpmRow, &functionArgSpec{Arg: 0, Format: "u16le", Suffix: "rpm"}, enums); got != "1700 rpm" {
+		t.Fatalf("u16le: want 1700 rpm, got %q", got)
 	}
 }
