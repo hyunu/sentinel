@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { Board, ProtocolSpec } from '../api';
 import { formatDateTime } from '../utils/date';
+import { isBoardOnline, latestPresenceIso } from '../lib/boardPresence';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import { useTranslation } from '../i18n';
@@ -14,10 +15,6 @@ function rssiClass(rssi: number): string {
   return 'rssi-weak';
 }
 
-function isBoardOnline(b: Board, now: number): boolean {
-  return b.is_active && now - new Date(b.last_heartbeat).getTime() < 120_000;
-}
-
 function emptyRegisterForm() {
   return { name: '', bleId: '', wifiMac: '', location: '', protocolId: DEFAULT_PROTOCOL_ID };
 }
@@ -25,6 +22,7 @@ function emptyRegisterForm() {
 export default function BoardsPage() {
   const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
+  const [uartSeen, setUartSeen] = useState<Record<string, string>>({});
   const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(0);
@@ -38,8 +36,22 @@ export default function BoardsPage() {
       if (document.activeElement?.classList.contains('table-inline-select')) return;
       if (showLoading) setLoading(true);
       api.boards.list()
-        .then(list => {
+        .then(async list => {
           setBoards(list);
+          setNow(Date.now());
+          const seen = await Promise.all(list.map(async board => {
+            try {
+              const result = await api.uart.list({ board_id: board.id, limit: 1 });
+              return [board.id, result.items[0]?.timestamp ?? ''] as const;
+            } catch {
+              return [board.id, ''] as const;
+            }
+          }));
+          const next: Record<string, string> = {};
+          for (const [id, timestamp] of seen) {
+            if (timestamp) next[id] = timestamp;
+          }
+          setUartSeen(next);
           setNow(Date.now());
         })
         .catch(console.error)
@@ -121,7 +133,7 @@ export default function BoardsPage() {
     }
   };
 
-  const onlineCount = boards.filter(b => isBoardOnline(b, now)).length;
+  const onlineCount = boards.filter(b => isBoardOnline(b, now, uartSeen[b.id])).length;
   const canRegister = Boolean(registerForm.name && registerForm.bleId);
 
   return (
@@ -168,7 +180,8 @@ export default function BoardsPage() {
                     <td colSpan={11}>{t('boards.empty')}</td>
                   </tr>
                 ) : boards.map(b => {
-                  const online = isBoardOnline(b, now);
+                  const online = isBoardOnline(b, now, uartSeen[b.id]);
+                  const seenAt = latestPresenceIso(b.last_heartbeat, uartSeen[b.id]);
                   return (
                     <tr key={b.id}>
                       <td><strong>{b.name}</strong></td>
@@ -213,7 +226,7 @@ export default function BoardsPage() {
                           {online ? t('common.online') : t('common.offline')}
                         </span>
                       </td>
-                      <td className="mono-cell">{formatDateTime(b.last_heartbeat)}</td>
+                      <td className="mono-cell">{formatDateTime(seenAt || b.last_heartbeat)}</td>
                       <td>{b.firmware_version || '—'}</td>
                       <td className={`rssi-cell ${b.wifi_rssi != null ? rssiClass(b.wifi_rssi) : ''}`}>
                         {b.wifi_rssi != null ? `${b.wifi_rssi} dBm` : '—'}

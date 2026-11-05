@@ -24,10 +24,19 @@ class BoardRegistryEntry {
     this.lastHeartbeat,
   });
 
-  bool get hasRecentHeartbeat {
-    if (lastHeartbeat == null || lastHeartbeat!.year <= 1) return false;
-    return DateTime.now().toUtc().difference(lastHeartbeat!.toUtc()).inMinutes < 2;
-  }
+  bool get hasRecentHeartbeat => BoardStatusResolver.isRecent(lastHeartbeat);
+}
+
+/// Recent UART upload counts as server presence. Firmware stops sending
+/// /heartbeat while uploads succeed, so last_heartbeat alone goes stale.
+DateTime? freshestBoardPresence(DateTime? heartbeat, DateTime? uartAt) {
+  DateTime? valid(DateTime? value) =>
+      (value == null || value.year <= 1) ? null : value;
+  final beat = valid(heartbeat);
+  final uart = valid(uartAt);
+  if (beat == null) return uart;
+  if (uart == null) return beat;
+  return beat.toUtc().isAfter(uart.toUtc()) ? beat : uart;
 }
 
 class BoardStatusResolver {
@@ -52,36 +61,55 @@ class BoardStatusResolver {
   static String label(SentinelDisplayState state) => _labels[state]!;
   static Color color(SentinelDisplayState state) => _colors[state]!;
 
+  static bool isRecent(DateTime? at) {
+    if (at == null || at.year <= 1) return false;
+    return DateTime.now().toUtc().difference(at.toUtc()).inMinutes < 2;
+  }
+
   static SentinelDisplayState resolve({
     required AdvertisementData adData,
     required String deviceMac,
     BoardRegistryEntry? serverEntry,
   }) {
-    final bleState = BleScanner.parseStateFromAdData(adData);
-    final uid = BleScanner.parseUidFromAdData(adData);
+    return resolveSignals(
+      bleState: BleScanner.parseStateFromAdData(adData),
+      uid: BleScanner.parseUidFromAdData(adData),
+      serverEntry: serverEntry,
+    );
+  }
 
-    if (serverEntry != null) {
-      if (serverEntry.hasRecentHeartbeat) {
-        return SentinelDisplayState.online;
-      }
-      if (serverEntry.isActive || serverEntry.macAddress.isNotEmpty) {
-        return SentinelDisplayState.offline;
-      }
+  /// BLE manufacturer flags are the live AP/server state. A stale server
+  /// heartbeat must not override them — that was marking connected boards
+  /// Offline whenever `last_heartbeat` was older than two minutes.
+  static SentinelDisplayState resolveSignals({
+    required SentinelBleState bleState,
+    String? uid,
+    BoardRegistryEntry? serverEntry,
+  }) {
+    if (bleState == SentinelBleState.online ||
+        (serverEntry?.hasRecentHeartbeat ?? false)) {
+      return SentinelDisplayState.online;
     }
 
     switch (bleState) {
-      case SentinelBleState.unregistered:
-        return SentinelDisplayState.unregistered;
-      case SentinelBleState.configured:
-        return uid != null
-            ? SentinelDisplayState.configured
-            : SentinelDisplayState.unregistered;
       case SentinelBleState.connecting:
         return SentinelDisplayState.connecting;
       case SentinelBleState.registering:
         return SentinelDisplayState.registering;
       case SentinelBleState.online:
         return SentinelDisplayState.online;
+      case SentinelBleState.unregistered:
+      case SentinelBleState.configured:
+        break;
     }
+
+    if (serverEntry != null) {
+      return SentinelDisplayState.offline;
+    }
+
+    if (bleState == SentinelBleState.configured && uid != null) {
+      return SentinelDisplayState.configured;
+    }
+    return SentinelDisplayState.unregistered;
   }
 }

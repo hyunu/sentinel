@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:5050',
+        target: process.env.SENTINEL_API_PROXY || 'http://localhost:5050',
         changeOrigin: true,
       },
     },

@@ -601,6 +601,7 @@ func (h *Handler) IngestUART(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ingest data"})
 		return
 	}
+	h.touchBoardPresence(ctx, boardID)
 
 	if err := h.upsertVizRollups(ctx, []models.UartData{data}); err != nil {
 		h.logger.Warn("failed to update viz rollups", zap.Error(err))
@@ -692,12 +693,27 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ingest data"})
 		return
 	}
+	h.touchBoardPresence(ctx, boardID)
 
 	if err := h.upsertVizRollups(ctx, samples); err != nil {
 		h.logger.Warn("failed to update viz rollups", zap.Error(err))
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"inserted": len(docs)})
+}
+
+// touchBoardPresence keeps last_heartbeat fresh while UART is uploading.
+// Firmware skips /heartbeat once HTTP uploads succeed, so a streaming board
+// would otherwise age out of the 2-minute online window and look offline.
+func (h *Handler) touchBoardPresence(ctx context.Context, boardID string) {
+	now := time.Now()
+	if _, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": boardID}, bson.M{"$set": bson.M{
+		"last_heartbeat": now,
+		"is_active":      true,
+		"updated_at":     now,
+	}}); err != nil {
+		h.logger.Warn("failed to refresh board presence", zap.String("board_id", boardID), zap.Error(err))
+	}
 }
 
 const (

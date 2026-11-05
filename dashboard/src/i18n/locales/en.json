@@ -87,7 +87,7 @@
     "uid": "UID",
     "bleId": "BLE ID",
     "wifiMac": "WiFi MAC",
-    "lastHeartbeat": "Last Heartbeat",
+    "lastHeartbeat": "Last seen",
     "firmwareVersion": "Version",
     "rssi": "RSSI",
     "locationPlaceholder": "Location",

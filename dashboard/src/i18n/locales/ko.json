@@ -87,7 +87,7 @@
     "uid": "UID",
     "bleId": "BLE ID",
     "wifiMac": "WiFi MAC",
-    "lastHeartbeat": "마지막 Heartbeat",
+    "lastHeartbeat": "마지막 수신",
     "firmwareVersion": "버전",
     "rssi": "RSSI",
     "locationPlaceholder": "위치",

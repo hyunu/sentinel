@@ -5,8 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
+import '../models/board_status.dart';
 import '../models/onboarding_profile.dart';
 import '../models/viz_profile.dart';
+import '../services/board_presence.dart';
 import '../services/onboarding_profiler.dart';
 import '../services/protocol_parser.dart';
 import '../services/storage_service.dart';
@@ -538,8 +540,12 @@ class _DeviceScreenState extends State<DeviceScreen>
 
     if (line.contains('[WiFi] Connecting') ||
         line.contains('Auto-connect to stored network')) {
-      wifi = false;
-      server = false;
+      // Replayed history must not clear a link the live advertisement
+      // already reported. Only an explicit failure does that.
+      if (!_boardWifi && !_boardServer) {
+        wifi = false;
+        server = false;
+      }
     }
     if (line.contains('[WiFi] Connected') ||
         upper.contains('EVENT:WIFI_CONNECTED')) {
@@ -614,13 +620,25 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
   }
 
+  void _applyAdvertisedLinkState() {
+    final adData = widget.advertisementData;
+    if (adData == null) return;
+    final state = BleScanner.parseStateFromAdData(adData);
+    final wifi =
+        state == SentinelBleState.registering ||
+        state == SentinelBleState.online;
+    final server = state == SentinelBleState.online;
+    if (!wifi && !server) return;
+    setState(() {
+      if (wifi) _boardWifi = true;
+      if (server) _boardServer = true;
+    });
+  }
+
   Future<void> _connect() async {
     _addLog('Connecting to ${widget.device.remoteId.str}...');
-    setState(() {
-      _connecting = true;
-      _boardWifi = false;
-      _boardServer = false;
-    });
+    setState(() => _connecting = true);
+    _applyAdvertisedLinkState();
     Object? lastError;
     for (var attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -661,6 +679,10 @@ class _DeviceScreenState extends State<DeviceScreen>
 
     _scanner.clearCache();
     await _startBoardLogStream();
+    _applyAdvertisedLinkState();
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && _connected) _applyAdvertisedLinkState();
+    });
     await _loadWifiMac();
 
     await _connSub?.cancel();
@@ -748,11 +770,27 @@ class _DeviceScreenState extends State<DeviceScreen>
         if (!bleMatch && !wifiMatch && !uidMatch) continue;
         final protocolId = raw['protocol_id']?.toString();
         final boardId = raw['id']?.toString();
+        final heartbeat = DateTime.tryParse(
+          raw['last_heartbeat']?.toString() ?? '',
+        );
+        DateTime? uartAt;
+        if (boardId != null && boardId.isNotEmpty) {
+          try {
+            uartAt = await latestUartAt(base, boardId);
+          } catch (_) {}
+        }
+        final presence = freshestBoardPresence(heartbeat, uartAt);
+        final serverFresh = BoardStatusResolver.isRecent(presence);
+        if (!mounted) return;
         setState(() {
           _boardId = boardId;
           if (protocolId != null && protocolId.isNotEmpty) {
             _boardProtoId = protocolId;
             _selectedProtoId = protocolId;
+          }
+          if (serverFresh) {
+            _boardWifi = true;
+            _boardServer = true;
           }
         });
         await _loadVizProfiles();

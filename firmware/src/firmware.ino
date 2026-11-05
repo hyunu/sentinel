@@ -24,6 +24,7 @@
 static unsigned long lastTemp = 0;
 static unsigned long lastUartStats = 0;
 static unsigned long lastLinkProbeAt = 0;
+static unsigned long lastHeartbeatAt = 0;
 static unsigned long lastWifiRecoveryAt = 0;
 static int linkFailures = 0;
 static bool linkWasHealthy = false;
@@ -135,19 +136,17 @@ void loop() {
         uart_sniffer_log_stats();
     }
 
-    // Server link watchdog. Any successful HTTP response (UART batch or
-    // heartbeat) keeps the link healthy, so heartbeat is not sent while data
-    // uploads are succeeding. Only when responses stop do we probe every
-    // second and force a WiFi reconnect / reboot if needed.
+    // Heartbeat updates last_heartbeat on the server. UART uploads also get
+    // HTTP 200, but they must not replace the heartbeat — otherwise a board
+    // that is streaming looks offline once the last heartbeat ages out.
     if (wifi_is_connected()) {
-        if (wifi_server_link_healthy()) {
-            if (!linkWasHealthy) {
-                linkWasHealthy = true;
-                linkFailures = 0;
-                if (wifi_has_board_uid()) ble_set_server_registered(true);
-            }
-        } else if (now - lastLinkProbeAt >= 1000) {
-            lastLinkProbeAt = now;
+        const bool heartbeatDue =
+            lastHeartbeatAt == 0 || now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS;
+        const bool probeDue =
+            !wifi_server_link_healthy() && now - lastLinkProbeAt >= 1000;
+        if (heartbeatDue || probeDue) {
+            if (heartbeatDue) lastHeartbeatAt = now;
+            if (probeDue) lastLinkProbeAt = now;
             const bool ok = wifi_send_heartbeat();
             if (ok) {
                 linkWasHealthy = true;

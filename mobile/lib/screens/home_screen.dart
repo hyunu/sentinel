@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import '../ble/ble_scanner.dart';
 import '../models/board_status.dart';
+import '../services/board_presence.dart';
 import '../services/storage_service.dart';
 import '../widgets/app_toast.dart';
 import 'device_screen.dart';
@@ -114,24 +115,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
+  bool _registryRefreshing = false;
+
   Future<void> _refreshBoardRegistry() async {
+    if (_registryRefreshing) return;
+    _registryRefreshing = true;
     try {
       final url = await _storage.getServerUrl();
       final baseUrl = (url != null && url.isNotEmpty) ? url : 'http://192.168.0.9:5050';
       final res = await http.get(Uri.parse('$baseUrl/api/v1/boards')).timeout(const Duration(seconds: 5));
       if (res.statusCode != 200 || !mounted) return;
 
+      final rows = (json.decode(res.body) as List).whereType<Map>().toList();
+      final seenAt = await Future.wait(rows.map((raw) async {
+        final heartbeat = DateTime.tryParse(raw['last_heartbeat']?.toString() ?? '');
+        final boardId = raw['id']?.toString() ?? '';
+        DateTime? uartAt;
+        try {
+          uartAt = await latestUartAt(baseUrl, boardId);
+        } catch (_) {}
+        return freshestBoardPresence(heartbeat, uartAt);
+      }));
+
       final byMac = <String, BoardRegistryEntry>{};
       final byUid = <String, BoardRegistryEntry>{};
-      for (final raw in json.decode(res.body) as List) {
-        if (raw is! Map) continue;
+      for (var i = 0; i < rows.length; i++) {
+        final raw = rows[i];
         final uid = raw['uid']?.toString() ?? '';
         if (uid.isEmpty) continue;
         final entry = BoardRegistryEntry(
           uid: uid,
           macAddress: raw['mac_address']?.toString() ?? '',
           isActive: raw['is_active'] == true,
-          lastHeartbeat: DateTime.tryParse(raw['last_heartbeat']?.toString() ?? ''),
+          lastHeartbeat: seenAt[i],
         );
         if (entry.macAddress.isNotEmpty) byMac[entry.macAddress] = entry;
         byUid[uid] = entry;
@@ -141,7 +157,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _boardsByMac = byMac;
         _boardsByUid = byUid;
       });
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _registryRefreshing = false;
+    }
   }
 
   BoardRegistryEntry? _serverEntryFor(ScanResult device) {
