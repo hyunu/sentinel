@@ -5472,3 +5472,49 @@ pre {
 .pde-table code {
   font-size: 12px;
 }
+
+.pde-enum-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.pde-inline.pde-enum-add {
+  margin-top: 10px;
+}
+
+.pde-enum-table input {
+  width: 100%;
+  min-width: 60px;
+}
+
+.pde-input-key {
+  max-width: 90px;
+}
+
+.pde-cell-action {
+  width: 36px;
+  text-align: right;
+}
+
+.pde-table-scroll {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+  border-radius: 6px;
+}
+
+.pde-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-color, var(--bg-color, #1b1c22));
+  z-index: 1;
+}
+
+.pde-error {
+  color: var(--danger-color, #e5534b);
+  font-size: 12px;
+  margin: 6px 0 0;
+}
