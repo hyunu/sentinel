@@ -389,6 +389,20 @@ type VizDataHandler = (data: VizDataRow[], meta: VizQueryMeta) => void;
 
 type VizPartition = { startMs: number; endMs: number };
 
+/** Spread time-ordered partitions across the worker slots so each wave covers
+ *  the whole range (0,6,12,... then 1,7,13,...) instead of filling the left
+ *  side first when there are more partitions than concurrent requests. */
+function interleaveVizTasks<T>(tasks: T[], workers: number): T[] {
+  if (workers <= 1 || tasks.length <= workers) return tasks;
+  const ordered: T[] = [];
+  for (let offset = 0; offset < workers; offset += 1) {
+    for (let i = offset; i < tasks.length; i += workers) {
+      ordered.push(tasks[i]);
+    }
+  }
+  return ordered;
+}
+
 /** Equal-row-count time partitions derived from the envelope timestamps. */
 function buildVizPartitions(
   startMs: number,
@@ -575,6 +589,8 @@ async function queryFullDatasetProgressive(
     tasks: VizPartition[],
     worker: (partition: VizPartition) => Promise<void>,
   ) => {
+    const workerCount = Math.min(FULL_LOAD_CONCURRENCY, tasks.length);
+    const ordered = interleaveVizTasks(tasks, workerCount);
     let next = 0;
     const run = async () => {
       for (;;) {
@@ -583,15 +599,12 @@ async function queryFullDatasetProgressive(
         }
         const index = next;
         next += 1;
-        if (index >= tasks.length) return;
-        await worker(tasks[index]);
+        if (index >= ordered.length) return;
+        await worker(ordered[index]);
       }
     };
     try {
-      await Promise.all(Array.from(
-        { length: Math.min(FULL_LOAD_CONCURRENCY, tasks.length) },
-        run,
-      ));
+      await Promise.all(Array.from({ length: workerCount }, run));
     } catch (error) {
       failed = true;
       throw error;
