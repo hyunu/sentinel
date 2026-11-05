@@ -202,7 +202,9 @@ function positionTooltipNearCursor(
   mouseY: number,
 ): void {
   const maxX = wrap.clientWidth;
+  const maxY = wrap.clientHeight;
   const tipW = el.offsetWidth;
+  const tipH = el.offsetHeight;
 
   const rightLeft = lineX + TOOLTIP_LINE_GAP;
   const leftLeft = lineX - TOOLTIP_LINE_GAP - tipW;
@@ -224,8 +226,29 @@ function positionTooltipNearCursor(
     }
   }
 
-  el.style.left = `${left}px`;
-  el.style.top = `${mouseY + TOOLTIP_Y_GAP}px`;
+  // Prefer below the cursor, but flip above near the bottom edge so the
+  // pointer never sits on top of the tooltip (and the card never clips it).
+  const belowTop = mouseY + TOOLTIP_Y_GAP;
+  const aboveTop = mouseY - TOOLTIP_Y_GAP - tipH;
+  const fitsBelow = belowTop + tipH <= maxY;
+  const fitsAbove = aboveTop >= 0;
+
+  let top: number;
+  if (fitsBelow) {
+    top = belowTop;
+  } else if (fitsAbove) {
+    top = aboveTop;
+  } else {
+    const roomBelow = maxY - mouseY - TOOLTIP_Y_GAP;
+    const roomAbove = mouseY - TOOLTIP_Y_GAP;
+    top = roomBelow >= roomAbove
+      ? Math.min(belowTop, maxY - tipH)
+      : Math.max(aboveTop, 0);
+  }
+  top = Math.max(0, Math.min(top, Math.max(0, maxY - tipH)));
+
+  el.style.left = `${Math.max(0, Math.min(left, Math.max(0, maxX - tipW)))}px`;
+  el.style.top = `${top}px`;
 }
 
 function buildAlignedData(
