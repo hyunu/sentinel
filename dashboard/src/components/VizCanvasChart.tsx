@@ -8,7 +8,7 @@ import {
 } from 'react';
 import uPlot, { type AlignedData, type Options, type Series } from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import type { VizItem } from '../api';
+import type { VizItem, VizCommandEvent } from '../api';
 import { formatChartAxisTime } from '../utils/date';
 import { readCssVar } from '../lib/themeColors';
 import { useTheme } from '../theme';
@@ -161,6 +161,9 @@ export interface VizCanvasChartProps {
   resolveYScale: (item: VizItem) => VizSeriesYScale;
   height: number;
   tooltipEnabled: boolean;
+  /** Control frames to draw as vertical markers (call/result/ack). */
+  commandEvents?: VizCommandEvent[];
+  showCommands?: boolean;
   hideTooltip: boolean;
   itemById: Map<string, VizItem>;
   rawValuesByTimeKey: Map<string, Record<string, number>>;
@@ -392,6 +395,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     resolveYScale,
     height,
     tooltipEnabled,
+    commandEvents = [],
+    showCommands = true,
     hideTooltip,
     itemById,
     rawValuesByTimeKey,
@@ -405,6 +410,55 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const commandEventsRef = useRef(commandEvents);
+  commandEventsRef.current = commandEvents;
+  const showCommandsRef = useRef(showCommands);
+  showCommandsRef.current = showCommands;
+
+  const drawCommandOverlay = useCallback((u: uPlot) => {
+    const events = commandEventsRef.current;
+    if (!showCommandsRef.current || events.length === 0) return;
+    const xMin = u.scales.x.min;
+    const xMax = u.scales.x.max;
+    if (typeof xMin !== 'number' || typeof xMax !== 'number') return;
+    const { ctx } = u;
+    const { left, top, width, height } = u.bbox;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, width, height);
+    ctx.clip();
+    ctx.font = '9px system-ui, sans-serif';
+    let lastLabelX = -Infinity;
+    for (const event of events) {
+      const sec = Date.parse(event.timestamp) / 1000;
+      if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
+      const x = u.valToPos(sec, 'x', true);
+      if (!Number.isFinite(x)) continue;
+      const color = event.direction === 'TX'
+        ? 'rgba(255, 170, 80, 0.75)'
+        : 'rgba(90, 190, 255, 0.75)';
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, top + height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, top + 1);
+      ctx.lineTo(x - 3, top + 7);
+      ctx.lineTo(x + 3, top + 7);
+      ctx.closePath();
+      ctx.fill();
+      if (event.summary && x - lastLabelX > 56) {
+        ctx.fillText(event.summary, x + 3, top + 16);
+        lastLabelX = x;
+      }
+    }
+    ctx.restore();
+  }, []);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   /** Hover label pinned to the Y axis of the nearest series. */
@@ -915,6 +969,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         getGapThresholdSec,
       ),
       hooks: {
+        draw: [drawCommandOverlay],
         drawAxes: [(u) => drawXAxisGridBehind(u, gridColor)],
         ready: [syncPlotAndBreaks],
         setSize: [syncPlotAndBreaks],
@@ -1096,7 +1151,11 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       plotRef.current = null;
       container.replaceChildren();
     };
-  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, digitalLanes, digitalLaneCount, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec, getGapThresholdSec]);
+  }, [hasPlotData, seriesLayoutKey, yAxisLayoutKey, height, theme, maxVisibleSeries, digitalLanes, digitalLaneCount, applyWindowIndices, applyXWindowTimeKeys, resetWindow, syncPlotAndBreaks, getSessionBreakTimesSec, getGapThresholdSec, drawCommandOverlay]);
+
+  useEffect(() => {
+    plotRef.current?.redraw();
+  }, [commandEvents, showCommands]);
 
   useEffect(() => {
     const u = plotRef.current;
