@@ -33,8 +33,9 @@ export const PROGRESSIVE_MAX_ROUNDS = 8;
  *  would transfer the entire dataset twice. */
 export const PROGRESSIVE_ROUND_MAX_ROWS = 16_000;
 export const PROGRESSIVE_START_BUCKETS = 32;
-/** Concurrent requests. Each response is kept small, so a modest fan-out is safe. */
-export const FULL_LOAD_CONCURRENCY = 3;
+/** Concurrent requests. Browsers use at most ~6 HTTP/1.1 connections per
+ *  origin; going higher just queues and measurably slows the server. */
+export const FULL_LOAD_CONCURRENCY = 6;
 
 export function estimateVizPayloadBytes(data: VizFullLoadRow[]): number {
   if (data.length === 0) return 0;

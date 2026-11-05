@@ -40,6 +40,8 @@ import {
   wheelDeltaToZoomFactor,
   isWheelHorizontalPan,
   wheelFocusRatioFromClientX,
+  findChartIndexLowerBoundForTimeMs,
+  findChartIndexUpperBoundForTimeMs,
   useChartSelectionOverlay,
   useChartTimeMeasureOverlay,
   type ChartZoomRange,
@@ -950,6 +952,8 @@ export default function VizDashboardPage() {
     return {};
   }, [aiChartLink]);
   const [rawVizData, setRawVizData] = useState<VizDataRow[]>([]);
+  /** Bumped only when a new query starts, never on progressive row updates. */
+  const [queryResetEpoch, setQueryResetEpoch] = useState(0);
   // The chart layer only needs the visible series that can actually be drawn.
   // Field values still read the full raw rows, including hidden series.
   const chartSeriesItems = useMemo(
@@ -1467,7 +1471,9 @@ export default function VizDashboardPage() {
     } else {
       requestAnimationFrame(() => chartCanvasRef.current?.resetWindow());
     }
-  }, [rawVizDataKey, selectionOverlay.hide, timeMeasureOverlay.hide, chartZoomRafRefs, scheduleSpectrumViewportFit]);
+    // Reset the viewport for a new query only. Progressive row updates must
+    // not touch the zoom the user is analysing.
+  }, [queryResetEpoch, selectionOverlay.hide, timeMeasureOverlay.hide, chartZoomRafRefs, scheduleSpectrumViewportFit]);
 
   useEffect(() => {
     if (hoverCommitTimerRef.current != null) {
@@ -1475,7 +1481,7 @@ export default function VizDashboardPage() {
       hoverCommitTimerRef.current = null;
     }
     setHoverTimeKey(null);
-  }, [rawVizDataKey]);
+  }, [queryResetEpoch]);
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -2201,7 +2207,7 @@ export default function VizDashboardPage() {
         panRafRef.current = null;
       }
     };
-  }, [rawVizDataKey, liveMode, syncReactChartZoomFromRef, syncYAxisZoomedState]);
+  }, [queryResetEpoch, liveMode, syncReactChartZoomFromRef, syncYAxisZoomedState]);
 
   useEffect(() => {
     const el = chartViewportRef.current;
@@ -2419,7 +2425,7 @@ export default function VizDashboardPage() {
       }
       cancelChartZoomRaf(chartZoomRafRefs);
     };
-  }, [rawVizDataKey, liveMode, chartZoomRafRefs]);
+  }, [queryResetEpoch, liveMode, chartZoomRafRefs]);
 
   useEffect(() => {
     api.boards.list().then(setBoards);
@@ -2583,6 +2589,7 @@ export default function VizDashboardPage() {
     const controller = new AbortController();
     overviewAbortRef.current = controller;
     setFullLoadBytesEstimate(null);
+    setQueryResetEpoch(v => v + 1);
     try {
       const p = await api.viz.getProfile(id);
       overviewItemsRef.current = itemsForOverviewQuery(p.items);
@@ -2738,6 +2745,7 @@ export default function VizDashboardPage() {
     setFullLoadBytesEstimate(null);
     setFrozenAxisDomains(null);
     setProgressiveLoading(false);
+    setQueryResetEpoch(v => v + 1);
     envelopeTimestampsRef.current.clear();
     try {
       const overviewItems = itemsForOverviewQuery(itemsRef.current);
@@ -2952,6 +2960,7 @@ export default function VizDashboardPage() {
     setInMemoryFull(true);
     setLoading(false);
     setLivePollError(null);
+    setQueryResetEpoch(v => v + 1);
   }, [selectedBoard, t]);
   reloadLiveTailRef.current = reloadLiveTail;
 
@@ -3388,9 +3397,29 @@ export default function VizDashboardPage() {
 
   const zoomWindow = useMemo(() => {
     if (!chartZoom || chartData.length === 0) return null;
-    const { start, end } = clampChartZoom(chartZoom.start, chartZoom.end, chartData.length);
-    const startTs = chartZoom.startTs ?? chartData[start]?.timeKey;
-    const endTs = chartZoom.endTs ?? chartData[end]?.timeKey;
+
+    // When the zoom was committed with time keys, re-resolve the indices
+    // against the current data. Progressive loading inserts rows, so the
+    // original indices would point at a different span as the array grows.
+    let start: number;
+    let end: number;
+    let startTs: string | undefined;
+    let endTs: string | undefined;
+    const zoomStartMs = chartZoom.startTs ? Date.parse(chartZoom.startTs) : NaN;
+    const zoomEndMs = chartZoom.endTs ? Date.parse(chartZoom.endTs) : NaN;
+    if (Number.isFinite(zoomStartMs) && Number.isFinite(zoomEndMs) && zoomEndMs > zoomStartMs) {
+      start = findChartIndexLowerBoundForTimeMs(chartData, zoomStartMs);
+      end = findChartIndexUpperBoundForTimeMs(chartData, zoomEndMs);
+      if (end < start) end = start;
+      startTs = chartZoom.startTs;
+      endTs = chartZoom.endTs;
+    } else {
+      const clamped = clampChartZoom(chartZoom.start, chartZoom.end, chartData.length);
+      start = clamped.start;
+      end = clamped.end;
+      startTs = chartZoom.startTs ?? chartData[start]?.timeKey;
+      endTs = chartZoom.endTs ?? chartData[end]?.timeKey;
+    }
     if (!startTs || !endTs) return null;
 
     const fullSpan = fullChartTimeSpan(chartData);
@@ -3740,6 +3769,11 @@ export default function VizDashboardPage() {
   const chartTimelineKey = chartData.length >= 2
     ? `${chartData.length}:${chartData[0].timeKey}:${chartData[chartData.length - 1].timeKey}`
     : '';
+  /** Full-range time extent only. Unlike chartTimelineKey this stays constant
+   *  while progressive rounds insert rows, so it must not churn chart props. */
+  const chartSpanKey = chartData.length >= 2
+    ? `${chartData[0].timeKey}:${chartData[chartData.length - 1].timeKey}`
+    : '';
 
   /** Spectrum presence for downsampled overview — fixed to full chart span, not zoom/detail. */
   const sessionPresenceExtent = useMemo(() => {
@@ -3810,7 +3844,11 @@ export default function VizDashboardPage() {
       }
     }
     return { start: chartZoom.startTs, end: chartZoom.endTs };
-  }, [chartZoom?.startTs, chartZoom?.endTs, inMemoryFull, chartData]);
+    // chartData is read for the full span, but only its first/last timestamps
+    // matter. Depending on the array itself re-ran this on every progressive
+    // publish and rebuilt the chart's window props unnecessarily.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartZoom?.startTs, chartZoom?.endTs, inMemoryFull, chartSpanKey]);
 
   const resolveCanvasYScale = useCallback((item: VizItem) => (
     usesDigitalLane(item)
