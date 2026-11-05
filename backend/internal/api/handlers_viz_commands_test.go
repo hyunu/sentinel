@@ -143,3 +143,57 @@ func TestVisibleFlagIsExposedPerOverlay(t *testing.T) {
 		}
 	}
 }
+
+func TestEventFieldsUseProtocolEnumLabels(t *testing.T) {
+	spec := protocol.MonitoringControlProtocolSpec()
+	spec.ParseRules.Meta["enums"] = map[string]interface{}{
+		"FunctionId": map[string]interface{}{"31": "탈수", "11": "헹굼"},
+	}
+	fields := collectEventFields(spec.ParseRules)
+	if len(fields) != 3 {
+		t.Fatalf("event fields: want 3 (CF + CD result/error), got %d: %+v", len(fields), fields)
+	}
+	enums := enumsFromMeta(spec.ParseRules.Meta)
+
+	cf, err := protocol.Parse(commandTestCF, &spec)
+	if err != nil {
+		t.Fatalf("parse CF: %v", err)
+	}
+	cfSpecs := 0
+	for _, field := range fields {
+		if field.FID != 0xCF {
+			continue
+		}
+		cfSpecs++
+		values := extractEventValues(cf.Fields, field.Path)
+		if len(values) != 1 {
+			t.Fatalf("CF values at %s: %v", field.Path, values)
+		}
+		if got := renderEventLabel(field, values[0], enums); got != "탈수" {
+			t.Fatalf("CF label: want 탈수, got %q", got)
+		}
+	}
+	if cfSpecs != 1 {
+		t.Fatalf("CF event fields: want 1, got %d", cfSpecs)
+	}
+
+	cd, err := protocol.Parse(commandTestCD, &spec)
+	if err != nil {
+		t.Fatalf("parse CD: %v", err)
+	}
+	cdCount := 0
+	for _, field := range fields {
+		if field.FID != 0xCD {
+			continue
+		}
+		for _, value := range extractEventValues(cd.Fields, field.Path) {
+			cdCount++
+			if got := renderEventLabel(field, value, enums); got != "헹굼" {
+				t.Fatalf("CD label: want 헹굼, got %q", got)
+			}
+		}
+	}
+	if cdCount != 1 {
+		t.Fatalf("CD event values: want 1, got %d", cdCount)
+	}
+}

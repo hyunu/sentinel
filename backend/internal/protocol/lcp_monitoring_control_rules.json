@@ -66,6 +66,9 @@
       "0xCC": "event",
       "0xCE": "event",
       "0xC8": "event"
+    },
+    "enums": {
+      "FunctionId": {}
     }
   },
   "fields": [
@@ -592,7 +595,9 @@
                 "rules": [
                   {
                     "name": "function_id",
-                    "type": "U8"
+                    "type": "U8",
+                    "display": "event",
+                    "enum": "FunctionId"
                   },
                   {
                     "name": "result_data",
@@ -612,7 +617,9 @@
                 "rules": [
                   {
                     "name": "function_id",
-                    "type": "U8"
+                    "type": "U8",
+                    "display": "event",
+                    "enum": "FunctionId"
                   },
                   {
                     "name": "error_code",
@@ -707,7 +714,9 @@
               },
               {
                 "name": "function_id",
-                "type": "U8"
+                "type": "U8",
+                "display": "event",
+                "enum": "FunctionId"
               },
               {
                 "name": "arg_count",

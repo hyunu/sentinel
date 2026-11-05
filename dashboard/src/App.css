@@ -5408,3 +5408,67 @@ pre {
   align-items: center;
   gap: 8px;
 }
+
+.protocol-display-editor {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.25));
+}
+
+.protocol-display-editor h3 {
+  margin: 0 0 4px;
+}
+
+.protocol-display-editor h4 {
+  margin: 0 0 8px;
+}
+
+.pde-block {
+  margin-top: 16px;
+}
+
+.pde-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pde-inline input {
+  min-width: 220px;
+}
+
+.pde-enum {
+  margin: 8px 0;
+}
+
+.pde-enum-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pde-enum textarea {
+  width: 100%;
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.pde-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pde-table th,
+.pde-table td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+}
+
+.pde-table code {
+  font-size: 12px;
+}
