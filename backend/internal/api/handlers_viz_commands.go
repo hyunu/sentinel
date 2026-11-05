@@ -38,14 +38,16 @@ type overlayField struct {
 // overlayConfig is protocol-defined: which FID becomes a chart event, how it is
 // labelled and drawn. Nothing about FIDs or styles is hardcoded in the handler.
 type overlayConfig struct {
-	FID    string         `json:"fid"`
-	Kind   string         `json:"kind"`
-	Path   string         `json:"path,omitempty"`
-	Fields []overlayField `json:"fields,omitempty"`
-	Label  string         `json:"label,omitempty"`
-	Color  string         `json:"color,omitempty"`
-	Style  string         `json:"style,omitempty"`
-	fidNum int
+	FID     string         `json:"fid"`
+	Type    string         `json:"type,omitempty"`
+	Visible *bool          `json:"visible,omitempty"`
+	Kind    string         `json:"kind"`
+	Path    string         `json:"path,omitempty"`
+	Fields  []overlayField `json:"fields,omitempty"`
+	Label   string         `json:"label,omitempty"`
+	Color   string         `json:"color,omitempty"`
+	Style   string         `json:"style,omitempty"`
+	fidNum  int
 }
 
 const vizCommandLimit = 20000
@@ -54,7 +56,9 @@ func overlayConfigsFromSpec(spec *models.ProtocolSpec) []overlayConfig {
 	if spec == nil || spec.ParseRules == nil || spec.ParseRules.Meta == nil {
 		return nil
 	}
-	raw, ok := spec.ParseRules.Meta["overlays"]
+	meta := spec.ParseRules.Meta
+	dataTypes := dataTypesFromMeta(meta)
+	raw, ok := meta["overlays"]
 	if !ok {
 		return nil
 	}
@@ -72,11 +76,48 @@ func overlayConfigsFromSpec(spec *models.ProtocolSpec) []overlayConfig {
 		if err != nil {
 			continue
 		}
+		// The rule set classifies frames as continuous series or events.
+		// Series frames are never drawn as event markers, and hidden events are
+		// skipped before querying.
+		if kind, ok := dataTypes[fid]; ok && kind == "series" {
+			continue
+		}
+		if overlay.Type != "" && overlay.Type != "event" {
+			continue
+		}
+		if overlay.Visible != nil && !*overlay.Visible {
+			continue
+		}
 		overlay.fidNum = fid
 		if overlay.Style == "" {
 			overlay.Style = "vline"
 		}
+		if overlay.Type == "" {
+			overlay.Type = "event"
+		}
 		out = append(out, overlay)
+	}
+	return out
+}
+
+func dataTypesFromMeta(meta map[string]interface{}) map[int]string {
+	out := make(map[int]string)
+	raw, ok := meta["data_types"]
+	if !ok {
+		return out
+	}
+	m, ok := asMap(raw)
+	if !ok {
+		return out
+	}
+	for key, value := range m {
+		fid, err := parseFIDValue(key)
+		if err != nil {
+			continue
+		}
+		if kind, ok := value.(string); ok && kind != "" {
+			out[fid] = kind
+		}
 	}
 	return out
 }
