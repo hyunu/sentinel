@@ -361,7 +361,19 @@ bool wifi_send_heartbeat() {
 
 bool wifi_server_link_healthy() {
     return lastServerResponseAt != 0 &&
-           (millis() - lastServerResponseAt) < 5000;
+           (millis() - lastServerResponseAt) < PRESENCE_WINDOW_MS;
+}
+
+bool wifi_presence_needs_heartbeat() {
+    if (lastServerResponseAt == 0) return true;
+    const unsigned long quiet = millis() - lastServerResponseAt;
+    // http.setTimeout is 3s. Start the keepalive before the presence
+    // window closes, and only after uploads have gone quiet.
+    const unsigned long leadMs = 3000;
+    const unsigned long dueMs = HEARTBEAT_INTERVAL_MS > leadMs
+        ? HEARTBEAT_INTERVAL_MS - leadMs
+        : HEARTBEAT_INTERVAL_MS;
+    return quiet >= dueMs;
 }
 
 void wifi_force_reconnect() {

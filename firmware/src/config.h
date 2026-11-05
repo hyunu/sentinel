@@ -15,6 +15,10 @@
 #define UART_CAPTURE_RX_DUMMY_TX    7
 #define UART_CAPTURE_TX_DUMMY_TX    4
 
+// Server drops a board 10s after the last packet or heartbeat.
+#define PRESENCE_WINDOW_MS     10000
+// Idle heartbeat budget. The POST starts 3s earlier so it can finish
+// inside PRESENCE_WINDOW_MS when there is nothing else to upload.
 #define HEARTBEAT_INTERVAL_MS  10000
 #define TEMP_INTERVAL_MS       3000
 

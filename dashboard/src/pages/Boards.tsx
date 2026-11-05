@@ -31,9 +31,12 @@ export default function BoardsPage() {
   const [registering, setRegistering] = useState(false);
 
   useEffect(() => {
+    let inFlight = false;
     const load = (showLoading = false) => {
+      if (inFlight) return;
       if (document.activeElement?.classList.contains('table-inline-input')) return;
       if (document.activeElement?.classList.contains('table-inline-select')) return;
+      inFlight = true;
       if (showLoading) setLoading(true);
       api.boards.list()
         .then(async list => {
@@ -55,12 +58,19 @@ export default function BoardsPage() {
           setNow(Date.now());
         })
         .catch(console.error)
-        .finally(() => { if (showLoading) setLoading(false); });
+        .finally(() => {
+          inFlight = false;
+          if (showLoading) setLoading(false);
+        });
     };
     load(true);
     api.protocols.list().then(setProtocols).catch(console.error);
-    const timer = setInterval(() => load(false), 30_000);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => load(false), 2_000);
+    const clock = setInterval(() => setNow(Date.now()), 1_000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(clock);
+    };
   }, []);
 
   const openRegister = () => {

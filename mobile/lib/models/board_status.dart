@@ -27,8 +27,8 @@ class BoardRegistryEntry {
   bool get hasRecentHeartbeat => BoardStatusResolver.isRecent(lastHeartbeat);
 }
 
-/// Recent UART upload counts as server presence. Firmware stops sending
-/// /heartbeat while uploads succeed, so last_heartbeat alone goes stale.
+/// Recent UART upload counts as server presence. A packet makes the board
+/// online immediately; 10 seconds without a packet or heartbeat is offline.
 DateTime? freshestBoardPresence(DateTime? heartbeat, DateTime? uartAt) {
   DateTime? valid(DateTime? value) =>
       (value == null || value.year <= 1) ? null : value;
@@ -61,9 +61,11 @@ class BoardStatusResolver {
   static String label(SentinelDisplayState state) => _labels[state]!;
   static Color color(SentinelDisplayState state) => _colors[state]!;
 
+  static const presenceWindow = Duration(seconds: 10);
+
   static bool isRecent(DateTime? at) {
     if (at == null || at.year <= 1) return false;
-    return DateTime.now().toUtc().difference(at.toUtc()).inMinutes < 2;
+    return DateTime.now().toUtc().difference(at.toUtc()) < presenceWindow;
   }
 
   static SentinelDisplayState resolve({
@@ -79,8 +81,7 @@ class BoardStatusResolver {
   }
 
   /// BLE manufacturer flags are the live AP/server state. A stale server
-  /// heartbeat must not override them — that was marking connected boards
-  /// Offline whenever `last_heartbeat` was older than two minutes.
+  /// heartbeat must not override them.
   static SentinelDisplayState resolveSignals({
     required SentinelBleState bleState,
     String? uid,

@@ -49,6 +49,13 @@ void main() {
     );
   });
 
+  test('presence expires 10 seconds after the last packet', () {
+    final fresh = DateTime.now().toUtc().subtract(const Duration(seconds: 9));
+    final stale = DateTime.now().toUtc().subtract(const Duration(seconds: 11));
+    expect(BoardStatusResolver.isRecent(fresh), isTrue);
+    expect(BoardStatusResolver.isRecent(stale), isFalse);
+  });
+
   test('UART newer than heartbeat is the presence time', () {
     final heartbeat = DateTime.utc(2026, 11, 5, 8, 34);
     final uart = DateTime.utc(2026, 11, 5, 8, 44);

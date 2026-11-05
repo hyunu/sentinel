@@ -703,8 +703,8 @@ func (h *Handler) IngestUARTBatch(c *gin.Context) {
 }
 
 // touchBoardPresence keeps last_heartbeat fresh while UART is uploading.
-// Firmware skips /heartbeat once HTTP uploads succeed, so a streaming board
-// would otherwise age out of the 2-minute online window and look offline.
+// A packet marks the board online immediately. With no later packet or
+// heartbeat, it falls offline after boardOnlineWindow (10s).
 func (h *Handler) touchBoardPresence(ctx context.Context, boardID string) {
 	now := time.Now()
 	if _, err := h.db.Boards().UpdateOne(ctx, bson.M{"_id": boardID}, bson.M{"$set": bson.M{

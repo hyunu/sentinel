@@ -150,6 +150,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   int _liveParsedFrames = 0;
   int _liveParseErrors = 0;
   Timer? _liveUiFlushTimer;
+  Timer? _presenceTimer;
   bool _liveUiDirty = false;
   ProtocolParser? _cachedParser;
   String? _cachedParserKey;
@@ -192,6 +193,11 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
     _loadSaved();
     _connect();
+    _presenceTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (mounted && _connected) {
+        _syncBoardFromServer(loadProfiles: false);
+      }
+    });
   }
 
   @override
@@ -235,6 +241,7 @@ class _DeviceScreenState extends State<DeviceScreen>
       c.removeListener(_onFieldChanged);
     }
     _liveUiFlushTimer?.cancel();
+    _presenceTimer?.cancel();
     _uartSub?.cancel();
     _connSub?.cancel();
     _logSub?.cancel();
@@ -738,7 +745,7 @@ class _DeviceScreenState extends State<DeviceScreen>
     }
   }
 
-  Future<void> _syncBoardFromServer() async {
+  Future<void> _syncBoardFromServer({bool loadProfiles = true}) async {
     try {
       final base = _baseUrl;
       final bleMac = widget.device.remoteId.str;
@@ -791,9 +798,11 @@ class _DeviceScreenState extends State<DeviceScreen>
           if (serverFresh) {
             _boardWifi = true;
             _boardServer = true;
+          } else if (!loadProfiles) {
+            _boardServer = false;
           }
         });
-        await _loadVizProfiles();
+        if (loadProfiles) await _loadVizProfiles();
         return;
       }
     } catch (_) {}

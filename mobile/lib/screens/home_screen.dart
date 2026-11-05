@@ -46,7 +46,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _startScan();
     _refreshBoardRegistry();
-    _boardRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _boardRefreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _refreshBoardRegistry();
     });
   }

@@ -23,11 +23,9 @@
 
 static unsigned long lastTemp = 0;
 static unsigned long lastUartStats = 0;
-static unsigned long lastLinkProbeAt = 0;
 static unsigned long lastHeartbeatAt = 0;
 static unsigned long lastWifiRecoveryAt = 0;
 static int linkFailures = 0;
-static bool linkWasHealthy = false;
 
 struct CapturedFrame {
     uint32_t capturedTickMs;
@@ -136,25 +134,24 @@ void loop() {
         uart_sniffer_log_stats();
     }
 
-    // Heartbeat updates last_heartbeat on the server. UART uploads also get
-    // HTTP 200, but they must not replace the heartbeat — otherwise a board
-    // that is streaming looks offline once the last heartbeat ages out.
+    // UART uploads refresh presence. When nothing has been posted, send a
+    // heartbeat before the server's 10s window expires.
     if (wifi_is_connected()) {
+        if (wifi_server_link_healthy() && wifi_has_board_uid() &&
+            !ble_is_server_registered()) {
+            ble_set_server_registered(true);
+        }
         const bool heartbeatDue =
-            lastHeartbeatAt == 0 || now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS;
-        const bool probeDue =
-            !wifi_server_link_healthy() && now - lastLinkProbeAt >= 1000;
-        if (heartbeatDue || probeDue) {
-            if (heartbeatDue) lastHeartbeatAt = now;
-            if (probeDue) lastLinkProbeAt = now;
+            wifi_presence_needs_heartbeat() &&
+            (lastHeartbeatAt == 0 || now - lastHeartbeatAt >= 1000);
+        if (heartbeatDue) {
+            lastHeartbeatAt = now;
             const bool ok = wifi_send_heartbeat();
             if (ok) {
-                linkWasHealthy = true;
                 linkFailures = 0;
                 if (wifi_has_board_uid()) ble_set_server_registered(true);
                 ble_send_uart_data(String("EVENT:HEARTBEAT_OK"));
             } else {
-                linkWasHealthy = false;
                 linkFailures++;
                 ble_set_server_registered(false);
                 if (linkFailures == 1 || (linkFailures % 3) == 0) {
@@ -172,7 +169,6 @@ void loop() {
             }
         }
     } else {
-        linkWasHealthy = false;
         if (now - lastWifiRecoveryAt >= 10000) {
             lastWifiRecoveryAt = now;
             wifi_force_reconnect();

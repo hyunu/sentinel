@@ -78,7 +78,7 @@
   },
   "boards": {
     "title": "Boards",
-    "subtitle": "View registered board status, location, and connection info. Auto-refreshes every 30 seconds.",
+    "subtitle": "View registered board status, location, and connection info. Auto-refreshes every 2 seconds.",
     "allBoards": "All Boards",
     "onlineTotal": "{{online}} online · {{total}} total",
     "registerBoard": "Register Board",

@@ -7,6 +7,7 @@ void wifi_init();
 void wifi_connect(const String &ssid, const String &password);
 bool wifi_send_heartbeat();
 bool wifi_server_link_healthy();
+bool wifi_presence_needs_heartbeat();
 void wifi_force_reconnect();
 void wifi_send_uart_data(const String &hex_data);
 void wifi_send_uart_data_at(const String &hex_data, uint32_t captured_tick_ms,

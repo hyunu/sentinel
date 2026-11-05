@@ -15,6 +15,15 @@ describe('board presence', () => {
     expect(latestPresenceIso(board.last_heartbeat, uartAt)).toBe(uartAt);
   });
 
+  it('drops offline once the last packet is 10 seconds old', () => {
+    const board = {
+      is_active: true,
+      last_heartbeat: '2026-11-05T08:34:10.000Z',
+    };
+    expect(isBoardOnline(board, Date.parse('2026-11-05T08:34:19.000Z'))).toBe(true);
+    expect(isBoardOnline(board, Date.parse('2026-11-05T08:34:20.000Z'))).toBe(false);
+  });
+
   it('stays offline when neither signal is recent', () => {
     const board = {
       is_active: true,

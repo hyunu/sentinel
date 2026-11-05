@@ -1,4 +1,4 @@
-export const BOARD_ONLINE_WINDOW_MS = 120_000;
+export const BOARD_ONLINE_WINDOW_MS = 10_000;
 
 function validMs(value?: string | null): number | null {
   if (!value) return null;
