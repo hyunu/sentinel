@@ -95,8 +95,14 @@ func vizValuesFromDoc(d *vizSampleDoc, items []models.VizItem) map[string]interf
 		return vals
 	}
 	for _, item := range items {
-		if v, ok := d.ParsedFields[item.FieldRef.FieldName]; ok {
-			if fv, ok := extractVizValue(v); ok {
+		value, ok := d.ParsedFields[item.FieldRef.FieldName]
+		if !ok {
+			// Combined monitoring+control rules wrap payload fields under
+			// "payload." while profile items keep the bare field name.
+			value, ok = d.ParsedFields["payload."+item.FieldRef.FieldName]
+		}
+		if ok {
+			if fv, ok := extractVizValue(value); ok {
 				vals[item.Label] = fv
 			}
 		}

@@ -37,6 +37,12 @@ export interface JsonFieldRule {
   transform_expr?: string;
   validate_expr?: string;
   inner?: JsonFieldRule;
+  /** Protocol-level enum name for this field's values. */
+  enum?: string;
+  /** Chart policy: series | event | hidden. */
+  display?: string;
+  /** Event label template ({enum}, {value}, {field}). */
+  event_label?: string;
 }
 
 export interface JsonRuleSet {

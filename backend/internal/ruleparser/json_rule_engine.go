@@ -49,6 +49,9 @@ type JsonFieldRule struct {
 	TransformExpr string                     `json:"transform_expr,omitempty"`
 	ValidateExpr  string                     `json:"validate_expr,omitempty"`
 	Inner         *JsonFieldRule             `json:"inner,omitempty"`
+	Enum          string                     `json:"enum,omitempty"`
+	Display       string                     `json:"display,omitempty"`
+	EventLabel    string                     `json:"event_label,omitempty"`
 }
 
 type ExprDef struct {

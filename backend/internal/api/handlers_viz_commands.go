@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -139,19 +140,42 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		return
 	}
 
-	spec := protocol.MonitoringControlProtocolSpec()
-	overlays := overlayConfigsFromSpec(&spec)
-	if len(overlays) == 0 {
-		c.JSON(http.StatusOK, gin.H{"items": []vizCommandEvent{}, "total": 0})
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 
+	// Prefer the board's own protocol so dashboard edits (enums, display flags)
+	// take effect immediately; fall back to the built-in combined rules.
+	spec := protocol.MonitoringControlProtocolSpec()
+	var board models.Board
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&board); err == nil && board.ProtocolID != "" {
+		var proto models.ProtocolSpec
+		if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": board.ProtocolID}).Decode(&proto); err == nil && proto.ParseRules != nil {
+			if len(collectEventFields(proto.ParseRules)) > 0 || len(overlayConfigsFromSpec(&proto)) > 0 {
+				spec = proto
+			}
+		}
+	}
+
+	overlays := overlayConfigsFromSpec(&spec)
+	eventFields := collectEventFields(spec.ParseRules)
+	if len(overlays) == 0 && len(eventFields) == 0 {
+		c.JSON(http.StatusOK, gin.H{"items": []vizCommandEvent{}, "total": 0})
+		return
+	}
+	enums := enumsFromMeta(spec.ParseRules.Meta)
+	fieldsByFID := make(map[int][]eventFieldSpec)
+	fidSet := make(map[int]bool)
+	for _, field := range eventFields {
+		fieldsByFID[field.FID] = append(fieldsByFID[field.FID], field)
+		fidSet[field.FID] = true
+	}
+	for _, overlay := range overlays {
+		fidSet[overlay.fidNum] = true
+	}
+
 	filter := bson.M{
 		"board_id": boardID,
-		"raw_hex":  bson.M{"$regex": overlayFIDRegexp(overlays), "$options": "i"},
+		"raw_hex":  bson.M{"$regex": fidSetRegexp(fidSet), "$options": "i"},
 	}
 	if direction := c.Query("direction"); direction != "" {
 		filter["direction"] = direction
@@ -187,8 +211,13 @@ func (h *Handler) VizCommands(c *gin.Context) {
 	}
 	defer cur.Close(ctx)
 
-	configs := make([]vizCommandConfig, 0, len(overlays))
+	configs := make([]vizCommandConfig, 0, len(fidSet))
+	seenFID := make(map[int]bool)
 	for _, overlay := range overlays {
+		if seenFID[overlay.fidNum] {
+			continue
+		}
+		seenFID[overlay.fidNum] = true
 		visible := overlay.Visible == nil || *overlay.Visible
 		configs = append(configs, vizCommandConfig{
 			FID:     fmt.Sprintf("0x%02X", overlay.fidNum),
@@ -197,6 +226,34 @@ func (h *Handler) VizCommands(c *gin.Context) {
 			Visible: visible,
 			Color:   overlay.Color,
 			Label:   overlay.Label,
+		})
+	}
+	for _, overlay := range overlays {
+		for _, field := range fieldsByFID[overlay.fidNum] {
+			if seenFID[field.FID] {
+				continue
+			}
+			seenFID[field.FID] = true
+			configs = append(configs, vizCommandConfig{
+				FID:     fmt.Sprintf("0x%02X", field.FID),
+				Kind:    "event",
+				Type:    "event",
+				Visible: true,
+				Color:   colorForFID(field.FID),
+			})
+		}
+	}
+	for fid := range fieldsByFID {
+		if seenFID[fid] {
+			continue
+		}
+		seenFID[fid] = true
+		configs = append(configs, vizCommandConfig{
+			FID:     fmt.Sprintf("0x%02X", fid),
+			Kind:    "event",
+			Type:    "event",
+			Visible: true,
+			Color:   colorForFID(fid),
 		})
 	}
 
@@ -210,7 +267,28 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		if err := cur.Decode(&doc); err != nil {
 			continue
 		}
-		event, ok := commandEventFromFrame(doc.Timestamp, doc.Direction, doc.RawHex, &spec, overlays)
+		result, err := protocol.Parse(doc.RawHex, &spec)
+		if err != nil {
+			continue
+		}
+		fid := asInt(result.Fields["fid"])
+		if specs := fieldsByFID[fid]; len(specs) > 0 {
+			for _, fieldSpec := range specs {
+				for _, value := range extractEventValues(result.Fields, fieldSpec.Path) {
+					events = append(events, vizCommandEvent{
+						Timestamp: doc.Timestamp,
+						Direction: doc.Direction,
+						FID:       fid,
+						Kind:      "event",
+						Summary:   renderEventLabel(fieldSpec, value, enums),
+						Color:     colorForFID(fid),
+						Style:     "vline",
+					})
+				}
+			}
+			continue
+		}
+		event, ok := commandEventFromParsed(result, doc.Timestamp, doc.Direction, overlays)
 		if ok {
 			events = append(events, event)
 		}
@@ -221,6 +299,28 @@ func (h *Handler) VizCommands(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"items": events, "total": len(events), "config": configs})
+}
+
+func fidSetRegexp(fids map[int]bool) string {
+	parts := make([]string, 0, len(fids))
+	for fid := range fids {
+		parts = append(parts, fmt.Sprintf("%02X", fid))
+	}
+	sort.Strings(parts)
+	return "^AA..(" + strings.Join(parts, "|") + ")"
+}
+
+func colorForFID(fid int) string {
+	switch fid {
+	case 0xCF:
+		return "#ff9f40"
+	case 0xCD:
+		return "#40c4ff"
+	case 0xCC:
+		return "#8bc34a"
+	default:
+		return "#b0bec5"
+	}
 }
 
 // overlayFIDRegexp builds the Mongo prefix filter from the configured FIDs so
@@ -238,6 +338,10 @@ func commandEventFromFrame(ts time.Time, direction, rawHex string, spec *models.
 	if err != nil {
 		return vizCommandEvent{}, false
 	}
+	return commandEventFromParsed(result, ts, direction, overlays)
+}
+
+func commandEventFromParsed(result *protocol.ParseResult, ts time.Time, direction string, overlays []overlayConfig) (vizCommandEvent, bool) {
 	fidVal := asInt(result.Fields["fid"])
 	var overlay *overlayConfig
 	for i := range overlays {

@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { JsonRuleDocument, ParseResult, SchemaPreset } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
+import ProtocolDisplayEditor from '../components/ProtocolDisplayEditor';
 import ParseRulesManual from '../components/ParseRulesManual';
 import { useTranslation } from '../i18n';
 import { DEFAULT_LCP_PARSE_RULES } from '../lib/protocolFormat';
@@ -240,7 +241,10 @@ export default function ProtocolEditPage() {
           )}
 
           {editMode === 'ui' ? (
-            <ParseRulesBuilder document={rules} onChange={applyRules} />
+            <>
+              <ParseRulesBuilder document={rules} onChange={applyRules} />
+              <ProtocolDisplayEditor document={rules} onChange={applyRules} />
+            </>
           ) : (
             <textarea
               className="mono parse-rules-editor"
