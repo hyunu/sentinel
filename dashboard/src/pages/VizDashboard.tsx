@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization -- legacy imperative canvas + data-fetch effects */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
-import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig, VizCommandEvent } from '../api';
+import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig, VizCommandEvent, VizCommandConfig } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
@@ -1054,6 +1054,9 @@ export default function VizDashboardPage() {
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
   const [commandEvents, setCommandEvents] = useState<VizCommandEvent[]>([]);
   const [showCommands, setShowCommands] = useState(true);
+  const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
+  const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
+  const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
   const [fieldValuesLayout, setFieldValuesLayout] = useState<FieldValuesLayout>(readFieldValuesLayout);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
@@ -2665,6 +2668,7 @@ export default function VizDashboardPage() {
       // the axisRangeStorageKey effect loads it (or clears to Auto).
       setSelectedBoard(p.board_id);
       setItems(normalizeVizItems(p.items));
+      setEventOverrides(p.event_overlays ?? {});
       setAiChartLink(null);
       setChartQueryTimeRange(null);
       setSavedProfileId(p.id);
@@ -2999,7 +3003,10 @@ export default function VizDashboardPage() {
         { signal: controller.signal },
       )
         .then(res => {
-          if (!controller.signal.aborted) setCommandEvents(res.items);
+          if (!controller.signal.aborted) {
+            setCommandEvents(res.items);
+            setEventConfig(res.config ?? []);
+          }
         })
         .catch(() => {});
     }, 400);
@@ -3354,6 +3361,7 @@ export default function VizDashboardPage() {
         board_id: selectedBoard,
         items: profileItems,
         time_range: buildTimeRange(),
+        event_overlays: eventOverrides,
         y_axis_range: (axisRangeLeft || axisRangeRight)
           ? {
               left: axisRangeLeft ?? undefined,
@@ -3449,8 +3457,25 @@ export default function VizDashboardPage() {
       left: axisRangeLeft ?? undefined,
       right: axisRangeRight ?? undefined,
     }) !== normalizeRange(activeProfile.y_axis_range);
-    return itemsDirty || rangeDirty;
-  }, [items, activeProfile, checkedOnly, axisRangeLeft, axisRangeRight]);
+    const overlaysDirty = JSON.stringify(eventOverrides)
+      !== JSON.stringify(activeProfile.event_overlays ?? {});
+    return itemsDirty || rangeDirty || overlaysDirty;
+  }, [items, activeProfile, checkedOnly, axisRangeLeft, axisRangeRight, eventOverrides]);
+  useEffect(() => {
+    setEventOverrides(activeProfile?.event_overlays ?? {});
+  }, [activeProfile?.id, activeProfile?.updated_at]);
+  const chartCommandEvents = useMemo(() => {
+    if (!showCommands) return [];
+    const configByFid = new Map(eventConfig.map(cfg => [cfg.fid.toUpperCase(), cfg]));
+    return commandEvents.filter(event => {
+      const key = `0x${event.fid.toString(16).toUpperCase().padStart(2, '0')}`;
+      const config = configByFid.get(key);
+      const override = eventOverrides[key] ?? eventOverrides[key.toLowerCase()];
+      const type = override?.type ?? config?.type ?? 'event';
+      const visible = override?.visible ?? config?.visible ?? true;
+      return type !== 'series' && visible;
+    });
+  }, [commandEvents, eventConfig, eventOverrides, showCommands]);
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name, activeProfile.id);
@@ -5133,6 +5158,17 @@ export default function VizDashboardPage() {
                   </button>
                   <button
                     type="button"
+                    className={`viz-chart-icon-btn${eventSettingsOpen ? ' active' : ''}`}
+                    onClick={() => setEventSettingsOpen(v => !v)}
+                    title={t('viz.eventSettings')}
+                    aria-label={t('viz.eventSettings')}
+                    aria-pressed={eventSettingsOpen}
+                    disabled={eventConfig.length === 0}
+                  >
+                    <span className="viz-chart-axis-range-glyph">E</span>
+                  </button>
+                  <button
+                    type="button"
                     className={`viz-chart-icon-btn${seriesValuesOpen ? ' active' : ''}`}
                     onClick={() => setSeriesValuesOpen(v => !v)}
                     title={t('viz.seriesGroup.valuesToggle')}
@@ -5232,7 +5268,7 @@ export default function VizDashboardPage() {
             resolveYScale={resolveCanvasYScale}
             height={chartViewportHeight}
             tooltipEnabled={chartTooltipEnabled}
-            commandEvents={commandEvents}
+            commandEvents={chartCommandEvents}
             showCommands={showCommands}
             hideTooltip={chartInteractionHidden}
             itemById={tooltipItemById}
@@ -5433,6 +5469,52 @@ export default function VizDashboardPage() {
           })}
         </div>
         <p className="muted viz-axis-range-hint">{t('viz.axisRange.digitalHint')}</p>
+      </Modal>
+      <Modal
+        open={eventSettingsOpen}
+        onClose={() => setEventSettingsOpen(false)}
+        title={t('viz.eventSettings')}
+        footer={(
+          <button type="button" className="btn-primary" onClick={() => setEventSettingsOpen(false)}>
+            {t('common.close')}
+          </button>
+        )}
+      >
+        <p className="muted">{t('viz.eventSettingsHint')}</p>
+        <div className="viz-event-settings-list">
+          {eventConfig.map(cfg => {
+            const key = cfg.fid.toUpperCase();
+            const override = eventOverrides[key] ?? {};
+            const type = override.type ?? cfg.type ?? 'event';
+            const visible = override.visible ?? cfg.visible;
+            return (
+              <div className="viz-event-settings-row" key={cfg.fid}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={e => setEventOverrides(prev => ({
+                      ...prev,
+                      [key]: { ...prev[key], visible: e.target.checked },
+                    }))}
+                  />
+                  <span>{cfg.kind} <code>{cfg.fid}</code></span>
+                </label>
+                <select
+                  value={type}
+                  onChange={e => setEventOverrides(prev => ({
+                    ...prev,
+                    [key]: { ...prev[key], type: e.target.value },
+                  }))}
+                >
+                  <option value="event">{t('viz.eventTypeEvent')}</option>
+                  <option value="series">{t('viz.eventTypeSeries')}</option>
+                </select>
+              </div>
+            );
+          })}
+        </div>
+        <p className="muted">{t('viz.eventSettingsSaveHint')}</p>
       </Modal>
       <ChartHelpManual open={chartManualOpen} onClose={() => setChartManualOpen(false)} />
     </div>

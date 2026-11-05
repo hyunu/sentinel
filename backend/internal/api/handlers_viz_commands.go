@@ -28,6 +28,17 @@ type vizCommandEvent struct {
 }
 
 // overlayField describes one value to pull out of a parsed frame.
+// vizCommandConfig exposes the protocol's overlay policy so the dashboard can
+// show/override it per profile.
+type vizCommandConfig struct {
+	FID     string `json:"fid"`
+	Kind    string `json:"kind"`
+	Type    string `json:"type"`
+	Visible bool   `json:"visible"`
+	Color   string `json:"color,omitempty"`
+	Label   string `json:"label,omitempty"`
+}
+
 type overlayField struct {
 	Name   string   `json:"name"`
 	Path   string   `json:"path,omitempty"`
@@ -83,9 +94,6 @@ func overlayConfigsFromSpec(spec *models.ProtocolSpec) []overlayConfig {
 			continue
 		}
 		if overlay.Type != "" && overlay.Type != "event" {
-			continue
-		}
-		if overlay.Visible != nil && !*overlay.Visible {
 			continue
 		}
 		overlay.fidNum = fid
@@ -179,6 +187,19 @@ func (h *Handler) VizCommands(c *gin.Context) {
 	}
 	defer cur.Close(ctx)
 
+	configs := make([]vizCommandConfig, 0, len(overlays))
+	for _, overlay := range overlays {
+		visible := overlay.Visible == nil || *overlay.Visible
+		configs = append(configs, vizCommandConfig{
+			FID:     fmt.Sprintf("0x%02X", overlay.fidNum),
+			Kind:    overlay.Kind,
+			Type:    overlay.Type,
+			Visible: visible,
+			Color:   overlay.Color,
+			Label:   overlay.Label,
+		})
+	}
+
 	events := make([]vizCommandEvent, 0, 128)
 	for cur.Next(ctx) {
 		var doc struct {
@@ -199,7 +220,7 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"items": events, "total": len(events)})
+	c.JSON(http.StatusOK, gin.H{"items": events, "total": len(events), "config": configs})
 }
 
 // overlayFIDRegexp builds the Mongo prefix filter from the configured FIDs so

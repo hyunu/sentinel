@@ -407,6 +407,11 @@
     "autoLayoutDone": "Placed {{count}} on/off items below. Save the profile to keep it.",
     "saveNow": "Save now",
     "autoLayoutNoData": "No analog data to lay out. Load data first.",
-    "commandOverlayToggle": "Show control commands (TX/RX markers)"
+    "commandOverlayToggle": "Show control commands (TX/RX markers)",
+    "eventSettings": "Event display",
+    "eventSettingsHint": "Events defined by the protocol. Uncheck to hide them from the chart, or switch to continuous to stop drawing markers.",
+    "eventSettingsSaveHint": "Changes are stored with the profile when you save it.",
+    "eventTypeEvent": "Event (marker)",
+    "eventTypeSeries": "Continuous"
   }
 }

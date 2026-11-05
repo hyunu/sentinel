@@ -5388,3 +5388,23 @@ pre {
   color: var(--text-secondary);
   font-size: 11px;
 }
+
+.viz-event-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.viz-event-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viz-event-settings-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
