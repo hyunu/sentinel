@@ -128,6 +128,55 @@
           "237": "거부: 없는 명령",
           "236": "거부: 인자 개수",
           "235": "거부: 값 범위"
+        },
+        "OnOff": {
+          "0": "OFF",
+          "1": "ON"
+        },
+        "AodAction": {
+          "0": "끔",
+          "1": "열기",
+          "2": "닫기"
+        },
+        "VarioCmdRequest": {
+          "0": "STOP",
+          "1": "RESUME",
+          "2": "FIND_BASE",
+          "3": "CLEAR_COUNT"
+        },
+        "VarioMonitoringRequest": {
+          "0": "NONE",
+          "1": "FIND_BASE",
+          "2": "MOVE"
+        },
+        "VarioPosition": {
+          "0": "UNDEFINE",
+          "1": "UPPER",
+          "2": "ALL",
+          "3": "TOP",
+          "4": "LOWER_TOP",
+          "5": "LOWER",
+          "6": "NONE"
+        },
+        "VarioState": {
+          "0": "INIT",
+          "1": "WAIT_RISE",
+          "2": "WAIT_FALL",
+          "3": "MOVE_BASE",
+          "4": "FIND_OK",
+          "5": "RETRY",
+          "6": "MOVING",
+          "7": "MOVE_OK",
+          "8": "ERROR"
+        },
+        "VarioSet": {
+          "0": "ROTATE",
+          "1": "FORCE"
+        },
+        "TubLampLevel": {
+          "0": "단계 0",
+          "1": "단계 1",
+          "2": "단계 2"
         }
       }
     },
@@ -683,7 +732,10 @@
                     },
                     {
                       "name": "error_code",
-                      "type": "U8"
+                      "type": "U8",
+                      "display": "event",
+                      "enum": "ResultCode",
+                      "event_label": "{enum}"
                     }
                   ]
                 },
@@ -990,6 +1042,55 @@
         "237": "거부: 없는 명령",
         "236": "거부: 인자 개수",
         "235": "거부: 값 범위"
+      },
+      "OnOff": {
+        "0": "OFF",
+        "1": "ON"
+      },
+      "AodAction": {
+        "0": "끔",
+        "1": "열기",
+        "2": "닫기"
+      },
+      "VarioCmdRequest": {
+        "0": "STOP",
+        "1": "RESUME",
+        "2": "FIND_BASE",
+        "3": "CLEAR_COUNT"
+      },
+      "VarioMonitoringRequest": {
+        "0": "NONE",
+        "1": "FIND_BASE",
+        "2": "MOVE"
+      },
+      "VarioPosition": {
+        "0": "UNDEFINE",
+        "1": "UPPER",
+        "2": "ALL",
+        "3": "TOP",
+        "4": "LOWER_TOP",
+        "5": "LOWER",
+        "6": "NONE"
+      },
+      "VarioState": {
+        "0": "INIT",
+        "1": "WAIT_RISE",
+        "2": "WAIT_FALL",
+        "3": "MOVE_BASE",
+        "4": "FIND_OK",
+        "5": "RETRY",
+        "6": "MOVING",
+        "7": "MOVE_OK",
+        "8": "ERROR"
+      },
+      "VarioSet": {
+        "0": "ROTATE",
+        "1": "FORCE"
+      },
+      "TubLampLevel": {
+        "0": "단계 0",
+        "1": "단계 1",
+        "2": "단계 2"
       }
     }
   }

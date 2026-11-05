@@ -150,8 +150,8 @@ func TestEventFieldsUseProtocolEnumLabels(t *testing.T) {
 		"FunctionId": map[string]interface{}{"31": "탈수", "11": "헹굼"},
 	}
 	fields := collectEventFields(spec.ParseRules)
-	if len(fields) != 3 {
-		t.Fatalf("event fields: want 3 (CF + CD result/error), got %d: %+v", len(fields), fields)
+	if len(fields) != 4 {
+		t.Fatalf("event fields: want 4 (CF + CD result/error/error_code), got %d: %+v", len(fields), fields)
 	}
 	enums := enumsFromMeta(spec.ParseRules.Meta)
 
