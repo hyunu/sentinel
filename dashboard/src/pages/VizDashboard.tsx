@@ -3766,11 +3766,8 @@ export default function VizDashboardPage() {
     return [];
   }, [rawVizData, inMemoryFull, queryMeta?.downsampled, sessionPresence]);
 
-  const chartTimelineKey = chartData.length >= 2
-    ? `${chartData.length}:${chartData[0].timeKey}:${chartData[chartData.length - 1].timeKey}`
-    : '';
-  /** Full-range time extent only. Unlike chartTimelineKey this stays constant
-   *  while progressive rounds insert rows, so it must not churn chart props. */
+  /** Full-range time extent only. This stays constant while progressive
+   *  rounds insert rows, so it must not churn chart props or effects. */
   const chartSpanKey = chartData.length >= 2
     ? `${chartData[0].timeKey}:${chartData[chartData.length - 1].timeKey}`
     : '';
@@ -3784,7 +3781,7 @@ export default function VizDashboardPage() {
       start: chartData[0].timeKey,
       end: chartData[chartData.length - 1].timeKey,
     };
-  }, [selectedBoard, inMemoryFull, queryMeta?.downsampled, chartTimelineKey]);
+  }, [selectedBoard, inMemoryFull, queryMeta?.downsampled, chartSpanKey]);
 
   const sessionPresenceExtentKey = sessionPresenceExtent
     ? `${sessionPresenceExtent.boardId}|${sessionPresenceExtent.start}|${sessionPresenceExtent.end}`
