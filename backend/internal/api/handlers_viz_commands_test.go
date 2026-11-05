@@ -1,10 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hyunu/sentinel/internal/models"
 	"github.com/hyunu/sentinel/internal/protocol"
 )
 
@@ -18,15 +20,19 @@ const (
 func TestOverlayConfigDrivesFIDs(t *testing.T) {
 	spec := protocol.MonitoringControlProtocolSpec()
 	overlays := overlayConfigsFromSpec(&spec)
-	if len(overlays) != 3 {
-		t.Fatalf("overlays: want 3, got %d", len(overlays))
+	// ACK is configured as visible=false, so only CF/CD remain.
+	if len(overlays) != 2 {
+		t.Fatalf("overlays: want 2, got %d", len(overlays))
 	}
 
 	re := overlayFIDRegexp(overlays)
-	for _, fid := range []string{"CF", "CD", "CC"} {
+	for _, fid := range []string{"CF", "CD"} {
 		if !strings.Contains(re, fid) {
 			t.Fatalf("regex %q missing FID %s", re, fid)
 		}
+	}
+	if strings.Contains(re, "CC") {
+		t.Fatalf("hidden overlay leaked into regex: %s", re)
 	}
 }
 
@@ -43,7 +49,6 @@ func TestCommandEventLabelsComeFromConfig(t *testing.T) {
 	}{
 		{"call", commandTestCF, "call", "fn 31"},
 		{"result", commandTestCD, "result", "res 11"},
-		{"ack", commandTestCC, "ack", "ack 0xCE"},
 	}
 	for _, tc := range cases {
 		event, ok := commandEventFromFrame(ts, "RX", tc.frame, &spec, overlays)
@@ -57,12 +62,19 @@ func TestCommandEventLabelsComeFromConfig(t *testing.T) {
 			t.Fatalf("%s: color not taken from config", tc.name)
 		}
 	}
+
+	if _, ok := commandEventFromFrame(ts, "RX", commandTestCC, &spec, overlays); ok {
+		t.Fatal("ACK should be hidden by the visible flag")
+	}
 }
 
 // A FID that is not part of the built-in overlays becomes an event only because
 // the protocol says so; no FID list lives in the handler.
 func TestCommandEventUsesCustomProtocolOverlay(t *testing.T) {
 	spec := protocol.MonitoringControlProtocolSpec()
+	// Reclassify CA as an event for this test; the default rules mark it as a
+	// continuous series.
+	spec.ParseRules.Meta["data_types"] = map[string]interface{}{"0xCA": "event"}
 	spec.ParseRules.Meta["overlays"] = []interface{}{
 		map[string]interface{}{
 			"fid":    "0xCA",
@@ -83,5 +95,60 @@ func TestCommandEventUsesCustomProtocolOverlay(t *testing.T) {
 	}
 	if !strings.Contains(overlayFIDRegexp(overlays), "CA") {
 		t.Fatalf("regex not derived from config: %s", overlayFIDRegexp(overlays))
+	}
+}
+
+func overlayMeta(t *testing.T, spec *models.ProtocolSpec) []map[string]interface{} {
+	t.Helper()
+	raw, err := json.Marshal(spec.ParseRules.Meta["overlays"])
+	if err != nil {
+		t.Fatalf("marshal overlays: %v", err)
+	}
+	var overlays []map[string]interface{}
+	if err := json.Unmarshal(raw, &overlays); err != nil {
+		t.Fatalf("unmarshal overlays: %v", err)
+	}
+	return overlays
+}
+
+func TestSeriesClassificationSkipsOverlay(t *testing.T) {
+	spec := protocol.MonitoringControlProtocolSpec()
+	overlays := overlayMeta(t, &spec)
+	overlays = append(overlays, map[string]interface{}{
+		"fid": "0xCA", "type": "event", "visible": true, "kind": "monitor",
+		"label": "fid {fid}",
+		"fields": []interface{}{map[string]interface{}{"name": "fid", "path": "fid", "format": "int"}},
+	})
+	spec.ParseRules.Meta["overlays"] = overlays
+	spec.ParseRules.Meta["data_types"] = map[string]interface{}{"0xCA": "series"}
+
+	configs := overlayConfigsFromSpec(&spec)
+	for _, cfg := range configs {
+		if cfg.fidNum == 0xCA {
+			t.Fatal("series-classified FID must not become an event overlay")
+		}
+	}
+	if _, ok := commandEventFromFrame(time.Unix(0, 0).UTC(), "TX", commandTestCA, &spec, configs); ok {
+		t.Fatal("series frame produced an event")
+	}
+}
+
+func TestVisibleFlagCanEnableHiddenOverlay(t *testing.T) {
+	spec := protocol.MonitoringControlProtocolSpec()
+	overlays := overlayMeta(t, &spec)
+	for _, overlay := range overlays {
+		if overlay["fid"] == "0xCC" {
+			overlay["visible"] = true
+		}
+	}
+	spec.ParseRules.Meta["overlays"] = overlays
+
+	configs := overlayConfigsFromSpec(&spec)
+	if len(configs) != 3 {
+		t.Fatalf("overlays: want 3 after enabling ACK, got %d", len(configs))
+	}
+	event, ok := commandEventFromFrame(time.Unix(0, 0).UTC(), "RX", commandTestCC, &spec, configs)
+	if !ok || event.Kind != "ack" || event.Summary != "ack 0xCE" {
+		t.Fatalf("ack overlay: ok=%v %+v", ok, event)
 	}
 }

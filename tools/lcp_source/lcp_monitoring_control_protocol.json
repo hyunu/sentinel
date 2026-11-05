@@ -5,8 +5,23 @@
   "parse_rules": {
     "_meta": {
       "name": "LCP Monitoring + Control",
+      "description": "LCP↔OSP monitoring(CA) + control RPC(CF/CD/CC/CE) — AA [LEN:1] envelope, 1-byte total length",
       "version": "2.1",
       "frame": "AA [LEN:1] FID [SEQ:2 BE] ATTR payload CRC16 BB",
+      "notes": {
+        "length": "LEN은 AA부터 BB까지 전체 바이트 수",
+        "payload_len": "payload 길이 = LEN - 9",
+        "crc16": "CRC-16/XMODEM, AA ~ payload 마지막 바이트",
+        "fids": {
+          "0xCA": "monitoring status (97 fields)",
+          "0xCD": "function result/error",
+          "0xCF": "function call",
+          "0xCC": "packet ACK",
+          "0xCE": "heartbeat",
+          "0xC8": "INIT",
+          "0xC7": "instant monitor request"
+        }
+      },
       "overlays": [
         {
           "fid": "0xCF",
@@ -21,7 +36,9 @@
           ],
           "label": "fn {values}",
           "color": "#ff9f40",
-          "style": "vline"
+          "style": "vline",
+          "type": "event",
+          "visible": true
         },
         {
           "fid": "0xCD",
@@ -39,7 +56,9 @@
           ],
           "label": "res {values}",
           "color": "#40c4ff",
-          "style": "vline"
+          "style": "vline",
+          "type": "event",
+          "visible": true
         },
         {
           "fid": "0xCC",
@@ -54,9 +73,19 @@
           ],
           "label": "ack 0x{recv_fid}",
           "color": "#8bc34a",
-          "style": "vline"
+          "style": "vline",
+          "type": "event",
+          "visible": false
         }
-      ]
+      ],
+      "data_types": {
+        "0xCA": "series",
+        "0xCF": "event",
+        "0xCD": "event",
+        "0xCC": "event",
+        "0xCE": "event",
+        "0xC8": "event"
+      }
     },
     "fields": [
       {
@@ -819,7 +848,9 @@
         ],
         "label": "fn {values}",
         "color": "#ff9f40",
-        "style": "vline"
+        "style": "vline",
+        "type": "event",
+        "visible": true
       },
       {
         "fid": "0xCD",
@@ -837,7 +868,9 @@
         ],
         "label": "res {values}",
         "color": "#40c4ff",
-        "style": "vline"
+        "style": "vline",
+        "type": "event",
+        "visible": true
       },
       {
         "fid": "0xCC",
@@ -852,8 +885,18 @@
         ],
         "label": "ack 0x{recv_fid}",
         "color": "#8bc34a",
-        "style": "vline"
+        "style": "vline",
+        "type": "event",
+        "visible": false
       }
-    ]
+    ],
+    "data_types": {
+      "0xCA": "series",
+      "0xCF": "event",
+      "0xCD": "event",
+      "0xCC": "event",
+      "0xCE": "event",
+      "0xC8": "event"
+    }
   }
 }
