@@ -16,12 +16,24 @@ export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
 export const FULL_LOAD_MAX_POINTS = 100_000;
-/** Rough whole-range sample size. Kept below the detailed chunk size so the
- *  first phase stays fast while preserving peaks and start/end of the range. */
+/** Rough whole-range preview size. Envelope mode returns min+max per bucket,
+ *  so the response is about twice this number of rows. */
 export const OVERVIEW_SAMPLE_POINTS = 4_000;
-/** Time-sliced full-load chunk size. Keep each response comfortably below the single-response budget. */
-export const FULL_LOAD_CHUNK_ROWS = 4_000;
-/** Concurrent chunk requests. Each chunk is ~14 MB, so keep the fan-out small. */
+/** Bucket count for the envelope preview. */
+export const OVERVIEW_BUCKETS = OVERVIEW_SAMPLE_POINTS / 2;
+/** Target number of new rows per progressive refinement round. */
+export const PROGRESSIVE_ROUND_ROWS = 4_000;
+/** Rows per partition used to decide how many partitions to refine in parallel. */
+export const PROGRESSIVE_PARTITION_ROWS = 5_000;
+export const PROGRESSIVE_MAX_PARTITIONS = 24;
+/** Each round doubles the bucket count, so this covers very dense partitions. */
+export const PROGRESSIVE_MAX_ROUNDS = 8;
+/** Stop the uniform preview rounds once this many unique rows are loaded.
+ *  The final completion pass fills the rest; without a cap the last round
+ *  would transfer the entire dataset twice. */
+export const PROGRESSIVE_ROUND_MAX_ROWS = 16_000;
+export const PROGRESSIVE_START_BUCKETS = 32;
+/** Concurrent requests. Each response is kept small, so a modest fan-out is safe. */
 export const FULL_LOAD_CONCURRENCY = 3;
 
 export function estimateVizPayloadBytes(data: VizFullLoadRow[]): number {

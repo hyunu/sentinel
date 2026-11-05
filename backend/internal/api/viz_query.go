@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -21,10 +22,16 @@ type vizDataPoint struct {
 	Values    map[string]interface{} `json:"values"`
 }
 
+type vizValueDomain struct {
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
 type vizQueryMeta struct {
-	TotalMatched int64 `json:"total_matched"`
-	Returned     int   `json:"returned"`
-	Downsampled  bool  `json:"downsampled"`
+	TotalMatched int64                     `json:"total_matched"`
+	Returned     int                       `json:"returned"`
+	Downsampled  bool                      `json:"downsampled"`
+	Domain       map[string]vizValueDomain `json:"domain,omitempty"`
 }
 
 type vizSampleDoc struct {
@@ -305,6 +312,7 @@ func (h *Handler) queryVizSeriesSampled(
 	filter bson.M,
 	items []models.VizItem,
 	limit int,
+	bucketsOverride int,
 ) ([]vizDataPoint, vizQueryMeta, error) {
 	effectiveLimit := normalizeVizPointLimit(limit)
 	if len(items) == 0 {
@@ -318,13 +326,21 @@ func (h *Handler) queryVizSeriesSampled(
 	if total == 0 {
 		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
 	}
-	if total <= int64(effectiveLimit) {
+	// A caller-provided bucket count always keeps the sampled shape even when
+	// the partition is small (progressive refinement passes need that).
+	if bucketsOverride <= 0 && total <= int64(effectiveLimit) {
 		return h.queryVizSeries(ctx, filter, items, effectiveLimit)
 	}
 
 	// Two boundary samples per bucket (first/last) keep both ends of sharp
 	// transitions while still bounding the response size.
 	buckets := effectiveLimit / 2
+	if bucketsOverride > 0 {
+		buckets = bucketsOverride
+	}
+	if buckets > int(total) {
+		buckets = int(total)
+	}
 	if buckets < 1 {
 		buckets = 1
 	}
@@ -406,6 +422,234 @@ func (h *Handler) queryVizSeriesSampled(
 		TotalMatched: total,
 		Returned:     len(results),
 		Downsampled:  total > int64(len(results)),
+	}, nil
+}
+
+// vizNumericFieldExpr extracts one parsed field as a double. Simple field names
+// use a direct path (cheap); names with dots or special characters fall back to
+// the objectToArray form so they still resolve on MongoDB 4.4.
+func vizNumericFieldExpr(fieldName string) bson.M {
+	var input interface{}
+	if isSimpleVizFieldName(fieldName) {
+		input = "$parsed_fields." + fieldName
+	} else {
+		input = bson.M{"$arrayElemAt": bson.A{
+			bson.M{"$map": bson.M{
+				"input": bson.M{"$filter": bson.M{
+					"input": bson.M{"$objectToArray": bson.M{"$ifNull": bson.A{"$parsed_fields", bson.M{}}}},
+					"as":    "p",
+					"cond":  bson.M{"$eq": bson.A{"$$p.k", fieldName}},
+				}},
+				"as": "p",
+				"in": "$$p.v",
+			}},
+			0,
+		}}
+	}
+	return bson.M{"$convert": bson.M{
+		"input":   input,
+		"to":      "double",
+		"onError": nil,
+		"onNull":  nil,
+	}}
+}
+
+func isSimpleVizFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if r == '_' ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// queryVizSeriesEnvelope keeps the min and max of every selected field per
+// bucket. A full-range line chart effectively shows this envelope, so the rough
+// preview keeps the same peaks and on/off edges as the detailed data instead of
+// being smoothed by first/last sampling. The global min/max are also returned
+// so the dashboard can keep a stable Y axis while the detail is loading.
+func (h *Handler) queryVizSeriesEnvelope(
+	ctx context.Context,
+	filter bson.M,
+	items []models.VizItem,
+	buckets int,
+) ([]vizDataPoint, vizQueryMeta, error) {
+	if len(items) == 0 {
+		return []vizDataPoint{}, vizQueryMeta{}, nil
+	}
+
+	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	if total == 0 {
+		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
+	}
+	if buckets <= 0 {
+		buckets = vizDefaultPointLimit / 2
+	}
+	if buckets > 50000 {
+		buckets = 50000
+	}
+	if buckets < 1 {
+		buckets = 1
+	}
+	// Small ranges are cheaper and more accurate as actual samples.
+	if total <= int64(buckets) {
+		return h.queryVizSeries(ctx, filter, items, int(total))
+	}
+	if int64(buckets) > total {
+		buckets = int(total)
+	}
+
+	projection := bson.M{"timestamp": 1}
+	for i := range items {
+		projection[fmt.Sprintf("v%d", i)] = vizNumericFieldExpr(items[i].FieldRef.FieldName)
+	}
+	output := bson.M{
+		"first": bson.M{"$first": "$timestamp"},
+		"last":  bson.M{"$last": "$timestamp"},
+	}
+	for i := range items {
+		output[fmt.Sprintf("v%d_min", i)] = bson.M{"$min": fmt.Sprintf("$v%d", i)}
+		output[fmt.Sprintf("v%d_max", i)] = bson.M{"$max": fmt.Sprintf("$v%d", i)}
+	}
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$sort", Value: bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: projection}},
+		{{Key: "$bucketAuto", Value: bson.M{
+			"groupBy": "$timestamp",
+			"buckets": buckets,
+			"output":  output,
+		}}},
+	}
+
+	cursor, err := h.db.UartData().Aggregate(
+		ctx, pipeline,
+		options.Aggregate().SetAllowDiskUse(true).SetBatchSize(500),
+	)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	defer cursor.Close(ctx)
+
+	type domainAcc struct {
+		min float64
+		max float64
+		has bool
+	}
+	domains := make(map[string]*domainAcc, len(items))
+	results := make([]vizDataPoint, 0, buckets*2)
+
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		firstTs, _ := vizDocumentTime(doc["first"])
+		lastTs, _ := vizDocumentTime(doc["last"])
+		if firstTs.IsZero() && lastTs.IsZero() {
+			continue
+		}
+
+		minValues := make(map[string]interface{}, len(items))
+		maxValues := make(map[string]interface{}, len(items))
+		for i, item := range items {
+			if v, ok := extractVizValue(doc[fmt.Sprintf("v%d_min", i)]); ok {
+				minValues[item.Label] = v
+				acc := domains[item.Label]
+				if acc == nil {
+					acc = &domainAcc{}
+					domains[item.Label] = acc
+				}
+				if !acc.has || v < acc.min {
+					acc.min = v
+				}
+				if !acc.has || v > acc.max {
+					acc.max = v
+				}
+				acc.has = true
+			}
+			if v, ok := extractVizValue(doc[fmt.Sprintf("v%d_max", i)]); ok {
+				maxValues[item.Label] = v
+				acc := domains[item.Label]
+				if acc == nil {
+					acc = &domainAcc{}
+					domains[item.Label] = acc
+				}
+				if !acc.has || v < acc.min {
+					acc.min = v
+				}
+				if !acc.has || v > acc.max {
+					acc.max = v
+				}
+				acc.has = true
+			}
+		}
+		if len(minValues) == 0 && len(maxValues) == 0 {
+			continue
+		}
+
+		if firstTs.IsZero() {
+			firstTs = lastTs
+		}
+		if lastTs.IsZero() {
+			lastTs = firstTs
+		}
+		results = append(results, vizDataPoint{Timestamp: firstTs, Values: minValues})
+		maxTs := lastTs
+		if !maxTs.After(firstTs) {
+			maxTs = firstTs.Add(time.Millisecond)
+		}
+		results = append(results, vizDataPoint{Timestamp: maxTs, Values: maxValues})
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+
+	// Add the actual first/last samples so the very ends of the range keep the
+	// real values even if the first bucket only has an extreme in the middle.
+	head, err := h.scanVizPoints(ctx, filter, items, 20, false)
+	if err == nil && len(head) > 0 {
+		if len(results) == 0 || !head[0].Timestamp.Equal(results[0].Timestamp) {
+			results = append([]vizDataPoint{head[0]}, results...)
+		}
+	}
+	tail, err := h.scanVizPoints(ctx, filter, items, 20, true)
+	if err == nil && len(tail) > 0 {
+		lastPoint := tail[len(tail)-1]
+		if len(results) == 0 || !lastPoint.Timestamp.Equal(results[len(results)-1].Timestamp) {
+			results = append(results, lastPoint)
+		}
+	}
+
+	if len(results) > 1 {
+		sort.SliceStable(results, func(i, j int) bool {
+			return results[i].Timestamp.Before(results[j].Timestamp)
+		})
+	}
+
+	domainValues := make(map[string]vizValueDomain, len(domains))
+	for label, acc := range domains {
+		if acc.has {
+			domainValues[label] = vizValueDomain{Min: acc.min, Max: acc.max}
+		}
+	}
+
+	return results, vizQueryMeta{
+		TotalMatched: total,
+		Returned:     len(results),
+		Downsampled:  total > int64(len(results)),
+		Domain:       domainValues,
 	}, nil
 }
 

@@ -419,7 +419,8 @@ export const api = {
       aggregation?: 'avg' | 'min' | 'max';
       bucket_seconds?: number;
       mode?: 'live';
-      sampling?: 'raw-sample';
+      sampling?: 'raw-sample' | 'envelope';
+      buckets?: number;
     }, options?: {
       signal?: AbortSignal;
       timeoutMs?: number;
@@ -427,7 +428,12 @@ export const api = {
     }) =>
       request<{
         data: Array<{ timestamp: string; values: Record<string, number> }>;
-        meta?: { total_matched: number; returned: number; downsampled: boolean };
+        meta?: {
+          total_matched: number;
+          returned: number;
+          downsampled: boolean;
+          domain?: Record<string, { min: number; max: number }>;
+        };
       }>(
         '/viz/query-items', {
           method: 'POST',

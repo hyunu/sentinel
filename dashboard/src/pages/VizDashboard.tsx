@@ -71,10 +71,16 @@ import {
   estimateVizPayloadBytes,
   formatFullLoadBytes,
   FULL_LOAD_BYTE_BUDGET,
-  FULL_LOAD_CHUNK_ROWS,
   FULL_LOAD_CONCURRENCY,
   FULL_LOAD_MAX_POINTS,
+  OVERVIEW_BUCKETS,
   OVERVIEW_SAMPLE_POINTS,
+  PROGRESSIVE_MAX_PARTITIONS,
+  PROGRESSIVE_MAX_ROUNDS,
+  PROGRESSIVE_PARTITION_ROWS,
+  PROGRESSIVE_ROUND_MAX_ROWS,
+  PROGRESSIVE_ROUND_ROWS,
+  PROGRESSIVE_START_BUCKETS,
   shouldChunkedFullLoad,
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
@@ -157,6 +163,10 @@ type ChartLoadProgress = {
   overallLoaded: number;
   chunkIndex?: number;
   chunkCount?: number;
+  /** Unique rows already merged (progressive loading). */
+  rowsLoaded?: number;
+  /** Total rows in the selected range. */
+  rowsTotal?: number;
 };
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
 const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
@@ -327,7 +337,14 @@ function buildAllRangeGuideCopy(guide: AllRangeLoadAssessment, t: TFunction): {
 }
 
 type VizDataRow = { timestamp: string; values: Record<string, number> };
-type VizQueryMeta = { total_matched: number; returned: number; downsampled: boolean };
+type VizValueDomain = { min: number; max: number };
+type VizQueryMeta = {
+  total_matched: number;
+  returned: number;
+  downsampled: boolean;
+  /** Exact per-field min/max over the whole range (envelope responses). */
+  domain?: Record<string, VizValueDomain>;
+};
 
 function isRequestAborted(error: unknown): boolean {
   return error instanceof Error
@@ -349,6 +366,11 @@ function itemsForDataQuery(items: VizItem[]): VizItem[] {
   }));
 }
 
+/** The preview only needs the series that can actually be drawn. */
+function itemsForOverviewQuery(items: VizItem[]): VizItem[] {
+  return itemsForDataQuery(items.filter(i => i.visible).slice(0, MAX_CHART_SERIES));
+}
+
 type VizQueryParams = {
   board_id: string;
   items: VizItem[];
@@ -356,20 +378,68 @@ type VizQueryParams = {
   since?: string;
   aggregation?: 'avg' | 'min' | 'max';
   bucket_seconds?: number;
-  sampling?: 'raw-sample';
+  sampling?: 'raw-sample' | 'envelope';
+  buckets?: number;
 };
 
 type VizLoadProgressHandler = (progress: ChartLoadProgress) => void;
 type VizDataHandler = (data: VizDataRow[], meta: VizQueryMeta) => void;
 
-function mergeVizRows(rows: VizDataRow[]): VizDataRow[] {
-  const byTimestamp = new Map<string, VizDataRow>();
-  for (const row of rows) byTimestamp.set(row.timestamp, row);
-  return Array.from(byTimestamp.values())
-    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+type VizPartition = { startMs: number; endMs: number };
+
+/** Equal-row-count time partitions derived from the envelope timestamps. */
+function buildVizPartitions(
+  startMs: number,
+  endMs: number,
+  totalRows: number,
+  overview: VizDataRow[],
+): VizPartition[] {
+  const count = Math.max(
+    1,
+    Math.min(
+      PROGRESSIVE_MAX_PARTITIONS,
+      Math.ceil(totalRows / PROGRESSIVE_PARTITION_ROWS),
+    ),
+  );
+  if (count <= 1 || endMs <= startMs) return [{ startMs, endMs }];
+
+  const times = Array.from(new Set(
+    overview
+      .map(row => Date.parse(row.timestamp))
+      .filter(ms => Number.isFinite(ms) && ms >= startMs && ms <= endMs),
+  )).sort((a, b) => a - b);
+
+  const boundaries: number[] = [startMs];
+  for (let i = 1; i < count; i += 1) {
+    let candidate = startMs + (endMs - startMs) * i / count;
+    if (times.length > 0) {
+      const idx = Math.min(times.length - 1, Math.floor(times.length * i / count));
+      if (Number.isFinite(times[idx])) candidate = times[idx];
+    }
+    const previous = boundaries[boundaries.length - 1];
+    if (candidate <= previous) {
+      candidate = previous + Math.max(1, (endMs - startMs) / (count * 10));
+    }
+    boundaries.push(Math.min(candidate, endMs));
+  }
+  boundaries.push(endMs);
+
+  const partitions: VizPartition[] = [];
+  for (let i = 0; i < boundaries.length - 1; i += 1) {
+    const start = boundaries[i];
+    const end = boundaries[i + 1];
+    if (end > start) partitions.push({ startMs: start, endMs: end });
+  }
+  return partitions.length > 0 ? partitions : [{ startMs, endMs }];
 }
 
-async function queryFullDatasetChunked(
+/**
+ * Loads the whole range in uniform refinement rounds. Every round requests the
+ * same relative slice of every partition, so the chart gets denser everywhere
+ * at once instead of filling left-to-right. The envelope rows from the preview
+ * stay visible until the real rows replace them.
+ */
+async function queryFullDatasetProgressive(
   params: VizQueryParams,
   overview: VizDataRow[],
   meta: VizQueryMeta,
@@ -380,6 +450,7 @@ async function queryFullDatasetChunked(
     onPartial?: VizDataHandler;
   },
 ): Promise<{ data: VizDataRow[]; meta: VizQueryMeta }> {
+  const total = meta.total_matched;
   const range = params.time_range ?? (
     overview.length >= 2
       ? { start: overview[0].timestamp, end: overview[overview.length - 1].timestamp }
@@ -387,149 +458,187 @@ async function queryFullDatasetChunked(
   );
   const startMs = range ? Date.parse(range.start) : NaN;
   const endMs = range ? Date.parse(range.end) : NaN;
+  const requestTimeout = Math.max(options?.timeoutMs ?? 45000, 120000);
+
   if (!range || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
     const full = await api.viz.queryItems({
       ...params,
-      limit: meta.total_matched,
+      limit: Math.max(1, total),
     }, {
       signal: options?.signal,
-      timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
-      onProgress: (loaded, total) => options?.onProgress?.({
+      timeoutMs: requestTimeout,
+      onProgress: (loaded, totalBytes) => options?.onProgress?.({
         phase: 'full',
         loaded,
-        total,
+        total: totalBytes,
         overallLoaded: loaded,
+        rowsLoaded: 0,
+        rowsTotal: total,
       }),
     });
     return { data: full.data, meta: full.meta ?? meta };
   }
 
-  const chunkCount = Math.max(1, Math.ceil(meta.total_matched / FULL_LOAD_CHUNK_ROWS));
-  const chunkLimit = Math.min(
-    DETAIL_MAX_POINTS,
-    Math.max(MAX_POINTS, Math.ceil(meta.total_matched / chunkCount * 3)),
+  const partitions = buildVizPartitions(startMs, endMs, total, overview);
+  const partitionRows = Math.max(1, Math.ceil(total / partitions.length));
+  const requestLimit = Math.min(
+    FULL_LOAD_MAX_POINTS,
+    Math.max(MAX_POINTS, partitionRows * 3),
   );
-  let mergedRows: VizDataRow[] = [];
-  let completedBytes = 0;
-  let reportedOverallBytes = 0;
-  let nextChunk = 0;
-  let failed = false;
-  const inFlightBytes = new Map<number, number>();
 
-  const reportProgress = (
-    chunkIndex: number,
-    loaded: number,
-    total: number | null,
-    baseBytes: number,
-  ) => {
-    inFlightBytes.set(chunkIndex, baseBytes + loaded);
-    let overall = completedBytes;
-    for (const bytes of inFlightBytes.values()) overall += bytes;
-    reportedOverallBytes = Math.max(reportedOverallBytes, overall);
-    options?.onProgress?.({
-      phase: 'full',
-      loaded,
-      total,
-      overallLoaded: reportedOverallBytes,
-      chunkIndex,
-      chunkCount,
+  const realRows = new Map<string, VizDataRow>();
+  const displayRows = new Map<string, VizDataRow>();
+  for (const row of overview) displayRows.set(row.timestamp, row);
+  const envelopeTimestamps = new Set(overview.map(row => row.timestamp));
+
+  let receivedBytes = 0;
+  let requestIndex = 0;
+  let lastPublishMs = 0;
+  let failed = false;
+
+  const sortRows = (rows: VizDataRow[]) => rows.sort(
+    (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+  );
+
+  const publish = (force: boolean, final = false) => {
+    if (!options?.onPartial) return;
+    const now = Date.now();
+    if (!force && now - lastPublishMs < 250) return;
+    lastPublishMs = now;
+    // Refresh the row-based progress with the latest unique-row count.
+    reportProgress(0);
+    const rows = sortRows(
+      Array.from(displayRows.values())
+        .filter(row => !final || realRows.has(row.timestamp)),
+    );
+    options.onPartial(rows, {
+      total_matched: total,
+      returned: realRows.size,
+      downsampled: realRows.size < total,
     });
   };
 
-  const fetchRange = async (
-    rangeStartMs: number,
-    rangeEndMs: number,
-    chunkIndex: number,
-    depth: number,
-    baseBytes: number,
-  ): Promise<{ rows: VizDataRow[]; bytes: number }> => {
+  const reportProgress = (deltaBytes: number) => {
+    receivedBytes += Math.max(0, deltaBytes);
+    options?.onProgress?.({
+      phase: 'full',
+      loaded: deltaBytes,
+      total: null,
+      overallLoaded: receivedBytes,
+      rowsLoaded: realRows.size,
+      rowsTotal: total,
+      chunkIndex: Math.min(requestIndex, partitions.length),
+      chunkCount: partitions.length,
+    });
+  };
+
+  const mergeRows = (rows: VizDataRow[]) => {
+    let added = 0;
+    for (const row of rows) {
+      if (!realRows.has(row.timestamp)) added += 1;
+      realRows.set(row.timestamp, row);
+      displayRows.set(row.timestamp, row);
+      envelopeTimestamps.delete(row.timestamp);
+    }
+    return added;
+  };
+
+  const fetchWindow = async (partition: VizPartition, buckets?: number) => {
     if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
+    requestIndex += 1;
     let lastLoaded = 0;
     const result = await api.viz.queryItems({
       ...params,
       time_range: {
-        start: new Date(rangeStartMs).toISOString(),
-        end: new Date(rangeEndMs).toISOString(),
+        start: new Date(partition.startMs).toISOString(),
+        end: new Date(partition.endMs).toISOString(),
       },
-      limit: chunkLimit,
+      limit: requestLimit,
+      ...(buckets && buckets > 0
+        ? { sampling: 'raw-sample' as const, buckets }
+        : {}),
     }, {
       signal: options?.signal,
-      timeoutMs: Math.max(options?.timeoutMs ?? 45000, 120000),
-      onProgress: (loaded, total) => {
-        lastLoaded = loaded;
-        reportProgress(chunkIndex, loaded, total, baseBytes);
+      timeoutMs: requestTimeout,
+      onProgress: loaded => {
+        const delta = Math.max(0, loaded - lastLoaded);
+        lastLoaded = Math.max(lastLoaded, loaded);
+        reportProgress(delta);
       },
     });
-    // Coalescing nearby timestamps also reduces returned rows; only recurse
-    // when the request actually hit the point limit.
-    const hitPointLimit = !!result.meta && result.meta.total_matched > chunkLimit;
-    if (
-      hitPointLimit
-      && result.meta!.downsampled
-      && depth < 3
-      && rangeEndMs - rangeStartMs > 60_000
-      && !options?.signal?.aborted
-    ) {
-      const midMs = rangeStartMs + (rangeEndMs - rangeStartMs) / 2;
-      const left = await fetchRange(
-        rangeStartMs, midMs, chunkIndex, depth + 1, baseBytes,
-      );
-      const right = await fetchRange(
-        midMs, rangeEndMs, chunkIndex, depth + 1, baseBytes + left.bytes,
-      );
-      return {
-        rows: [...left.rows, ...right.rows],
-        bytes: left.bytes + right.bytes,
-      };
-    }
-    return { rows: result.data, bytes: lastLoaded };
+    return result;
   };
 
-  const publishPartial = () => {
-    if (!options?.onPartial) return;
-    options.onPartial(mergedRows, {
-      total_matched: meta.total_matched,
-      returned: mergedRows.length,
-      downsampled: mergedRows.length < meta.total_matched,
-    });
-  };
-
-  const worker = async () => {
-    try {
+  const runPool = async (
+    tasks: VizPartition[],
+    worker: (partition: VizPartition) => Promise<void>,
+  ) => {
+    let next = 0;
+    const run = async () => {
       for (;;) {
         if (failed || options?.signal?.aborted) {
           throw new Error('Request timeout or cancelled');
         }
-        const index = nextChunk++;
-        if (index >= chunkCount) return;
-        const chunkStart = startMs + (endMs - startMs) * index / chunkCount;
-        const chunkEnd = index === chunkCount - 1
-          ? endMs
-          : startMs + (endMs - startMs) * (index + 1) / chunkCount;
-        const chunk = await fetchRange(chunkStart, chunkEnd, index + 1, 0, 0);
-        if (failed || options?.signal?.aborted) return;
-        inFlightBytes.delete(index + 1);
-        completedBytes += chunk.bytes;
-        mergedRows = mergeVizRows([...mergedRows, ...chunk.rows]);
-        publishPartial();
+        const index = next;
+        next += 1;
+        if (index >= tasks.length) return;
+        await worker(tasks[index]);
       }
+    };
+    try {
+      await Promise.all(Array.from(
+        { length: Math.min(FULL_LOAD_CONCURRENCY, tasks.length) },
+        run,
+      ));
     } catch (error) {
       failed = true;
       throw error;
     }
   };
 
-  const workerCount = Math.min(FULL_LOAD_CONCURRENCY, chunkCount);
-  await Promise.all(Array.from({ length: workerCount }, worker));
+  let buckets = Math.max(
+    PROGRESSIVE_START_BUCKETS,
+    Math.ceil(PROGRESSIVE_ROUND_ROWS / partitions.length),
+  );
+  let round = 0;
+  while (
+    realRows.size < total
+    && realRows.size < PROGRESSIVE_ROUND_MAX_ROWS
+    && round < PROGRESSIVE_MAX_ROUNDS
+  ) {
+    const before = realRows.size;
+    await runPool(partitions, async partition => {
+      const result = await fetchWindow(partition, buckets);
+      mergeRows(result.data);
+      publish(false);
+    });
+    publish(true);
+    if (realRows.size <= before) break;
+    round += 1;
+    if (buckets >= partitionRows) break;
+    buckets *= 2;
+  }
 
-  const merged = mergeVizRows(mergedRows);
+  // Fill whatever the sampled rounds did not cover. Each partition is only a
+  // few thousand rows, so one request per partition is bounded.
+  if (realRows.size < total) {
+    await runPool(partitions, async partition => {
+      const result = await fetchWindow(partition);
+      mergeRows(result.data);
+      publish(false);
+    });
+  }
+
+  publish(true, true);
 
   return {
-    data: merged,
+    data: sortRows(Array.from(realRows.values())),
     meta: {
-      total_matched: meta.total_matched,
-      returned: merged.length,
-      downsampled: merged.length < meta.total_matched,
+      total_matched: total,
+      returned: realRows.size,
+      // The completion pass requested every row in the range. Coalescing may
+      // merge a few timestamps, but the chart is no longer a sampled preview.
+      downsampled: false,
     },
   };
 }
@@ -541,8 +650,15 @@ async function queryVizDataset(
     signal?: AbortSignal;
     timeoutMs?: number;
     onProgress?: VizLoadProgressHandler;
-    onOverview?: (data: VizDataRow[], meta: VizQueryMeta | null, willLoadFull: boolean) => void;
+    onOverview?: (
+      data: VizDataRow[],
+      meta: VizQueryMeta | null,
+      willLoadFull: boolean,
+      envelope: boolean,
+    ) => void;
     onPartial?: VizDataHandler;
+    /** Preview only these series. Defaults to params.items. */
+    overviewItems?: VizItem[];
   },
 ): Promise<{
   data: VizDataRow[];
@@ -550,8 +666,16 @@ async function queryVizDataset(
   inMemoryFull: boolean;
   allRangeAssessment: AllRangeLoadAssessment | null;
 }> {
+  const overviewParams: VizQueryParams = options?.overviewItems
+    ? { ...params, items: options.overviewItems }
+    : params;
   const overview = await api.viz.queryItems(
-    { ...params, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+    {
+      ...overviewParams,
+      limit: OVERVIEW_SAMPLE_POINTS,
+      sampling: 'envelope',
+      buckets: OVERVIEW_BUCKETS,
+    },
     {
       signal: options?.signal,
       timeoutMs: options?.timeoutMs,
@@ -569,23 +693,28 @@ async function queryVizDataset(
     : null;
   const willLoadFull = !!meta
     && (shouldFullLoadInMemory(meta, overview.data) || shouldChunkedFullLoad(meta));
-  options?.onOverview?.(overview.data, meta, willLoadFull);
 
-  if (!meta || !shouldFullLoadInMemory(meta, overview.data)) {
-    if (meta && shouldChunkedFullLoad(meta)) {
-      const full = await queryFullDatasetChunked(params, overview.data, meta, {
-        signal: options?.signal,
-        timeoutMs: options?.timeoutMs,
-        onProgress: options?.onProgress,
-        onPartial: options?.onPartial,
-      });
+  if (!willLoadFull) {
+    if (meta?.downsampled) {
+      // Heavy ranges stay sampled. Envelope rows are synthetic per-field
+      // min/max, so fetch actual samples for the final view.
+      const real = await api.viz.queryItems(
+        { ...params, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+        {
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+        },
+      );
+      const realMeta = real.meta ?? meta;
+      options?.onOverview?.(real.data, realMeta, false, false);
       return {
-        data: full.data,
-        meta: full.meta,
-        inMemoryFull: true,
+        data: real.data,
+        meta: realMeta,
+        inMemoryFull: !!realMeta && !realMeta.downsampled,
         allRangeAssessment,
       };
     }
+    options?.onOverview?.(overview.data, meta, false, false);
     return {
       data: overview.data,
       meta,
@@ -594,31 +723,16 @@ async function queryVizDataset(
     };
   }
 
-  options?.onProgress?.({
-    phase: 'full',
-    loaded: 0,
-    total: null,
-    overallLoaded: 0,
+  options?.onOverview?.(overview.data, meta, true, true);
+  const full = await queryFullDatasetProgressive(params, overview.data, meta, {
+    signal: options?.signal,
+    timeoutMs: options?.timeoutMs,
+    onProgress: options?.onProgress,
+    onPartial: options?.onPartial,
   });
-  const full = await api.viz.queryItems(
-    {
-      ...params,
-      limit: meta.total_matched,
-    },
-    {
-      signal: options?.signal,
-      timeoutMs: options?.timeoutMs,
-      onProgress: (loaded, total) => options?.onProgress?.({
-        phase: 'full',
-        loaded,
-        total,
-        overallLoaded: loaded,
-      }),
-    },
-  );
   return {
     data: full.data,
-    meta: full.meta ?? null,
+    meta: full.meta,
     inMemoryFull: true,
     allRangeAssessment,
   };
@@ -909,6 +1023,14 @@ export default function VizDashboardPage() {
     present: boolean[];
   } | null>(null);
   const [inMemoryFull, setInMemoryFull] = useState(false);
+  /** Progressive full load is still filling the range in uniform rounds. */
+  const [progressiveLoading, setProgressiveLoading] = useState(false);
+  /** Y domains captured from the phase-1 envelope; kept fixed while detail loads. */
+  const [frozenAxisDomains, setFrozenAxisDomains] = useState<{
+    left?: [number, number];
+    right?: [number, number];
+  } | null>(null);
+  const envelopeTimestampsRef = useRef<Set<string>>(new Set());
   const [allRangeGuide, setAllRangeGuide] = useState<AllRangeLoadAssessment | null>(null);
   const detailFetchSeqRef = useRef(0);
   const detailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1028,6 +1150,8 @@ export default function VizDashboardPage() {
     startTimeMs: number;
   } | null>(null);
   const itemsRef = useRef(items);
+  /** Series actually requested for the phase-1 envelope (visible, drawable). */
+  const overviewItemsRef = useRef<VizItem[]>([]);
   itemsRef.current = items;
   const liveModeRef = useRef(liveMode);
   liveModeRef.current = liveMode;
@@ -2365,9 +2489,13 @@ export default function VizDashboardPage() {
   const applyProgressiveData = useCallback((data: VizDataRow[], meta: VizQueryMeta) => {
     setRawVizData(data);
     setQueryMeta(meta);
-    // While chunks are still arriving, keep pan/zoom on the data we already
-    // have instead of firing detail-window requests.
-    setInMemoryFull(true);
+    // Keep detail-window requests enabled while the background load is still
+    // filling the range, so zooming can be prioritized over the global rounds.
+    setInMemoryFull(!meta.downsampled);
+    setProgressiveLoading(meta.downsampled);
+    if (!meta.downsampled) {
+      envelopeTimestampsRef.current.clear();
+    }
     if (data.length > 0) {
       lastTimestampRef.current = data[data.length - 1].timestamp;
     }
@@ -2377,19 +2505,45 @@ export default function VizDashboardPage() {
     data: VizDataRow[],
     meta: VizQueryMeta | null,
     willLoadFull: boolean,
+    envelope = false,
   ) => {
-    applyOverviewResult(data, meta, willLoadFull);
+    const preview = willLoadFull && envelope;
+    applyOverviewResult(data, meta, !!meta && !meta.downsampled);
     setAwaitingRoughData(false);
-    if (
-      willLoadFull
-      && meta
-      && data.length > 0
-      && meta.downsampled
-      && meta.total_matched > meta.returned
-    ) {
+
+    const overviewItems = overviewItemsRef.current.length > 0
+      ? overviewItemsRef.current
+      : itemsRef.current.filter(i => i.visible).slice(0, MAX_CHART_SERIES);
+    if (preview) {
+      envelopeTimestampsRef.current = new Set(data.map(row => row.timestamp));
+      setProgressiveLoading(true);
+      // Freeze the Y domain to the envelope's exact min/max. Without this the
+      // axis rescales every time a denser round arrives and the whole chart
+      // looks different even though the shape is converging.
+      const analog = overviewItems.filter(i => !usesDigitalLane(i));
+      const leftItems = analog.filter(i => i.y_axis.id !== SECONDARY_Y_AXIS_ID);
+      const rightItems = analog.filter(i => i.y_axis.id === SECONDARY_Y_AXIS_ID);
+      const points = toChartPoints(data, overviewItems);
+      setFrozenAxisDomains({
+        left: computeYAxisDomain(points, leftItems),
+        right: computeYAxisDomain(points, rightItems),
+      });
+    } else {
+      envelopeTimestampsRef.current.clear();
+      setProgressiveLoading(false);
+      setFrozenAxisDomains(null);
+    }
+
+    if (preview && meta && data.length > 0) {
       const sample = data.length > 500 ? data.slice(0, 500) : data;
       const bytesPerRow = estimateVizPayloadBytes(sample) / sample.length;
-      setFullLoadBytesEstimate(Math.ceil(bytesPerRow * meta.total_matched));
+      // The preview only requests the chart series; the full load requests all
+      // profile items, so scale the byte estimate to the full payload.
+      const overviewCount = Math.max(1, overviewItems.length);
+      const fullCount = Math.max(overviewCount, itemsRef.current.length);
+      setFullLoadBytesEstimate(
+        Math.ceil(bytesPerRow * meta.total_matched * fullCount / overviewCount),
+      );
     } else {
       setFullLoadBytesEstimate(null);
     }
@@ -2406,6 +2560,9 @@ export default function VizDashboardPage() {
     result: Awaited<ReturnType<typeof queryVizDataset>>,
     assessAllRange: boolean,
   ) => {
+    setProgressiveLoading(false);
+    envelopeTimestampsRef.current.clear();
+    setFrozenAxisDomains(null);
     applyOverviewResult(result.data, result.meta, result.inMemoryFull);
     if (assessAllRange && result.allRangeAssessment?.level === 'heavy') {
       setAllRangeGuide(result.allRangeAssessment);
@@ -2428,6 +2585,7 @@ export default function VizDashboardPage() {
     setFullLoadBytesEstimate(null);
     try {
       const p = await api.viz.getProfile(id);
+      overviewItemsRef.current = itemsForOverviewQuery(p.items);
       setSelectedBoard(p.board_id);
       setItems(normalizeVizItems(p.items));
       setAiChartLink(null);
@@ -2451,6 +2609,7 @@ export default function VizDashboardPage() {
         assessAllRange: isAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
+        overviewItems: itemsForOverviewQuery(p.items),
         onProgress: progress => setChartLoadProgress(progress),
         onOverview: handleOverviewData,
         onPartial: (data, meta) => {
@@ -2577,7 +2736,12 @@ export default function VizDashboardPage() {
     setAwaitingRoughData(true);
     setQueryError(null);
     setFullLoadBytesEstimate(null);
+    setFrozenAxisDomains(null);
+    setProgressiveLoading(false);
+    envelopeTimestampsRef.current.clear();
     try {
+      const overviewItems = itemsForOverviewQuery(itemsRef.current);
+      overviewItemsRef.current = overviewItems;
       const result = await queryVizDataset({
         board_id: selectedBoard,
         items: itemsForDataQuery(itemsRef.current),
@@ -2587,6 +2751,7 @@ export default function VizDashboardPage() {
         assessAllRange,
         signal: controller.signal,
         timeoutMs: 45000,
+        overviewItems,
         onProgress: progress => setChartLoadProgress(progress),
         onOverview: handleOverviewData,
         onPartial: (data, meta) => {
@@ -3268,14 +3433,10 @@ export default function VizDashboardPage() {
     const cacheKey = buildDetailCacheKey(selectedBoard, startTs, endTs, itemDataKey);
     const cached = detailCacheRef.current.get(cacheKey);
 
-    const zoomStartMs = Date.parse(startTs);
-    const zoomEndMs = Date.parse(endTs);
-    const fullStartMs = chartData.length > 0 ? Date.parse(chartData[0].timeKey) : 0;
-    const fullEndMs = chartData.length > 0 ? Date.parse(chartData[chartData.length - 1].timeKey) : 0;
-    const zoomSpanMs = Math.max(1, zoomEndMs - zoomStartMs);
-    const fullSpanMs = Math.max(1, fullEndMs - fullStartMs);
-    const zoomRatio = fullSpanMs / zoomSpanMs;
-    const detailLimit = Math.min(DETAIL_MAX_POINTS, Math.max(MAX_POINTS, Math.round(MAX_POINTS * zoomRatio)));
+    // Use the maximum detail budget directly. Deriving it from the full span
+    // made this effect depend on chartData, which changes on every progressive
+    // publish and kept restarting the debounced detail request.
+    const detailLimit = DETAIL_MAX_POINTS;
 
     const applyDetail = (
       data: VizDataRow[],
@@ -3394,7 +3555,19 @@ export default function VizDashboardPage() {
       detailAbortRef.current?.abort();
       detailAbortRef.current = null;
     };
-  }, [zoomWindow, liveMode, selectedBoard, itemDataKey, inMemoryFull, aiAggregationParams]);
+    // Deliberately depend on the zoom time keys, not the zoomWindow object:
+    // progressive publishes rebuild chartData (and the object) every few
+    // hundred ms, which would otherwise keep restarting the debounced fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    zoomWindow?.startTs,
+    zoomWindow?.endTs,
+    liveMode,
+    selectedBoard,
+    itemDataKey,
+    inMemoryFull,
+    aiAggregationParams,
+  ]);
 
   // While the full-range overview is downsampled, fetch a higher-resolution
   // copy in the background and keep it in the detail cache. Zooming into it
@@ -3404,6 +3577,7 @@ export default function VizDashboardPage() {
       liveMode
       || !selectedBoard
       || inMemoryFull
+      || progressiveLoading
       || zoomWindow
       || !queryMeta?.downsampled
       || rawVizData.length < 2
@@ -3441,6 +3615,7 @@ export default function VizDashboardPage() {
     liveMode,
     selectedBoard,
     inMemoryFull,
+    progressiveLoading,
     zoomWindow,
     queryMeta?.downsampled,
     queryMeta?.total_matched,
@@ -3651,6 +3826,14 @@ export default function VizDashboardPage() {
   const chartProgressPercent = (() => {
     const progress = chartLoadProgress;
     if (!progress) return null;
+    // Progressive loading reports unique rows, which stays monotonic even
+    // though refinement rounds re-request some of the same timestamps.
+    if (progress.rowsTotal && progress.rowsTotal > 0) {
+      return Math.max(
+        0,
+        Math.min(100, (progress.rowsLoaded ?? 0) / progress.rowsTotal * 100),
+      );
+    }
     if (progress.chunkCount) {
       if (!fullLoadBytesEstimate || fullLoadBytesEstimate <= 0) return null;
       return Math.max(
@@ -3893,12 +4076,12 @@ export default function VizDashboardPage() {
     return {
       [PRIMARY_Y_AXIS_ID]: axisRangeLeft
         ? [axisRangeLeft.min, axisRangeLeft.max] as [number, number]
-        : computeYAxisDomain(chartData, leftItems),
+        : (frozenAxisDomains?.left ?? computeYAxisDomain(chartData, leftItems)),
       [SECONDARY_Y_AXIS_ID]: axisRangeRight
         ? [axisRangeRight.min, axisRangeRight.max] as [number, number]
-        : computeYAxisDomain(chartData, rightItems),
+        : (frozenAxisDomains?.right ?? computeYAxisDomain(chartData, rightItems)),
     } as Record<string, [number, number] | undefined>;
-  }, [chartData, analogChartItems, axisRangeLeft, axisRangeRight]);
+  }, [chartData, analogChartItems, axisRangeLeft, axisRangeRight, frozenAxisDomains]);
 
   const canvasYAxisDomains = useMemo(() => ({
     y: chartYAxisDomains[PRIMARY_Y_AXIS_ID],
@@ -3908,10 +4091,10 @@ export default function VizDashboardPage() {
   // Bump when the user changes explicit axis bounds so the chart drops any
   // manual Y zoom and applies the new profile settings.
   const yDomainOverrideKey = useMemo(() => JSON.stringify({
-    left: axisRangeLeft,
-    right: axisRangeRight,
+    left: axisRangeLeft ?? frozenAxisDomains?.left ?? null,
+    right: axisRangeRight ?? frozenAxisDomains?.right ?? null,
     items: analogChartItems.map(i => [i.id, i.y_axis.min ?? null, i.y_axis.max ?? null]),
-  }), [analogChartItems, axisRangeLeft, axisRangeRight]);
+  }), [analogChartItems, axisRangeLeft, axisRangeRight, frozenAxisDomains]);
 
   const sparkValueMax = useMemo(() => {
     const domain = chartYAxisDomains[PRIMARY_Y_AXIS_ID];

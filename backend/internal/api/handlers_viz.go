@@ -225,8 +225,11 @@ type VizQueryItemsRequest struct {
 	// Mode "live" returns raw parsed samples (never min/avg/max rollups).
 	Mode string `json:"mode,omitempty"`
 	// Sampling "raw-sample" returns actual samples spread over the full range.
-	// Used for the rough overview so it keeps the detailed chart silhouette.
+	// "envelope" returns per-bucket min/max values for the rough overview so the
+	// preview keeps the same peaks as the detailed chart.
 	Sampling string `json:"sampling,omitempty"`
+	// Buckets overrides the bucket count for sampled/envelope responses.
+	Buckets *int `json:"buckets,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -267,10 +270,17 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		meta    vizQueryMeta
 		err     error
 	)
+	buckets := 0
+	if req.Buckets != nil {
+		buckets = *req.Buckets
+	}
+
 	if live {
 		results, meta, err = h.queryVizSeriesRaw(ctx, filter, req.Items, limit)
+	} else if req.Sampling == "envelope" {
+		results, meta, err = h.queryVizSeriesEnvelope(ctx, filter, req.Items, buckets)
 	} else if req.Sampling == "raw-sample" {
-		results, meta, err = h.queryVizSeriesSampled(ctx, filter, req.Items, limit)
+		results, meta, err = h.queryVizSeriesSampled(ctx, filter, req.Items, limit, buckets)
 	} else if isVizAggregation(req.Aggregation) {
 		results, meta, err = h.queryVizSeriesAggregated(ctx, filter, req.Items, req.Aggregation, req.BucketSeconds, limit)
 	} else {
