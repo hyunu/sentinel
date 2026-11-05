@@ -427,7 +427,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ctx.beginPath();
     ctx.rect(left, top, width, height);
     ctx.clip();
-    ctx.font = '9px system-ui, sans-serif';
+    ctx.font = '12px system-ui, sans-serif';
     let lastLabelX = -Infinity;
     for (const event of events) {
       const sec = Date.parse(event.timestamp) / 1000;
@@ -455,8 +455,12 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       ctx.lineTo(x + 3, top + 7);
       ctx.closePath();
       ctx.fill();
-      if (event.summary && x - lastLabelX > 56) {
-        ctx.fillText(event.summary, x + 3, top + 16);
+      if (event.summary && x - lastLabelX > 72) {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+        ctx.strokeText(event.summary, x + 4, top + 18);
+        ctx.fillStyle = color;
+        ctx.fillText(event.summary, x + 4, top + 18);
         lastLabelX = x;
       }
     }
