@@ -338,6 +338,9 @@ func (h *Handler) queryVizSeriesSampled(
 	if bucketsOverride > 0 {
 		buckets = bucketsOverride
 	}
+	if buckets > 50000 {
+		buckets = 50000
+	}
 	if buckets > int(total) {
 		buckets = int(total)
 	}
