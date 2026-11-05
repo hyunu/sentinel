@@ -1987,7 +1987,8 @@ tbody tr:last-child td {
   left: 0;
   width: 0;
   animation: viz-chart-progress-shimmer 1.1s linear infinite;
-  transition: width 120ms linear;
+  /* Keep the bar length exactly equal to the displayed integer percent. */
+  transition: none;
   background: linear-gradient(
     90deg,
     var(--accent, #7c83ff),

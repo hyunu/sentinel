@@ -180,6 +180,8 @@ type ChartLoadProgress = {
   rowsLoaded?: number;
   /** Total rows in the selected range. */
   rowsTotal?: number;
+  /** Final completion signal; forces the bar to 100%. */
+  done?: boolean;
 };
 const FIELD_VALUES_LAYOUT_KEY = 'sentinel-viz-field-values-layout';
 const AI_CHART_STORAGE_KEY = 'sentinel.ai.chart';
@@ -526,21 +528,37 @@ async function queryFullDatasetProgressive(
   );
 
   const publish = (force: boolean, final = false) => {
-    if (!options?.onPartial) return;
     const now = Date.now();
     if (!force && now - lastPublishMs < 250) return;
     lastPublishMs = now;
     // Refresh the row-based progress with the latest unique-row count.
     reportProgress(0);
-    const rows = sortRows(
-      Array.from(displayRows.values())
-        .filter(row => !final || realRows.has(row.timestamp)),
-    );
-    options.onPartial(rows, {
-      total_matched: total,
-      returned: realRows.size,
-      downsampled: realRows.size < total,
-    });
+    if (options?.onPartial) {
+      const rows = sortRows(
+        Array.from(displayRows.values())
+          .filter(row => !final || realRows.has(row.timestamp)),
+      );
+      options.onPartial(rows, {
+        total_matched: total,
+        returned: realRows.size,
+        downsampled: realRows.size < total,
+      });
+    }
+    if (final) {
+      // Coalescing can leave fewer unique timestamps than total_matched.
+      // Mark the run complete so the label/bar finish at 100%, not at 89%.
+      options?.onProgress?.({
+        phase: 'full',
+        loaded: 0,
+        total: null,
+        overallLoaded: receivedBytes,
+        rowsLoaded: total,
+        rowsTotal: total,
+        chunkIndex: partitions.length,
+        chunkCount: partitions.length,
+        done: true,
+      });
+    }
   };
 
   const reportProgress = (deltaBytes: number) => {
@@ -1028,6 +1046,9 @@ export default function VizDashboardPage() {
   const [awaitingRoughData, setAwaitingRoughData] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
   const [fullLoadBytesEstimate, setFullLoadBytesEstimate] = useState<number | null>(null);
+  /** Keep the 100% bar visible briefly after the final row arrives. */
+  const loadCompletedRef = useRef(false);
+  const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** A full-range query is running; detail fetches must not replace its bar. */
   const globalLoadActiveRef = useRef(false);
   const [queryError, setQueryError] = useState<string | null>(null);
@@ -2615,6 +2636,11 @@ export default function VizDashboardPage() {
     overviewAbortRef.current = controller;
     setFullLoadBytesEstimate(null);
     setChartLoadProgress(null);
+    loadCompletedRef.current = false;
+    if (progressClearTimerRef.current) {
+      clearTimeout(progressClearTimerRef.current);
+      progressClearTimerRef.current = null;
+    }
     setQueryResetEpoch(v => v + 1);
     try {
       const p = await api.viz.getProfile(id);
@@ -2662,7 +2688,10 @@ export default function VizDashboardPage() {
         signal: controller.signal,
         timeoutMs: 45000,
         overviewItems: itemsForOverviewQuery(p.items),
-        onProgress: progress => setChartLoadProgress(progress),
+        onProgress: progress => {
+          if (progress.done) loadCompletedRef.current = true;
+          setChartLoadProgress(progress);
+        },
         onOverview: handleOverviewData,
         onPartial: (data, meta) => {
           if (!controller.signal.aborted) applyProgressiveData(data, meta);
@@ -2676,9 +2705,22 @@ export default function VizDashboardPage() {
     } finally {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
-        setLoading(false);
         setAwaitingRoughData(false);
-        setChartLoadProgress(null);
+        if (loadCompletedRef.current) {
+          // Keep the completed 100% state visible for a beat instead of
+          // clearing it in the same React batch as the final row merge.
+          if (progressClearTimerRef.current) {
+            clearTimeout(progressClearTimerRef.current);
+          }
+          progressClearTimerRef.current = setTimeout(() => {
+            progressClearTimerRef.current = null;
+            setLoading(false);
+            setChartLoadProgress(null);
+          }, 350);
+        } else {
+          setLoading(false);
+          setChartLoadProgress(null);
+        }
       }
     }
   }, [applyQueryResult, applyProgressiveData, handleOverviewData, t]);
@@ -2791,6 +2833,11 @@ export default function VizDashboardPage() {
     setFrozenAxisDomains(null);
     setProgressiveLoading(false);
     setChartLoadProgress(null);
+    loadCompletedRef.current = false;
+    if (progressClearTimerRef.current) {
+      clearTimeout(progressClearTimerRef.current);
+      progressClearTimerRef.current = null;
+    }
     setQueryResetEpoch(v => v + 1);
     envelopeTimestampsRef.current.clear();
     try {
@@ -2806,7 +2853,10 @@ export default function VizDashboardPage() {
         signal: controller.signal,
         timeoutMs: 45000,
         overviewItems,
-        onProgress: progress => setChartLoadProgress(progress),
+        onProgress: progress => {
+          if (progress.done) loadCompletedRef.current = true;
+          setChartLoadProgress(progress);
+        },
         onOverview: handleOverviewData,
         onPartial: (data, meta) => {
           if (!controller.signal.aborted) applyProgressiveData(data, meta);
@@ -2823,9 +2873,22 @@ export default function VizDashboardPage() {
     } finally {
       if (overviewAbortRef.current === controller) {
         overviewAbortRef.current = null;
-        setLoading(false);
         setAwaitingRoughData(false);
-        setChartLoadProgress(null);
+        if (loadCompletedRef.current) {
+          // Keep the completed 100% state visible for a beat instead of
+          // clearing it in the same React batch as the final row merge.
+          if (progressClearTimerRef.current) {
+            clearTimeout(progressClearTimerRef.current);
+          }
+          progressClearTimerRef.current = setTimeout(() => {
+            progressClearTimerRef.current = null;
+            setLoading(false);
+            setChartLoadProgress(null);
+          }, 350);
+        } else {
+          setLoading(false);
+          setChartLoadProgress(null);
+        }
       }
     }
   }, [selectedBoard, applyQueryResult, applyProgressiveData, handleOverviewData, t, scheduleSpectrumViewportFit, aiAggregationParams]);
@@ -3941,32 +4004,42 @@ export default function VizDashboardPage() {
   const chartZoomActive = zoomWindow != null;
 
   const chartDataLoading = loading || detailLoading;
-  const chartProgressPercent = (() => {
+  // One ratio drives the percentage, the bar width and the MB counter so they
+  // can never disagree (the old code mixed unique rows with network bytes).
+  const chartProgressRatio = (() => {
     const progress = chartLoadProgress;
     if (!progress) return null;
     // The rough-sampling request is only a preview. Letting it run to 100%
     // made the bar jump back to 0 when the real full load started.
     if (progress.phase === 'overview') return 0;
-    // Progressive loading reports unique rows, which stays monotonic even
-    // though refinement rounds re-request some of the same timestamps.
-    if (progress.rowsTotal && progress.rowsTotal > 0) {
+    if (progress.done) return 1;
+    if (progress.chunkCount && progress.rowsTotal && progress.rowsTotal > 0) {
       return Math.max(
         0,
-        Math.min(100, (progress.rowsLoaded ?? 0) / progress.rowsTotal * 100),
+        Math.min(1, (progress.rowsLoaded ?? 0) / progress.rowsTotal),
       );
     }
     if (progress.chunkCount) {
       if (!fullLoadBytesEstimate || fullLoadBytesEstimate <= 0) return null;
       return Math.max(
         0,
-        Math.min(100, progress.overallLoaded / fullLoadBytesEstimate * 100),
+        Math.min(1, progress.overallLoaded / fullLoadBytesEstimate),
       );
     }
     if (!progress.total || progress.total <= 0) return null;
-    return Math.max(0, Math.min(100, progress.loaded / progress.total * 100));
+    return Math.max(0, Math.min(1, progress.loaded / progress.total));
   })();
-  const chartProgressPercentDisplay = chartProgressPercent != null
-    ? `${String(Math.floor(chartProgressPercent)).padStart(2, '0')}%`
+  const chartProgressPercent = chartProgressRatio != null
+    ? chartProgressRatio * 100
+    : null;
+  // Use the displayed integer for both the label and the bar. Previously the
+  // label floored (57%) while the bar used 57.96%, so the bar was longer than
+  // the number said.
+  const chartProgressWholePercent = chartProgressPercent != null
+    ? Math.max(0, Math.min(100, Math.floor(chartProgressPercent + 1e-9)))
+    : null;
+  const chartProgressPercentDisplay = chartProgressWholePercent != null
+    ? `${String(chartProgressWholePercent).padStart(2, '0')}%`
     : '';
   const chartProgressSizeText = (() => {
     if (!chartDataLoading || !chartLoadProgress) return '';
@@ -3974,13 +4047,16 @@ export default function VizDashboardPage() {
     const totalBytes = chartLoadProgress.chunkCount
       ? fullLoadBytesEstimate
       : chartLoadProgress.total;
-    const loadedBytes = totalBytes
-      ? Math.min(chartLoadProgress.overallLoaded, totalBytes)
-      : chartLoadProgress.overallLoaded;
+    if (!totalBytes || totalBytes <= 0) return '';
+    const loadedBytes = chartLoadProgress.chunkCount
+        && chartProgressWholePercent != null
+      ? totalBytes * (chartProgressWholePercent / 100)
+      : Math.min(chartLoadProgress.overallLoaded, totalBytes);
     const loadedMB = (loadedBytes / 1024 / 1024).toFixed(1);
-    if (!totalBytes) return `${loadedMB} MB`;
-    const totalMB = Math.round(totalBytes / 1024 / 1024);
-    return `${loadedMB}/${String(totalMB).padStart(3, '0')} MB`;
+    // Match the percent exactly at 100% too: an integer total rounded 242.6
+    // up to 243 while the numerator stayed 242.6, which looked like 99.8%.
+    const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
+    return `${loadedMB}/${totalMB.padStart(5, '0')} MB`;
   })();
   const chartProgressLabel = [
     chartProgressPercentDisplay,
@@ -5070,13 +5146,15 @@ export default function VizDashboardPage() {
           role="progressbar"
           aria-label={chartProgressLabel || t('viz.chartLoading')}
           aria-hidden={!chartDataLoading}
-          aria-valuemin={chartProgressPercent != null ? 0 : undefined}
-          aria-valuemax={chartProgressPercent != null ? 100 : undefined}
-          aria-valuenow={chartProgressPercent != null ? Math.round(chartProgressPercent) : undefined}
+          aria-valuemin={chartProgressWholePercent != null ? 0 : undefined}
+          aria-valuemax={chartProgressWholePercent != null ? 100 : undefined}
+          aria-valuenow={chartProgressWholePercent ?? undefined}
         >
           <span
             className="viz-chart-progress-bar"
-            style={chartProgressPercent != null ? { width: `${chartProgressPercent.toFixed(2)}%` } : undefined}
+            style={chartProgressWholePercent != null
+              ? { width: `${chartProgressWholePercent}%` }
+              : undefined}
           />
         </div>
         {chartDataLoading && rawVizData.length > 0 && (
