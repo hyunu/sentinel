@@ -3227,7 +3227,7 @@ export default function VizDashboardPage() {
     setItems(prev => prev.map(i => i.id === id ? { ...i, [key]: value } as VizItem : i));
   };
 
-  const saveProfile = async (name: string) => {
+  const saveProfile = async (name: string, profileId?: string) => {
     if (!selectedBoard) {
       setProfileError(t('viz.profileError.noBoard'));
       return false;
@@ -3250,7 +3250,11 @@ export default function VizDashboardPage() {
     } catch {
       // Fall back to the last loaded list if the refresh fails.
     }
-    const existing = latestProfiles.find(p => p.name === trimmed);
+    // Prefer the active profile id. Name lookup is only for a new profile;
+    // a stale/reordered list must never overwrite a different profile.
+    const existing = profileId
+      ? latestProfiles.find(p => p.id === profileId)
+      : latestProfiles.find(p => p.name === trimmed);
     if (!existing && latestProfiles.length >= MAX_PROFILES) {
       setProfileError(t('viz.profileError.maxProfiles', { max: MAX_PROFILES }));
       return false;
@@ -3363,7 +3367,7 @@ export default function VizDashboardPage() {
   }, [items, activeProfile, checkedOnly, axisRangeLeft, axisRangeRight]);
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
-    await saveProfile(activeProfile.name);
+    await saveProfile(activeProfile.name, activeProfile.id);
   };
   const applyAxisRanges = () => {
     const parseDraft = (draft: AxisRangeDraft): AxisRange | null => {

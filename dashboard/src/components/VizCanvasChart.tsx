@@ -905,8 +905,6 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           const point = pointsRef.current[idx];
           propsRef.current.onHoverTimeKey(point?.timeKey ?? null);
 
-          const el = tooltipRef.current;
-          if (!el) return;
           const {
             tooltipEnabled: enabled,
             hideTooltip: hidden,
@@ -914,45 +912,53 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
             rawValuesByTimeKey: rawMap,
             formatTooltipValue: formatValue,
           } = propsRef.current;
-          if (!enabled || hidden || !point) {
+          // Pan/select is not hover; hide both overlays. A disabled tooltip is
+          // different: the floating panel is off, but the axis line name stays.
+          if (hidden || !point) {
             hideTooltipEl();
             return;
           }
 
-          el.hidden = false;
           const bb = plotBBoxCss(u);
-          const lineX = bb.left + (u.cursor.left ?? 0);
-          const mouseY = bb.top + (u.cursor.top ?? 0);
-
           const rawValues = rawMap.get(point.timeKey);
-          let html = `<div class="viz-chart-tooltip-label">${formatChartAxisTime(point.timeKey)}</div>`;
-          let visibleRank = 0;
-          for (let seriesIdx = 0; seriesIdx < chartItemsRef.current.length; seriesIdx++) {
-            const item = chartItemsRef.current[seriesIdx];
-            if (!item.visible) continue;
-            if (visibleRank >= maxVisibleSeries) break;
-            visibleRank++;
-            const value = u.data[seriesIdx + 1]?.[idx];
-            const name = chartLabelRef.current(item);
-            const display = formatValue(items.get(item.id), rawValues, value);
-            html += `<div class="viz-chart-tooltip-row">`
-              + `<span class="viz-chart-tooltip-swatch" style="background-color:${item.color}"></span>`
-              + `<span class="viz-chart-tooltip-name">${name}</span>`
-              + `<span class="viz-chart-tooltip-value">${display}</span>`
-              + `</div>`;
-          }
-          el.innerHTML = html;
+          const el = tooltipRef.current;
 
-          const wrap = wrapRef.current;
-          if (wrap) {
-            positionTooltipNearCursor(el, wrap, lineX, mouseY);
-          } else {
-            el.style.left = `${lineX + TOOLTIP_LINE_GAP}px`;
-            el.style.top = `${mouseY + TOOLTIP_Y_GAP}px`;
+          if (el && enabled) {
+            el.hidden = false;
+            const lineX = bb.left + (u.cursor.left ?? 0);
+            const mouseY = bb.top + (u.cursor.top ?? 0);
+            let html = `<div class="viz-chart-tooltip-label">${formatChartAxisTime(point.timeKey)}</div>`;
+            let visibleRank = 0;
+            for (let seriesIdx = 0; seriesIdx < chartItemsRef.current.length; seriesIdx++) {
+              const item = chartItemsRef.current[seriesIdx];
+              if (!item.visible) continue;
+              if (visibleRank >= maxVisibleSeries) break;
+              visibleRank++;
+              const value = u.data[seriesIdx + 1]?.[idx];
+              const name = chartLabelRef.current(item);
+              const display = formatValue(items.get(item.id), rawValues, value);
+              html += `<div class="viz-chart-tooltip-row">`
+                + `<span class="viz-chart-tooltip-swatch" style="background-color:${item.color}"></span>`
+                + `<span class="viz-chart-tooltip-name">${name}</span>`
+                + `<span class="viz-chart-tooltip-value">${display}</span>`
+                + `</div>`;
+            }
+            el.innerHTML = html;
+
+            const wrap = wrapRef.current;
+            if (wrap) {
+              positionTooltipNearCursor(el, wrap, lineX, mouseY);
+            } else {
+              el.style.left = `${lineX + TOOLTIP_LINE_GAP}px`;
+              el.style.top = `${mouseY + TOOLTIP_Y_GAP}px`;
+            }
+          } else if (el) {
+            el.hidden = true;
           }
 
           // Pin the nearest series' name/value to its own Y axis. This makes
           // dense charts identifiable without reading the floating tooltip.
+          // It intentionally ignores `tooltipEnabled`.
           const axisEl = axisHoverRef.current;
           const cursorTop = u.cursor.top;
           if (!axisEl) return;
