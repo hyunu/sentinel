@@ -434,18 +434,21 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
       const x = u.valToPos(sec, 'x', true);
       if (!Number.isFinite(x)) continue;
-      const color = event.direction === 'TX'
-        ? 'rgba(255, 170, 80, 0.75)'
-        : 'rgba(90, 190, 255, 0.75)';
+      const color = event.color
+        || (event.direction === 'TX'
+          ? 'rgba(255, 170, 80, 0.75)'
+          : 'rgba(90, 190, 255, 0.75)');
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
       ctx.lineWidth = 1;
-      ctx.setLineDash([2, 4]);
-      ctx.beginPath();
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, top + height);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      if ((event.style ?? 'vline') === 'vline') {
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, top + height);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.beginPath();
       ctx.moveTo(x, top + 1);
       ctx.lineTo(x - 3, top + 7);
