@@ -18,6 +18,8 @@ export type VizChartPoint = { timeKey: string } & Record<string, string | number
 
 const PRIMARY_SCALE = 'y';
 const SECONDARY_SCALE = 'y2';
+/** How close (CSS px) the pointer must be to a line to pin its Y-axis label. */
+const AXIS_HOVER_MAX_DISTANCE_PX = 36;
 export type VizSeriesYScale = 'y' | 'y2' | 'y3';
 import { CHART_SERIES_LINE_WIDTH, CHART_X_AXIS_INCRS_SECONDS } from '../lib/vizChartConstants';
 import { chartSessionGapThresholdSec, shouldGapLineSegment } from '../lib/vizChartSessionBreaks';
@@ -382,6 +384,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const plotRef = useRef<uPlot | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  /** Hover label pinned to the Y axis of the nearest series. */
+  const axisHoverRef = useRef<HTMLDivElement | null>(null);
   const sessionBreaksRef = useRef<HTMLDivElement | null>(null);
   const sessionBreakTimesRef = useRef<number[]>([...sessionBreakTimesSec]);
   sessionBreakTimesRef.current = [...sessionBreakTimesSec];
@@ -728,6 +732,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
   const hideTooltipEl = useCallback(() => {
     const el = tooltipRef.current;
     if (el) el.hidden = true;
+    const axisEl = axisHoverRef.current;
+    if (axisEl) axisEl.hidden = true;
   }, []);
 
   const digitalLayoutKey = [
@@ -909,7 +915,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
             formatTooltipValue: formatValue,
           } = propsRef.current;
           if (!enabled || hidden || !point) {
-            el.hidden = true;
+            hideTooltipEl();
             return;
           }
 
@@ -944,6 +950,75 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
             el.style.left = `${lineX + TOOLTIP_LINE_GAP}px`;
             el.style.top = `${mouseY + TOOLTIP_Y_GAP}px`;
           }
+
+          // Pin the nearest series' name/value to its own Y axis. This makes
+          // dense charts identifiable without reading the floating tooltip.
+          const axisEl = axisHoverRef.current;
+          const cursorTop = u.cursor.top;
+          if (!axisEl) return;
+          if (cursorTop == null) {
+            axisEl.hidden = true;
+            return;
+          }
+
+          let bestItem: VizItem | null = null;
+          let bestValue = 0;
+          let bestScale: VizSeriesYScale = PRIMARY_SCALE;
+          let bestY = 0;
+          let bestDist = AXIS_HOVER_MAX_DISTANCE_PX + 1;
+          let axisRank = 0;
+          for (let seriesIdx = 0; seriesIdx < chartItemsRef.current.length; seriesIdx++) {
+            const item = chartItemsRef.current[seriesIdx];
+            if (!item.visible) continue;
+            if (axisRank >= maxVisibleSeries) break;
+            axisRank++;
+            const value = u.data[seriesIdx + 1]?.[idx];
+            if (typeof value !== 'number' || Number.isNaN(value)) continue;
+            const scaleKey = resolveYScaleRef.current(item);
+            if (!u.scales[scaleKey]) continue;
+            const yPx = u.valToPos(value, scaleKey, false);
+            if (!Number.isFinite(yPx)) continue;
+            const dist = Math.abs(yPx - cursorTop);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestItem = item;
+              bestValue = value;
+              bestScale = scaleKey;
+              bestY = yPx;
+            }
+          }
+
+          if (!bestItem || bestDist > AXIS_HOVER_MAX_DISTANCE_PX) {
+            axisEl.hidden = true;
+            return;
+          }
+
+          const display = formatValue(items.get(bestItem.id), rawValues, bestValue);
+          const dot = document.createElement('span');
+          dot.className = 'viz-axis-hover-dot';
+          dot.style.backgroundColor = bestItem.color;
+          const name = document.createElement('span');
+          name.className = 'viz-axis-hover-name';
+          name.textContent = chartLabelRef.current(bestItem);
+          const valueEl = document.createElement('span');
+          valueEl.className = 'viz-axis-hover-value';
+          valueEl.textContent = display;
+          axisEl.replaceChildren(dot, name, valueEl);
+
+          const rightSide = bestScale !== PRIMARY_SCALE;
+          const wrapEl = wrapRef.current;
+          const wrapWidth = wrapEl?.clientWidth ?? 0;
+          const axisInset = 6;
+          axisEl.classList.toggle('is-right', rightSide);
+          // Keep the label just inside the plot so it does not cover the
+          // numeric tick labels in the axis gutter.
+          axisEl.style.left = rightSide ? '' : `${Math.round(bb.left + axisInset)}px`;
+          axisEl.style.right = rightSide && wrapWidth > 0
+            ? `${Math.max(0, Math.round(wrapWidth - (bb.left + bb.width) + axisInset))}px`
+            : rightSide ? '3px' : '';
+          const maxTop = (wrapEl?.clientHeight ?? bb.top + bb.height) - 12;
+          axisEl.style.top = `${Math.max(12, Math.min(maxTop, bb.top + bestY))}px`;
+          axisEl.hidden = false;
         }],
       },
     });
@@ -1094,6 +1169,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       <div ref={containerRef} className="viz-canvas-chart-host" />
       <div ref={sessionBreaksRef} className="viz-chart-session-breaks" />
       <div ref={tooltipRef} className="viz-chart-tooltip viz-canvas-chart-tooltip" hidden />
+      <div ref={axisHoverRef} className="viz-axis-hover-label" hidden />
     </div>
   );
 });

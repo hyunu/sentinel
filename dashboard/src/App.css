@@ -2452,6 +2452,58 @@ tbody tr:last-child td {
   z-index: 4;
 }
 
+/* Nearest-series label pinned to its Y axis on hover. */
+.viz-axis-hover-label {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 230px;
+  padding: 3px 8px 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 90%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  transform: translateY(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.2;
+  animation: viz-axis-hover-in 90ms ease-out;
+}
+
+.viz-axis-hover-label[hidden] {
+  display: none;
+}
+
+.viz-axis-hover-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.viz-axis-hover-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.viz-axis-hover-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes viz-axis-hover-in {
+  from { opacity: 0; transform: translateY(-50%) scale(0.97); }
+  to { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
 .viz-canvas-chart.uplot {
   color: var(--chart-axis);
 }
