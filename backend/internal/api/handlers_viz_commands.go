@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,43 +17,83 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type vizCommandFunction struct {
-	FunctionID int      `json:"function_id"`
-	ArgCount   int      `json:"arg_count,omitempty"`
-	Args       []string `json:"args,omitempty"`
-}
-
-type vizCommandResult struct {
-	FunctionID int  `json:"function_id,omitempty"`
-	Flag       int  `json:"flag,omitempty"`
-	ErrorCode  int  `json:"error_code,omitempty"`
-	IsError    bool `json:"is_error,omitempty"`
-	IsMonitor  bool `json:"is_monitor,omitempty"`
-}
-
 type vizCommandEvent struct {
-	Timestamp time.Time            `json:"timestamp"`
-	Direction string               `json:"direction"`
-	FID       int                  `json:"fid"`
-	Kind      string               `json:"kind"`
-	Summary   string               `json:"summary"`
-	Functions []vizCommandFunction `json:"functions,omitempty"`
-	Results   []vizCommandResult   `json:"results,omitempty"`
-	RecvFID   int                  `json:"recv_fid,omitempty"`
-	ErrorCode int                  `json:"error_code,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Direction string    `json:"direction"`
+	FID       int       `json:"fid"`
+	Kind      string    `json:"kind"`
+	Summary   string    `json:"summary"`
+	Color     string    `json:"color,omitempty"`
+	Style     string    `json:"style,omitempty"`
 }
 
-const (
-	vizCommandLimit     = 20000
-	vizCommandFIDRegexp = "^AA..(CF|CD|CC)"
-)
+// overlayField describes one value to pull out of a parsed frame.
+type overlayField struct {
+	Name   string   `json:"name"`
+	Path   string   `json:"path,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Format string   `json:"format,omitempty"`
+}
 
-// VizCommands lists control frames (call/result/ack) for a board so the chart
-// can overlay them on monitoring series.
+// overlayConfig is protocol-defined: which FID becomes a chart event, how it is
+// labelled and drawn. Nothing about FIDs or styles is hardcoded in the handler.
+type overlayConfig struct {
+	FID    string         `json:"fid"`
+	Kind   string         `json:"kind"`
+	Path   string         `json:"path,omitempty"`
+	Fields []overlayField `json:"fields,omitempty"`
+	Label  string         `json:"label,omitempty"`
+	Color  string         `json:"color,omitempty"`
+	Style  string         `json:"style,omitempty"`
+	fidNum int
+}
+
+const vizCommandLimit = 20000
+
+func overlayConfigsFromSpec(spec *models.ProtocolSpec) []overlayConfig {
+	if spec == nil || spec.ParseRules == nil || spec.ParseRules.Meta == nil {
+		return nil
+	}
+	raw, ok := spec.ParseRules.Meta["overlays"]
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var overlays []overlayConfig
+	if err := json.Unmarshal(data, &overlays); err != nil {
+		return nil
+	}
+	out := make([]overlayConfig, 0, len(overlays))
+	for _, overlay := range overlays {
+		fid, err := parseFIDValue(overlay.FID)
+		if err != nil {
+			continue
+		}
+		overlay.fidNum = fid
+		if overlay.Style == "" {
+			overlay.Style = "vline"
+		}
+		out = append(out, overlay)
+	}
+	return out
+}
+
+// VizCommands lists configured control-frame overlays for a board. The FID set,
+// labels, colors and styles come from the protocol's _meta.overlays.
 func (h *Handler) VizCommands(c *gin.Context) {
 	boardID := strings.TrimSpace(c.Query("board_id"))
 	if boardID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "board_id required"})
+		return
+	}
+
+	spec := protocol.MonitoringControlProtocolSpec()
+	overlays := overlayConfigsFromSpec(&spec)
+	if len(overlays) == 0 {
+		c.JSON(http.StatusOK, gin.H{"items": []vizCommandEvent{}, "total": 0})
 		return
 	}
 
@@ -60,7 +102,7 @@ func (h *Handler) VizCommands(c *gin.Context) {
 
 	filter := bson.M{
 		"board_id": boardID,
-		"raw_hex":  bson.M{"$regex": vizCommandFIDRegexp, "$options": "i"},
+		"raw_hex":  bson.M{"$regex": overlayFIDRegexp(overlays), "$options": "i"},
 	}
 	if direction := c.Query("direction"); direction != "" {
 		filter["direction"] = direction
@@ -96,7 +138,6 @@ func (h *Handler) VizCommands(c *gin.Context) {
 	}
 	defer cur.Close(ctx)
 
-	spec := protocol.MonitoringControlProtocolSpec()
 	events := make([]vizCommandEvent, 0, 128)
 	for cur.Next(ctx) {
 		var doc struct {
@@ -107,7 +148,7 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		if err := cur.Decode(&doc); err != nil {
 			continue
 		}
-		event, ok := commandEventFromFrame(doc.Timestamp, doc.Direction, doc.RawHex, &spec)
+		event, ok := commandEventFromFrame(doc.Timestamp, doc.Direction, doc.RawHex, &spec, overlays)
 		if ok {
 			events = append(events, event)
 		}
@@ -120,117 +161,193 @@ func (h *Handler) VizCommands(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": events, "total": len(events)})
 }
 
-func commandEventFromFrame(ts time.Time, direction, rawHex string, spec *models.ProtocolSpec) (vizCommandEvent, bool) {
+// overlayFIDRegexp builds the Mongo prefix filter from the configured FIDs so
+// the query stays in sync with the protocol.
+func overlayFIDRegexp(overlays []overlayConfig) string {
+	parts := make([]string, 0, len(overlays))
+	for _, overlay := range overlays {
+		parts = append(parts, fmt.Sprintf("%02X", overlay.fidNum))
+	}
+	return "^AA..(" + strings.Join(parts, "|") + ")"
+}
+
+func commandEventFromFrame(ts time.Time, direction, rawHex string, spec *models.ProtocolSpec, overlays []overlayConfig) (vizCommandEvent, bool) {
 	result, err := protocol.Parse(rawHex, spec)
 	if err != nil {
 		return vizCommandEvent{}, false
 	}
 	fidVal := asInt(result.Fields["fid"])
-	event := vizCommandEvent{Timestamp: ts, Direction: direction, FID: fidVal}
-	switch fidVal {
-	case 0xCF:
-		event.Kind = "call"
-		functions := extractCommandFunctions(result.Fields["payload.functions"])
-		event.Functions = functions
-		event.Summary = summarizeFunctions(functions)
-	case 0xCD:
-		event.Kind = "result"
-		results := extractCommandResults(result.Fields["payload.results"])
-		event.Results = results
-		event.Summary = summarizeResults(results)
-	case 0xCC:
-		event.Kind = "ack"
-		event.RecvFID = asInt(result.Fields["payload.recv_fid"])
-		event.ErrorCode = asInt(result.Fields["payload.error_code"])
-		event.Summary = fmt.Sprintf("ack 0x%02X", event.RecvFID)
-		if event.ErrorCode != 0xF0 {
-			event.Summary = fmt.Sprintf("ack 0x%02X err 0x%02X", event.RecvFID, event.ErrorCode)
+	var overlay *overlayConfig
+	for i := range overlays {
+		if overlays[i].fidNum == fidVal {
+			overlay = &overlays[i]
+			break
 		}
-	default:
+	}
+	if overlay == nil {
 		return vizCommandEvent{}, false
 	}
-	return event, true
+
+	values, named := extractOverlayValues(result.Fields, overlay)
+	label := renderOverlayLabel(overlay.Label, overlay.Kind, values, named)
+	return vizCommandEvent{
+		Timestamp: ts,
+		Direction: direction,
+		FID:       fidVal,
+		Kind:      overlay.Kind,
+		Summary:   label,
+		Color:     overlay.Color,
+		Style:     overlay.Style,
+	}, true
 }
 
-func extractCommandFunctions(value interface{}) []vizCommandFunction {
-	out := []vizCommandFunction{}
-	for _, item := range asSlice(value) {
-		m, ok := asMap(item)
-		if !ok {
-			continue
-		}
-		fn := vizCommandFunction{FunctionID: asInt(m["function_id"]), ArgCount: asInt(m["arg_count"])}
-		for _, arg := range asSlice(m["args"]) {
-			am, ok := asMap(arg)
+func extractOverlayValues(fields map[string]interface{}, overlay *overlayConfig) ([]string, map[string]string) {
+	named := make(map[string]string, len(overlay.Fields))
+	if overlay.Path != "" {
+		items := asSlice(getPath(fields, overlay.Path))
+		values := make([]string, 0, len(items))
+		for _, item := range items {
+			row, ok := asMap(item)
 			if !ok {
 				continue
 			}
-			if val, ok := am["val"].(string); ok && val != "" {
-				fn.Args = append(fn.Args, val)
+			for _, field := range overlay.Fields {
+				value := fieldValue(row, field)
+				if value == "" {
+					continue
+				}
+				values = append(values, value)
+				if field.Name != "" {
+					named[field.Name] = value
+				}
 			}
 		}
-		out = append(out, fn)
+		return values, named
 	}
-	return out
-}
 
-func extractCommandResults(value interface{}) []vizCommandResult {
-	out := []vizCommandResult{}
-	for _, item := range asSlice(value) {
-		m, ok := asMap(item)
-		if !ok {
+	values := make([]string, 0, len(overlay.Fields))
+	for _, field := range overlay.Fields {
+		value := fieldValue(fields, field)
+		if value == "" {
 			continue
 		}
-		res := vizCommandResult{Flag: asInt(m["flag"])}
-		if nested, ok := asMap(m["result"]); ok {
-			res.FunctionID = asInt(nested["function_id"])
+		values = append(values, value)
+		if field.Name != "" {
+			named[field.Name] = value
 		}
-		if nested, ok := asMap(m["error"]); ok {
-			res.FunctionID = asInt(nested["function_id"])
-			res.ErrorCode = asInt(nested["error_code"])
-			res.IsError = true
+	}
+	return values, named
+}
+
+func renderOverlayLabel(template, kind string, values []string, named map[string]string) string {
+	if template == "" {
+		if len(values) > 0 {
+			return strings.Join(values, ", ")
 		}
-		if nested, ok := asMap(m["monitor"]); ok {
-			res.FunctionID = asInt(m["function_id"])
-			res.IsMonitor = true
-			_ = nested
-		}
-		out = append(out, res)
+		return kind
+	}
+	out := strings.ReplaceAll(template, "{values}", strings.Join(values, ", "))
+	for name, value := range named {
+		out = strings.ReplaceAll(out, "{"+name+"}", value)
 	}
 	return out
 }
 
-func summarizeFunctions(functions []vizCommandFunction) string {
-	if len(functions) == 0 {
-		return "call"
+func fieldValue(source map[string]interface{}, field overlayField) string {
+	paths := make([]string, 0, len(field.Paths)+1)
+	if field.Path != "" {
+		paths = append(paths, field.Path)
 	}
-	parts := make([]string, 0, len(functions))
-	for _, fn := range functions {
-		label := fmt.Sprintf("fn %d", fn.FunctionID)
-		if fn.ArgCount > 0 {
-			label += fmt.Sprintf("(%d)", fn.ArgCount)
+	paths = append(paths, field.Paths...)
+	for _, path := range paths {
+		if value := formatOverlayValue(getPath(source, path), field.Format); value != "" {
+			return value
 		}
-		parts = append(parts, label)
 	}
-	return strings.Join(parts, ", ")
+	return ""
 }
 
-func summarizeResults(results []vizCommandResult) string {
-	if len(results) == 0 {
-		return "result"
+func getPath(fields map[string]interface{}, path string) interface{} {
+	if fields == nil || path == "" {
+		return nil
 	}
-	parts := make([]string, 0, len(results))
-	for _, res := range results {
-		switch {
-		case res.IsError:
-			parts = append(parts, fmt.Sprintf("err %d/0x%02X", res.FunctionID, res.ErrorCode))
-		case res.IsMonitor:
-			parts = append(parts, fmt.Sprintf("monitor %d", res.FunctionID))
-		default:
-			parts = append(parts, fmt.Sprintf("ok %d", res.FunctionID))
+	// Parsed fields are flattened ("payload.functions"), so try the full key
+	// before walking nested maps.
+	if value, ok := fields[path]; ok {
+		return value
+	}
+	var current interface{} = fields
+	for _, part := range strings.Split(path, ".") {
+		m, ok := asMap(current)
+		if !ok {
+			return nil
 		}
+		current = m[part]
 	}
-	return strings.Join(parts, ", ")
+	return current
+}
+
+func formatOverlayValue(value interface{}, format string) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	}
+	n, ok := toIntValue(value)
+	if !ok {
+		return fmt.Sprintf("%v", value)
+	}
+	if format == "hex" {
+		return fmt.Sprintf("%02X", n)
+	}
+	return strconv.Itoa(n)
+}
+
+func toIntValue(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int8:
+		return int(v), true
+	case int16:
+		return int(v), true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case uint8:
+		return int(v), true
+	case uint16:
+		return int(v), true
+	case uint32:
+		return int(v), true
+	case uint64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func parseFIDValue(raw string) (int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, fmt.Errorf("empty fid")
+	}
+	base := 10
+	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
+		trimmed = trimmed[2:]
+		base = 16
+	}
+	value, err := strconv.ParseInt(trimmed, base, 32)
+	if err != nil {
+		return 0, err
+	}
+	return int(value), nil
 }
 
 func asSlice(value interface{}) []interface{} {
@@ -267,20 +384,8 @@ func asMap(value interface{}) (map[string]interface{}, bool) {
 }
 
 func asInt(value interface{}) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case int32:
-		return int(v)
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case uint8:
-		return int(v)
-	case uint16:
-		return int(v)
-	default:
-		return 0
+	if n, ok := toIntValue(value); ok {
+		return n
 	}
+	return 0
 }

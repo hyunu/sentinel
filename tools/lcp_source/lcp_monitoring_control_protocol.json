@@ -6,7 +6,57 @@
     "_meta": {
       "name": "LCP Monitoring + Control",
       "version": "2.1",
-      "frame": "AA [LEN:1] FID [SEQ:2 BE] ATTR payload CRC16 BB"
+      "frame": "AA [LEN:1] FID [SEQ:2 BE] ATTR payload CRC16 BB",
+      "overlays": [
+        {
+          "fid": "0xCF",
+          "kind": "call",
+          "path": "payload.functions",
+          "fields": [
+            {
+              "name": "function_id",
+              "path": "function_id",
+              "format": "int"
+            }
+          ],
+          "label": "fn {values}",
+          "color": "#ff9f40",
+          "style": "vline"
+        },
+        {
+          "fid": "0xCD",
+          "kind": "result",
+          "path": "payload.results",
+          "fields": [
+            {
+              "name": "function_id",
+              "paths": [
+                "result.function_id",
+                "error.function_id"
+              ],
+              "format": "int"
+            }
+          ],
+          "label": "res {values}",
+          "color": "#40c4ff",
+          "style": "vline"
+        },
+        {
+          "fid": "0xCC",
+          "kind": "ack",
+          "path": "",
+          "fields": [
+            {
+              "name": "recv_fid",
+              "path": "payload.recv_fid",
+              "format": "hex"
+            }
+          ],
+          "label": "ack 0x{recv_fid}",
+          "color": "#8bc34a",
+          "style": "vline"
+        }
+      ]
     },
     "fields": [
       {
@@ -754,6 +804,56 @@
         "0xC8": "INIT",
         "0xC7": "instant monitor request"
       }
-    }
+    },
+    "overlays": [
+      {
+        "fid": "0xCF",
+        "kind": "call",
+        "path": "payload.functions",
+        "fields": [
+          {
+            "name": "function_id",
+            "path": "function_id",
+            "format": "int"
+          }
+        ],
+        "label": "fn {values}",
+        "color": "#ff9f40",
+        "style": "vline"
+      },
+      {
+        "fid": "0xCD",
+        "kind": "result",
+        "path": "payload.results",
+        "fields": [
+          {
+            "name": "function_id",
+            "paths": [
+              "result.function_id",
+              "error.function_id"
+            ],
+            "format": "int"
+          }
+        ],
+        "label": "res {values}",
+        "color": "#40c4ff",
+        "style": "vline"
+      },
+      {
+        "fid": "0xCC",
+        "kind": "ack",
+        "path": "",
+        "fields": [
+          {
+            "name": "recv_fid",
+            "path": "payload.recv_fid",
+            "format": "hex"
+          }
+        ],
+        "label": "ack 0x{recv_fid}",
+        "color": "#8bc34a",
+        "style": "vline"
+      }
+    ]
   }
 }

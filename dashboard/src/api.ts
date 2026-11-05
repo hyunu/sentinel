@@ -228,8 +228,10 @@ export interface VizCommandEvent {
   timestamp: string;
   direction: 'TX' | 'RX';
   fid: number;
-  kind: 'call' | 'result' | 'ack';
+  kind: string;
   summary: string;
+  color?: string;
+  style?: string;
   functions?: VizCommandFunction[];
   results?: VizCommandResult[];
   recv_fid?: number;
