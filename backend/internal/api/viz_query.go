@@ -656,6 +656,80 @@ func (h *Handler) queryVizSeriesEnvelope(
 	}, nil
 }
 
+// queryVizSeriesPage returns one raw slice of the selected range, sorted by
+// timestamp. The striped loader calls it with skip/limit so every row is
+// transferred exactly once instead of re-fetching earlier samples.
+func (h *Handler) queryVizSeriesPage(
+	ctx context.Context,
+	filter bson.M,
+	items []models.VizItem,
+	skip int,
+	limit int,
+) ([]vizDataPoint, vizQueryMeta, error) {
+	effectiveLimit := normalizeVizPointLimit(limit)
+	if len(items) == 0 {
+		return []vizDataPoint{}, vizQueryMeta{}, nil
+	}
+
+	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	if total == 0 {
+		return []vizDataPoint{}, vizQueryMeta{TotalMatched: 0, Returned: 0, Downsampled: false}, nil
+	}
+	if skip < 0 {
+		skip = 0
+	}
+	if skip > vizFullLoadPointLimit {
+		skip = vizFullLoadPointLimit
+	}
+	if int64(skip) >= total {
+		return []vizDataPoint{}, vizQueryMeta{
+			TotalMatched: total,
+			Returned:     0,
+			Downsampled:  false,
+		}, nil
+	}
+
+	findOpts := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}).
+		SetSkip(int64(skip)).
+		SetLimit(int64(effectiveLimit)).
+		SetProjection(buildVizProjection(items)).
+		SetBatchSize(500)
+
+	cursor, err := h.db.UartData().Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+	defer cursor.Close(ctx)
+
+	results := make([]vizDataPoint, 0, effectiveLimit)
+	for cursor.Next(ctx) {
+		var doc vizSampleDoc
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		vals := vizValuesFromDoc(&doc, items)
+		if len(vals) == 0 {
+			continue
+		}
+		results = append(results, vizDataPoint{Timestamp: doc.Timestamp, Values: vals})
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, vizQueryMeta{}, err
+	}
+
+	results = coalesceVizPointsByTimestamp(results)
+
+	return results, vizQueryMeta{
+		TotalMatched: total,
+		Returned:     len(results),
+		Downsampled:  int64(skip+effectiveLimit) < total,
+	}, nil
+}
+
 func (h *Handler) queryVizSeries(
 	ctx context.Context,
 	filter bson.M,

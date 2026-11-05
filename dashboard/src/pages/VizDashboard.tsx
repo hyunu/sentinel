@@ -78,11 +78,8 @@ import {
   OVERVIEW_BUCKETS,
   OVERVIEW_SAMPLE_POINTS,
   PROGRESSIVE_MAX_PARTITIONS,
-  PROGRESSIVE_MAX_ROUNDS,
   PROGRESSIVE_PARTITION_ROWS,
-  PROGRESSIVE_ROUND_MAX_ROWS,
-  PROGRESSIVE_ROUND_ROWS,
-  PROGRESSIVE_START_BUCKETS,
+  PROGRESSIVE_STRIPE_ROWS,
   shouldChunkedFullLoad,
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
@@ -393,8 +390,9 @@ type VizQueryParams = {
   since?: string;
   aggregation?: 'avg' | 'min' | 'max';
   bucket_seconds?: number;
-  sampling?: 'raw-sample' | 'envelope';
+  sampling?: 'raw-sample' | 'envelope' | 'raw-page';
   buckets?: number;
+  skip?: number;
 };
 
 type VizLoadProgressHandler = (progress: ChartLoadProgress) => void;
@@ -508,9 +506,15 @@ async function queryFullDatasetProgressive(
 
   const partitions = buildVizPartitions(startMs, endMs, total, overview);
   const partitionRows = Math.max(1, Math.ceil(total / partitions.length));
-  const requestLimit = Math.min(
-    FULL_LOAD_MAX_POINTS,
-    Math.max(MAX_POINTS, partitionRows * 3),
+  // Each request is one contiguous raw page. The whole range is transferred
+  // exactly once; no bucket rounds and no second completion pass.
+  const stripeRows = Math.min(
+    PROGRESSIVE_STRIPE_ROWS,
+    Math.max(200, Math.ceil(partitionRows / 6)),
+  );
+  const stripesPerPartition = Math.max(
+    1,
+    Math.ceil(partitionRows / stripeRows) + 1,
   );
 
   const realRows = new Map<string, VizDataRow>();
@@ -586,7 +590,11 @@ async function queryFullDatasetProgressive(
     return added;
   };
 
-  const fetchWindow = async (partition: VizPartition, buckets?: number) => {
+  const fetchStripe = async (
+    partition: VizPartition,
+    skip: number,
+    limit: number,
+  ) => {
     if (options?.signal?.aborted) throw new Error('Request timeout or cancelled');
     requestIndex += 1;
     let lastLoaded = 0;
@@ -596,10 +604,9 @@ async function queryFullDatasetProgressive(
         start: new Date(partition.startMs).toISOString(),
         end: new Date(partition.endMs).toISOString(),
       },
-      limit: requestLimit,
-      ...(buckets && buckets > 0
-        ? { sampling: 'raw-sample' as const, buckets }
-        : {}),
+      limit,
+      skip,
+      sampling: 'raw-page',
     }, {
       signal: options?.signal,
       timeoutMs: requestTimeout,
@@ -612,9 +619,9 @@ async function queryFullDatasetProgressive(
     return result;
   };
 
-  const runPool = async (
-    tasks: VizPartition[],
-    worker: (partition: VizPartition) => Promise<void>,
+  const runPool = async <T,>(
+    tasks: T[],
+    worker: (task: T) => Promise<void>,
   ) => {
     const workerCount = Math.min(FULL_LOAD_CONCURRENCY, tasks.length);
     const ordered = interleaveVizTasks(tasks, workerCount);
@@ -638,38 +645,28 @@ async function queryFullDatasetProgressive(
     }
   };
 
-  let buckets = Math.max(
-    PROGRESSIVE_START_BUCKETS,
-    Math.ceil(PROGRESSIVE_ROUND_ROWS / partitions.length),
-  );
-  let round = 0;
-  while (
-    realRows.size < total
-    && realRows.size < PROGRESSIVE_ROUND_MAX_ROWS
-    && round < PROGRESSIVE_MAX_ROUNDS
-  ) {
-    const before = realRows.size;
-    await runPool(partitions, async partition => {
-      const result = await fetchWindow(partition, buckets);
-      mergeRows(result.data);
-      publish(false);
-    });
-    publish(true);
-    if (realRows.size <= before) break;
-    round += 1;
-    if (buckets >= partitionRows) break;
-    buckets *= 2;
+  // Stripe-major task order: every wave covers the beginning, middle and end
+  // of the range. Each (partition, stripe) page is downloaded exactly once.
+  type StripeTask = { partition: VizPartition; partitionIndex: number; skip: number };
+  const tasks: StripeTask[] = [];
+  for (let stripe = 0; stripe < stripesPerPartition; stripe += 1) {
+    for (let partitionIndex = 0; partitionIndex < partitions.length; partitionIndex += 1) {
+      tasks.push({
+        partition: partitions[partitionIndex],
+        partitionIndex,
+        skip: stripe * stripeRows,
+      });
+    }
   }
 
-  // Fill whatever the sampled rounds did not cover. Each partition is only a
-  // few thousand rows, so one request per partition is bounded.
-  if (realRows.size < total) {
-    await runPool(partitions, async partition => {
-      const result = await fetchWindow(partition);
-      mergeRows(result.data);
-      publish(false);
-    });
-  }
+  // Fetch every stripe. Pages beyond a partition's end are empty and cheap.
+  // Do not infer "partition finished" from one page: workers can finish a
+  // later stripe first and would skip the earlier ones, losing rows.
+  await runPool(tasks, async task => {
+    const result = await fetchStripe(task.partition, task.skip, stripeRows);
+    mergeRows(result.data);
+    publish(false);
+  });
 
   publish(true, true);
 

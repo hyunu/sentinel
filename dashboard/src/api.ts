@@ -424,8 +424,9 @@ export const api = {
       aggregation?: 'avg' | 'min' | 'max';
       bucket_seconds?: number;
       mode?: 'live';
-      sampling?: 'raw-sample' | 'envelope';
+      sampling?: 'raw-sample' | 'envelope' | 'raw-page';
       buckets?: number;
+      skip?: number;
     }, options?: {
       signal?: AbortSignal;
       timeoutMs?: number;

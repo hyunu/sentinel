@@ -230,6 +230,9 @@ type VizQueryItemsRequest struct {
 	Sampling string `json:"sampling,omitempty"`
 	// Buckets overrides the bucket count for sampled/envelope responses.
 	Buckets *int `json:"buckets,omitempty"`
+	// Skip pages through raw rows (sampling=raw-page). Used by the striped
+	// progressive loader so every row is downloaded exactly once.
+	Skip *int `json:"skip,omitempty"`
 }
 
 func (h *Handler) VizQueryItems(c *gin.Context) {
@@ -274,6 +277,10 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 	if req.Buckets != nil {
 		buckets = *req.Buckets
 	}
+	skip := 0
+	if req.Skip != nil {
+		skip = *req.Skip
+	}
 
 	if live {
 		results, meta, err = h.queryVizSeriesRaw(ctx, filter, req.Items, limit)
@@ -281,6 +288,8 @@ func (h *Handler) VizQueryItems(c *gin.Context) {
 		results, meta, err = h.queryVizSeriesEnvelope(ctx, filter, req.Items, buckets)
 	} else if req.Sampling == "raw-sample" {
 		results, meta, err = h.queryVizSeriesSampled(ctx, filter, req.Items, limit, buckets)
+	} else if req.Sampling == "raw-page" {
+		results, meta, err = h.queryVizSeriesPage(ctx, filter, req.Items, skip, limit)
 	} else if isVizAggregation(req.Aggregation) {
 		results, meta, err = h.queryVizSeriesAggregated(ctx, filter, req.Items, req.Aggregation, req.BucketSeconds, limit)
 	} else {
