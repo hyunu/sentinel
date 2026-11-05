@@ -488,8 +488,6 @@ async function queryFullDatasetProgressive(
         loaded,
         total: totalBytes,
         overallLoaded: loaded,
-        rowsLoaded: 0,
-        rowsTotal: total,
       }),
     });
     return { data: full.data, meta: full.meta ?? meta };
@@ -1019,6 +1017,8 @@ export default function VizDashboardPage() {
   const [awaitingRoughData, setAwaitingRoughData] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
   const [fullLoadBytesEstimate, setFullLoadBytesEstimate] = useState<number | null>(null);
+  /** A full-range query is running; detail fetches must not replace its bar. */
+  const globalLoadActiveRef = useRef(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [livePollError, setLivePollError] = useState<string | null>(null);
   const [liveMode, setLiveMode] = useState(false);
@@ -1048,6 +1048,7 @@ export default function VizDashboardPage() {
     right?: [number, number];
   } | null>(null);
   const envelopeTimestampsRef = useRef<Set<string>>(new Set());
+  globalLoadActiveRef.current = loading || progressiveLoading || awaitingRoughData;
   const [allRangeGuide, setAllRangeGuide] = useState<AllRangeLoadAssessment | null>(null);
   const detailFetchSeqRef = useRef(0);
   const detailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2602,6 +2603,7 @@ export default function VizDashboardPage() {
     const controller = new AbortController();
     overviewAbortRef.current = controller;
     setFullLoadBytesEstimate(null);
+    setChartLoadProgress(null);
     setQueryResetEpoch(v => v + 1);
     try {
       const p = await api.viz.getProfile(id);
@@ -2758,6 +2760,7 @@ export default function VizDashboardPage() {
     setFullLoadBytesEstimate(null);
     setFrozenAxisDomains(null);
     setProgressiveLoading(false);
+    setChartLoadProgress(null);
     setQueryResetEpoch(v => v + 1);
     envelopeTimestampsRef.current.clear();
     try {
@@ -3511,7 +3514,7 @@ export default function VizDashboardPage() {
       applyDetail(cached.data, cached.meta, true);
       if (detailCacheRef.current.isFresh(cached)) {
         setDetailLoading(false);
-        setChartLoadProgress(null);
+        if (!globalLoadActiveRef.current) setChartLoadProgress(null);
         return;
       }
     } else {
@@ -3551,6 +3554,10 @@ export default function VizDashboardPage() {
             signal: controller.signal,
             timeoutMs: 30000,
             onProgress: (loaded, total) => {
+              // While a full-range query is running its row-based bar owns the
+              // header. A detail request is short and must not make that bar
+              // jump to a different scale.
+              if (globalLoadActiveRef.current) return;
               setChartLoadProgress({
                 phase: 'detail',
                 loaded,
@@ -3576,7 +3583,7 @@ export default function VizDashboardPage() {
           }
           if (detailFetchSeqRef.current === seq) {
             setDetailLoading(false);
-            setChartLoadProgress(null);
+            if (!globalLoadActiveRef.current) setChartLoadProgress(null);
           }
         }
       })();
@@ -3874,6 +3881,9 @@ export default function VizDashboardPage() {
   const chartProgressPercent = (() => {
     const progress = chartLoadProgress;
     if (!progress) return null;
+    // The rough-sampling request is only a preview. Letting it run to 100%
+    // made the bar jump back to 0 when the real full load started.
+    if (progress.phase === 'overview') return 0;
     // Progressive loading reports unique rows, which stays monotonic even
     // though refinement rounds re-request some of the same timestamps.
     if (progress.rowsTotal && progress.rowsTotal > 0) {
@@ -3897,6 +3907,7 @@ export default function VizDashboardPage() {
     : '';
   const chartProgressSizeText = (() => {
     if (!chartDataLoading || !chartLoadProgress) return '';
+    if (chartLoadProgress.phase === 'overview') return '';
     const totalBytes = chartLoadProgress.chunkCount
       ? fullLoadBytesEstimate
       : chartLoadProgress.total;
