@@ -141,6 +141,8 @@ const DETAIL_MAX_POINTS = 20_000;
 const MAX_CHART_SERIES = 24;
 const MAX_PROFILES = 20;
 const POLL_INTERVAL = 3000;
+/** Seed the live tail with a few minutes of recent data so commands are visible immediately. */
+const LIVE_TAIL_SEED_MS = 5 * 60_000;
 const MIN_CHART_ZOOM_POINTS = 10;
 /** Defer React zoom commit while panning/wheeling — canvas updates imperatively. */
 const ZOOM_COMMIT_DEBOUNCE_MS = 64;
@@ -3264,8 +3266,10 @@ export default function VizDashboardPage() {
     liveAbortRef.current?.abort();
     setQueryError(null);
     setAllRangeGuide(null);
-    // Live tail starts fresh from "now" — do not pre-fill the chart with history.
-    const liveStartedAt = new Date().toISOString();
+    // Seed the live tail with a short recent window. Starting exactly at "now"
+    // leaves the chart nearly empty right after switching to Live, so sparse
+    // control commands had nothing to attach to.
+    const liveStartedAt = new Date(Date.now() - LIVE_TAIL_SEED_MS).toISOString();
     lastTimestampRef.current = liveStartedAt;
     liveCommandSinceRef.current = liveStartedAt;
     setCommandEvents([]);
@@ -3376,6 +3380,9 @@ export default function VizDashboardPage() {
   const startLive = useCallback(async () => {
     stopLive();
     await reloadLiveTail();
+    // Pull the seeded window (data + commands) right away instead of waiting
+    // for the first 3s poll.
+    await Promise.allSettled([appendLive(), appendLiveCommands()]);
     pollTimerRef.current = setInterval(() => {
       appendLive();
       void appendLiveCommands();
@@ -3700,6 +3707,10 @@ export default function VizDashboardPage() {
       return type !== 'series' && visible;
     });
   }, [commandEvents, eventConfig, eventOverrides, showCommands]);
+  const recentCommandEvents = useMemo(
+    () => chartCommandEvents.slice(-8),
+    [chartCommandEvents],
+  );
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name, activeProfile.id);
@@ -5518,6 +5529,41 @@ export default function VizDashboardPage() {
         </div>
         {chartDataLoading && rawVizData.length > 0 && (
           <span className="viz-chart-progress-label">{chartProgressNode}</span>
+        )}
+        {showCommands && (
+          <div
+            className={`viz-command-strip${chartCommandEvents.length === 0 ? ' is-empty' : ''}`}
+            aria-live="polite"
+          >
+            <span className="viz-command-strip-title">{t('viz.commandStrip')}</span>
+            <span className="viz-command-strip-count">
+              {t('viz.commandStripCount', { count: chartCommandEvents.length })}
+            </span>
+            {chartCommandEvents.length === 0 ? (
+              <span className="viz-command-strip-empty">
+                {liveMode ? t('viz.commandStripEmptyLive') : t('viz.commandStripEmpty')}
+              </span>
+            ) : (
+              <div className="viz-command-strip-chips">
+                {recentCommandEvents.map((event, idx) => (
+                  <span
+                    className="viz-command-strip-chip"
+                    key={`${event.timestamp}-${event.direction ?? ''}-${event.fid}-${idx}`}
+                    title={`${event.direction ?? ''} · ${event.summary}`}
+                  >
+                    <span
+                      className="viz-command-strip-dot"
+                      style={{ background: event.color || '#ff9f40' }}
+                    />
+                    <span className="viz-command-strip-summary">{event.summary}</span>
+                    <span className="viz-command-strip-time">
+                      {formatDateTime(event.timestamp).slice(11)}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         <div className={`viz-chart-panel-layout${fieldValuesLayout === 'left' ? ' is-left' : ''}`}>
         <div className="viz-chart-main">

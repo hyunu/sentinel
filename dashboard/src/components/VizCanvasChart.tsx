@@ -469,8 +469,16 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + labelPadX * 2;
         const preferRight = x + 3 + boxWidth <= left + width;
-        const boxX = preferRight ? x + 3 : x - 3 - boxWidth;
-        if (boxX < left + 2 || boxX + boxWidth > left + width - 2) {
+        let boxX = preferRight ? x + 3 : x - 3 - boxWidth;
+        // Labels for commands near the right edge used to be dropped entirely.
+        // Clamp them inside the plot instead so live commands always show.
+        if (boxX + boxWidth > left + width - 2) {
+          boxX = left + width - 2 - boxWidth;
+        }
+        if (boxX < left + 2) {
+          boxX = left + 2;
+        }
+        if (boxWidth > width - 4) {
           continue;
         }
 
