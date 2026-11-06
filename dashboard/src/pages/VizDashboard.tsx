@@ -1107,6 +1107,8 @@ export default function VizDashboardPage() {
   const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
   const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
   const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
+  const [commandListOpen, setCommandListOpen] = useState(false);
+  const [commandListQuery, setCommandListQuery] = useState('');
   const [seriesValuesOpen, setSeriesValuesOpen] = useState(true);
   const [fieldValuesLayout, setFieldValuesLayout] = useState<FieldValuesLayout>(readFieldValuesLayout);
   const [hoverTimeKey, setHoverTimeKey] = useState<string | null>(null);
@@ -3707,8 +3709,7 @@ export default function VizDashboardPage() {
   useEffect(() => {
     setEventOverrides(activeProfile?.event_overlays ?? {});
   }, [activeProfile?.id, activeProfile?.updated_at]);
-  const chartCommandEvents = useMemo(() => {
-    if (!showCommands) return [];
+  const visibleCommandEvents = useMemo(() => {
     const configByFid = new Map(eventConfig.map(cfg => [vizFidKey(cfg.fid), cfg]));
     return commandEvents.filter(event => {
       const key = vizFidKey(event.fid);
@@ -3718,7 +3719,11 @@ export default function VizDashboardPage() {
       const visible = override?.visible ?? config?.visible ?? true;
       return type !== 'series' && visible;
     });
-  }, [commandEvents, eventConfig, eventOverrides, showCommands]);
+  }, [commandEvents, eventConfig, eventOverrides]);
+  const chartCommandEvents = useMemo(
+    () => (showCommands ? visibleCommandEvents : []),
+    [showCommands, visibleCommandEvents],
+  );
   const recentCommandEvents = useMemo(() => {
     if (chartCommandEvents.length === 0) return [];
     const lastMs = Date.parse(chartCommandEvents[chartCommandEvents.length - 1].timestamp);
@@ -3740,6 +3745,24 @@ export default function VizDashboardPage() {
     if (!el || !commandStripStickRef.current) return;
     el.scrollLeft = el.scrollWidth;
   }, [recentCommandEvents]);
+  const commandListRows = useMemo(() => {
+    const query = commandListQuery.trim().toLowerCase();
+    const rows = [...visibleCommandEvents].reverse();
+    if (!query) return rows;
+    return rows.filter(event => (
+      event.summary.toLowerCase().includes(query)
+      || (event.direction ?? '').toLowerCase().includes(query)
+      || event.timestamp.toLowerCase().includes(query)
+      || formatDateTime(event.timestamp).includes(query)
+    ));
+  }, [visibleCommandEvents, commandListQuery]);
+  const jumpToCommand = useCallback((event: VizCommandEvent) => {
+    const ms = Date.parse(event.timestamp);
+    if (!Number.isFinite(ms)) return;
+    // Give the selected command some context around it.
+    applyChartZoomFromTimeMs(ms - 5_000, ms + 5_000);
+    setCommandListOpen(false);
+  }, [applyChartZoomFromTimeMs]);
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name, activeProfile.id);
@@ -5488,6 +5511,16 @@ export default function VizDashboardPage() {
                   </button>
                   <button
                     type="button"
+                    className={`viz-chart-icon-btn${commandListOpen ? ' active' : ''}`}
+                    onClick={() => setCommandListOpen(true)}
+                    title={t('viz.commandList')}
+                    aria-label={t('viz.commandList')}
+                    disabled={visibleCommandEvents.length === 0}
+                  >
+                    <span className="viz-chart-axis-range-glyph">≡</span>
+                  </button>
+                  <button
+                    type="button"
                     className={`viz-chart-icon-btn${eventSettingsOpen ? ' active' : ''}`}
                     onClick={() => setEventSettingsOpen(v => !v)}
                     title={t('viz.eventSettings')}
@@ -5765,6 +5798,49 @@ export default function VizDashboardPage() {
           {fieldTooltip.text}
         </div>
       )}
+      <Modal
+        open={commandListOpen}
+        onClose={() => setCommandListOpen(false)}
+        title={`${t('viz.commandList')} · ${visibleCommandEvents.length}`}
+        wide
+      >
+        <div className="viz-command-list">
+          <input
+            type="search"
+            className="viz-command-list-search"
+            value={commandListQuery}
+            onChange={e => setCommandListQuery(e.target.value)}
+            placeholder={t('viz.commandListSearch')}
+            aria-label={t('viz.commandListSearch')}
+          />
+          <p className="viz-command-list-hint muted">{t('viz.commandListHint')}</p>
+          <div className="viz-command-list-rows">
+            {commandListRows.length === 0 ? (
+              <p className="viz-command-list-empty muted">{t('viz.commandListEmpty')}</p>
+            ) : commandListRows.map((event, idx) => (
+              <button
+                type="button"
+                className="viz-command-list-row"
+                key={`${event.timestamp}-${event.direction ?? ''}-${event.fid}-${idx}`}
+                onClick={() => jumpToCommand(event)}
+                title={`${event.direction ?? ''} · ${event.summary}`}
+              >
+                <span className="viz-command-list-time">
+                  {formatDateTime(event.timestamp).slice(11)}
+                </span>
+                <span className={`viz-command-list-dir is-${(event.direction ?? '').toLowerCase()}`}>
+                  {event.direction ?? '-'}
+                </span>
+                <span
+                  className="viz-command-list-dot"
+                  style={{ background: event.color || '#ff9f40' }}
+                />
+                <span className="viz-command-list-summary">{event.summary}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
       <Modal
         open={axisRangeOpen}
         onClose={() => setAxisRangeOpen(false)}

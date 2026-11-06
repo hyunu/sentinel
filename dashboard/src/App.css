@@ -2333,6 +2333,108 @@ tbody tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+.viz-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 240px;
+}
+
+.viz-command-list-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 10, 16, 0.6);
+  color: var(--text-primary, #f4f7ff);
+  font-size: 13px;
+}
+
+.viz-command-list-search:focus {
+  outline: none;
+  border-color: rgba(245, 158, 11, 0.6);
+}
+
+.viz-command-list-hint {
+  margin: 0;
+  font-size: 11px;
+}
+
+.viz-command-list-rows {
+  max-height: 55vh;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.viz-command-list-row {
+  display: grid;
+  grid-template-columns: 86px 34px 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 30px;
+}
+
+.viz-command-list-row:last-child {
+  border-bottom: 0;
+}
+
+.viz-command-list-row:hover {
+  background: var(--elevate-hover, rgba(255, 255, 255, 0.06));
+}
+
+.viz-command-list-time {
+  color: var(--text-muted, #8b90a3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-command-list-dir {
+  padding: 1px 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.viz-command-list-dir.is-tx {
+  color: #ffb066;
+}
+
+.viz-command-list-dir.is-rx {
+  color: #6cc7ff;
+}
+
+.viz-command-list-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.viz-command-list-summary {
+  color: #f4f7ff;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viz-command-list-empty {
+  padding: 20px;
+  text-align: center;
+}
+
 .viz-chart-icon-btn:hover:not(:disabled) {
   background: var(--elevate-hover);
   color: var(--text-secondary);

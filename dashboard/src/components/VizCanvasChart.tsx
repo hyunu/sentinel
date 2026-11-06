@@ -436,7 +436,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const labelRowGap = 4;
     const labelRowHeight = labelBoxHeight + labelRowGap;
     // Stack close-together commands on following rows instead of hiding them.
-    const maxLabelRows = Math.max(1, Math.min(4, Math.floor((height - 8) / labelRowHeight)));
+    // When deeply zoomed, allow more rows so bursts can still be read.
+    const zoomedRowCap = (xMax - xMin) <= 60 ? 6 : 4;
+    const maxLabelRows = Math.max(1, Math.min(zoomedRowCap, Math.floor((height - 8) / labelRowHeight)));
     // Pass 1: marker lines. Dense live streams can produce thousands of events
     // in a small window; collapse lines that land on the same few pixels so the
     // series stay readable underneath.
