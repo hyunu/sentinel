@@ -1081,6 +1081,15 @@ export default function VizDashboardPage() {
       /* ignore storage failures */
     }
   }, [showCommands]);
+  const prevLiveModeRef = useRef(false);
+  useEffect(() => {
+    // Entering Live should always surface control commands; the user can still
+    // toggle them off for the current live session.
+    if (liveMode && !prevLiveModeRef.current) {
+      setShowCommands(true);
+    }
+    prevLiveModeRef.current = liveMode;
+  }, [liveMode]);
   const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
   const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
   const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
