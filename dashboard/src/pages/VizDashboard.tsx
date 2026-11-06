@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization -- legacy imperative canvas + data-fetch effects */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
-import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig, VizCommandEvent, VizCommandConfig } from '../api';
+import type { Board, ProtocolSpec, VizProfile, VizItem, YAxisConfig, VizCommandEvent, VizCommandConfig, Session } from '../api';
 import ChartZoomNavigator from '../components/ChartZoomNavigator';
 import DateRangePicker from '../components/DateRangePicker';
 import ChartHelpManual from '../components/ChartHelpManual';
@@ -25,7 +25,7 @@ import {
   IconPanelBottom,
   IconPanelLeft,
 } from '../components/ChartControlIcons';
-import { formatDateOnly, formatChartAxisTime, formatTimeInterval, parseDateOnly } from '../utils/date';
+import { formatDateOnly, formatChartAxisTime, formatDateTime, formatTimeInterval, parseDateOnly } from '../utils/date';
 import { collectParseRuleFieldPaths } from '../lib/protocolFormat';
 import {
   cancelChartZoomRaf,
@@ -1019,6 +1019,8 @@ export default function VizDashboardPage() {
   /** Y축이 수동으로 줌된 상태 — 커서/리셋 버튼 표시에 사용. */
   const [yAxisZoomed, setYAxisZoomed] = useState(false);
   const [profiles, setProfiles] = useState<VizProfile[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState('');
   const [savedProfileId, setSavedProfileId] = useState<string | null>(null);
   const [axisRangeOpen, setAxisRangeOpen] = useState(false);
   const [axisRangeLeft, setAxisRangeLeft] = useState<AxisRange | null>(null);
@@ -2682,6 +2684,7 @@ export default function VizDashboardPage() {
       setEventOverrides(p.event_overlays ?? {});
       setAiChartLink(null);
       setChartQueryTimeRange(null);
+      setSelectedSessionId('');
       setSavedProfileId(p.id);
       setShowProfileAdd(false);
       setProfileDraftName('');
@@ -2747,6 +2750,19 @@ export default function VizDashboardPage() {
     if (!selectedBoard) { setProfiles([]); return; }
     api.viz.listProfiles(selectedBoard).then(setProfiles);
     setAllRangeGuide(null);
+  }, [selectedBoard]);
+
+  useEffect(() => {
+    setSelectedSessionId('');
+    if (!selectedBoard) {
+      setSessions([]);
+      return;
+    }
+    let cancelled = false;
+    api.sessions.list(selectedBoard)
+      .then(list => { if (!cancelled) setSessions(list); })
+      .catch(() => { if (!cancelled) setSessions([]); });
+    return () => { cancelled = true; };
   }, [selectedBoard]);
 
   const buildTimeRange = useCallback((): { start: string; end: string } | undefined => {
@@ -2909,6 +2925,7 @@ export default function VizDashboardPage() {
     setCustomStart('');
     setCustomEnd('');
     setChartQueryTimeRange(null);
+    setSelectedSessionId('');
     setSpectrumSel(null);
     spectrumSelRef.current = null;
     if (id !== TIME_PRESET_ALL) {
@@ -2993,6 +3010,31 @@ export default function VizDashboardPage() {
     }
   }, [selectedBoard, applyQueryResult, applyProgressiveData, handleOverviewData, t, scheduleSpectrumViewportFit, aiAggregationParams]);
 
+  const selectSession = useCallback((sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    const startMs = Date.parse(session.start_time);
+    const rawEndMs = session.end_time ? Date.parse(session.end_time) : NaN;
+    if (!Number.isFinite(startMs)) return;
+    const endMs = Number.isFinite(rawEndMs) && rawEndMs > startMs
+      ? rawEndMs
+      : Date.now();
+    const range = {
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString(),
+    };
+    setTimeRangePresetId(TIME_PRESET_ALL);
+    setCustomStart('');
+    setCustomEnd('');
+    setChartQueryTimeRange(range);
+    setSpectrumSel(null);
+    spectrumSelRef.current = null;
+    setAllRangeGuide(null);
+    pendingSpectrumViewportRef.current = null;
+    void runVizQuery(range, false);
+  }, [sessions, runVizQuery]);
+
   const applyTimePresetQuery = useCallback(async (id: TimePresetId) => {
     if (liveModeRef.current || !selectedBoard || !itemsRef.current.length) return;
     const isAllRange = id === TIME_PRESET_ALL;
@@ -3028,6 +3070,7 @@ export default function VizDashboardPage() {
     setSpectrumSel({ start: lo, end: hi });
     spectrumSelRef.current = { start: lo, end: hi };
     setChartQueryTimeRange(queryRange);
+    setSelectedSessionId('');
     setAllRangeGuide(null);
     pendingSpectrumViewportRef.current = { startMs: range.startMs, endMs: range.endMs };
 
@@ -3172,6 +3215,7 @@ export default function VizDashboardPage() {
     setCustomStart('');
     setCustomEnd('');
     setChartQueryTimeRange(null);
+    setSelectedSessionId('');
     setSpectrumSel(null);
     spectrumSelRef.current = null;
     setTimeRangePresetId(TIME_PRESET_ALL);
@@ -4656,6 +4700,7 @@ export default function VizDashboardPage() {
                       setCustomStart(s);
                       setCustomEnd(e);
                       setChartQueryTimeRange(null);
+                      setSelectedSessionId('');
                       setSpectrumSel(null);
                       spectrumSelRef.current = null;
                       setTimeRangePresetId(TIME_PRESET_ALL);
@@ -4673,6 +4718,31 @@ export default function VizDashboardPage() {
                     </button>
                   )}
                 </div>
+              </div>
+              <div
+                className={`viz-time-custom-group${selectedSessionId ? ' is-active' : ''}`}
+                aria-label={t('viz.sessionRange')}
+              >
+                <span className="viz-time-group-label">{t('viz.sessionRange')}</span>
+                <select
+                  className="viz-session-select"
+                  value={selectedSessionId}
+                  onChange={event => selectSession(event.target.value)}
+                  disabled={liveMode || sessions.length === 0}
+                >
+                  <option value="">{t('viz.sessionAll')}</option>
+                  {sessions.map(session => {
+                    const end = session.end_time
+                      && session.end_time !== '0001-01-01T00:00:00Z'
+                      ? formatDateTime(session.end_time)
+                      : '—';
+                    return (
+                      <option key={session.id} value={session.id}>
+                        {session.name} ({formatDateTime(session.start_time)} ~ {end})
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
               <div className="viz-time-live-group">
                 <span className="viz-time-group-label">{t('viz.liveMode')}</span>

@@ -250,6 +250,8 @@
       "fitMax": "Fit to max"
     },
     "prevMonth": "Previous month",
+    "sessionRange": "Session / run",
+    "sessionAll": "All / manual",
     "liveMode": "Live mode (L)",
     "live": "Live",
     "liveActive": "Live mode active",

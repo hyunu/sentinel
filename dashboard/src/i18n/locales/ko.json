@@ -250,6 +250,8 @@
       "fitMax": "최대 구간"
     },
     "prevMonth": "이전 달",
+    "sessionRange": "세션(런)",
+    "sessionAll": "전체 / 직접 선택",
     "liveMode": "Live 모드 (L)",
     "live": "Live",
     "liveActive": "Live 모드 활성",

@@ -1546,6 +1546,27 @@ tbody tr:last-child td {
   color: var(--primary-hover);
 }
 
+.viz-session-select {
+  height: 30px;
+  min-width: 220px;
+  max-width: 380px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.viz-session-select:focus {
+  outline: none;
+  border-color: var(--accent, #7c83ff);
+}
+
+.viz-session-select:disabled {
+  opacity: 0.55;
+}
+
 .viz-time-custom-bar {
   display: inline-flex;
   align-items: center;
