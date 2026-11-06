@@ -1148,6 +1148,8 @@ export default function VizDashboardPage() {
   const [chartManualOpen, setChartManualOpen] = useState(false);
   const [chartViewportHeight, setChartViewportHeight] = useState(600);
   const lastTimestampRef = useRef<string | null>(null);
+  const liveCommandSinceRef = useRef<string | null>(null);
+  const liveCommandAbortRef = useRef<AbortController | null>(null);
   const liveFollowRef = useRef(true);
   const liveSpanMsRef = useRef<number | null>(null);
   const reloadLiveTailRef = useRef<() => Promise<void>>(async () => {});
@@ -3150,6 +3152,7 @@ export default function VizDashboardPage() {
 
   // Control-command overlay: fetch call/result/ack frames for the chart range.
   useEffect(() => {
+    if (liveMode) return; // live mode polls commands in appendLiveCommands
     if (!selectedBoard) {
       setCommandEvents([]);
       return;
@@ -3173,7 +3176,7 @@ export default function VizDashboardPage() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [selectedBoard, buildTimeRange]);
+  }, [selectedBoard, buildTimeRange, liveMode]);
 
   useEffect(() => {
     autoQueryRef.current = () => {
@@ -3253,7 +3256,10 @@ export default function VizDashboardPage() {
     setQueryError(null);
     setAllRangeGuide(null);
     // Live tail starts fresh from "now" — do not pre-fill the chart with history.
-    lastTimestampRef.current = new Date().toISOString();
+    const liveStartedAt = new Date().toISOString();
+    lastTimestampRef.current = liveStartedAt;
+    liveCommandSinceRef.current = liveStartedAt;
+    setCommandEvents([]);
     setRawVizData([]);
     setQueryMeta(null);
     setInMemoryFull(true);
@@ -3303,6 +3309,50 @@ export default function VizDashboardPage() {
     }
   }, [selectedBoard, t]);
 
+  const appendLiveCommands = useCallback(async () => {
+    if (!selectedBoard) return;
+    liveCommandAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveCommandAbortRef.current = controller;
+    try {
+      const since = liveCommandSinceRef.current
+        ?? new Date(Date.now() - 60_000).toISOString();
+      const res = await api.viz.commands(
+        { board_id: selectedBoard, since },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      setEventConfig(res.config ?? []);
+      if (res.items.length === 0) return;
+      setCommandEvents(prev => {
+        const byKey = new Map<string, VizCommandEvent>();
+        for (const event of prev) {
+          byKey.set(
+            `${event.timestamp}|${event.direction}|${event.fid}|${event.summary}`,
+            event,
+          );
+        }
+        for (const event of res.items) {
+          byKey.set(
+            `${event.timestamp}|${event.direction}|${event.fid}|${event.summary}`,
+            event,
+          );
+        }
+        return Array.from(byKey.values())
+          .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+          .slice(-5000);
+      });
+      liveCommandSinceRef.current = res.items[res.items.length - 1].timestamp;
+    } catch (e) {
+      if (isRequestAborted(e)) return;
+      /* command overlay failures must not break the live tail */
+    } finally {
+      if (liveCommandAbortRef.current === controller) {
+        liveCommandAbortRef.current = null;
+      }
+    }
+  }, [selectedBoard]);
+
   const stopLive = useCallback(() => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -3310,13 +3360,18 @@ export default function VizDashboardPage() {
     }
     liveAbortRef.current?.abort();
     liveAbortRef.current = null;
+    liveCommandAbortRef.current?.abort();
+    liveCommandAbortRef.current = null;
   }, []);
 
   const startLive = useCallback(async () => {
     stopLive();
     await reloadLiveTail();
-    pollTimerRef.current = setInterval(() => { appendLive(); }, POLL_INTERVAL);
-  }, [reloadLiveTail, appendLive, stopLive]);
+    pollTimerRef.current = setInterval(() => {
+      appendLive();
+      void appendLiveCommands();
+    }, POLL_INTERVAL);
+  }, [reloadLiveTail, appendLive, appendLiveCommands, stopLive]);
 
   useEffect(() => {
     if (liveMode) {
