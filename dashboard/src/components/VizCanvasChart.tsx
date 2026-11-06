@@ -1241,18 +1241,15 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const u = plotRef.current;
     if (!u || plotPoints.length === 0) return;
     if (!xWindowTimeKeys && !(fullTimeline && windowIndices)) return;
-
-    if (xWindowTimeKeys && imperativeXRangeRef.current) {
-      const propRange = xScaleFromTimeKeys(xWindowTimeKeys.start, xWindowTimeKeys.end);
-      const saved = imperativeXRangeRef.current;
-      if (propRange && (saved.max - saved.min) >= (propRange.max - propRange.min) - 1e-9) {
-        return;
-      }
-    }
-
+    // Only react to the committed window changing. Data publishes update
+    // plotPoints every ~250ms; re-applying the React window then used the
+    // last committed (pre-zoom) range and snapped an in-progress zoom back.
     syncXWindow();
     syncPlotAndBreaks(u);
-  }, [plotPoints.length, xWindowKey, syncXWindow, syncPlotAndBreaks, xWindowTimeKeys, fullTimeline, windowIndices]);
+    // Intentionally not depending on plotPoints.length / xWindowTimeKeys:
+    // the data effect above preserves imperativeXRangeRef on row updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xWindowKey, fullTimeline, windowIndices, syncXWindow, syncPlotAndBreaks]);
 
   const sessionBreakTimesKey = sessionBreakTimesSec.length > 0
     ? `${sessionBreakTimesSec.length}:${sessionBreakTimesSec[0]}:${sessionBreakTimesSec[sessionBreakTimesSec.length - 1]}`
