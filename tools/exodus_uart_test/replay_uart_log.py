@@ -96,7 +96,20 @@ def parse_timestamp(value: str) -> float:
     return int(hour) * 3600 + int(minute) * 60 + float(second)
 
 
-def load_packets(path: Path) -> tuple[list[Packet], dict[str, int]]:
+def is_ca_packet(packet: Packet) -> bool:
+    """138-byte LCP monitoring frame: AA <len> CA ... BB."""
+    return (
+        packet.direction == "PRD->SIM"
+        and len(packet.raw) >= 3
+        and packet.raw[0] == 0xAA
+        and packet.raw[2] == 0xCA
+    )
+
+
+def load_packets(
+    path: Path,
+    ca_every: int = 1,
+) -> tuple[list[Packet], dict[str, int]]:
     packets: list[Packet] = []
     skipped = 0
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -122,6 +135,21 @@ def load_packets(path: Path) -> tuple[list[Packet], dict[str, int]]:
         raise SystemExit(f"no valid packets found in {path}")
 
     packets.sort(key=lambda packet: packet.time_sec)
+
+    # Keep every control/event frame, but thin out repetitive CA monitoring
+    # frames so a full capture can be exercised in a few minutes.
+    if ca_every > 1:
+        selected: list[Packet] = []
+        ca_index = 0
+        for packet in packets:
+            if is_ca_packet(packet):
+                if ca_index % ca_every == 0:
+                    selected.append(packet)
+                ca_index += 1
+            else:
+                selected.append(packet)
+        packets = selected
+
     counts: dict[str, int] = {}
     for packet in packets:
         counts[packet.direction] = counts.get(packet.direction, 0) + 1
@@ -217,6 +245,12 @@ def main() -> int:
         help="replay speed multiplier (1 = original timing)",
     )
     parser.add_argument(
+        "--ca-every",
+        type=int,
+        default=1,
+        help="keep one CA monitoring frame out of every N (1 = all); control frames are always kept",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="stop after one complete pass instead of looping",
@@ -240,8 +274,10 @@ def main() -> int:
         raise SystemExit("--speed must be > 0")
     if args.baud <= 0:
         raise SystemExit("--baud must be > 0")
+    if args.ca_every <= 0:
+        raise SystemExit("--ca-every must be > 0")
 
-    packets, counts = load_packets(args.log)
+    packets, counts = load_packets(args.log, args.ca_every)
     print(f"loaded {len(packets)} packets from {args.log.name}", flush=True)
     print(
         f"  SIM->PRD {counts.get('SIM->PRD', 0)} -> {args.sim_port}",
@@ -254,6 +290,7 @@ def main() -> int:
     duration = packets[-1].time_sec - packets[0].time_sec
     print(
         f"  capture duration {duration:.1f}s, speed {args.speed:g}x, "
+        f"ca_every={args.ca_every}, "
         f"mode={'once' if args.once or args.limit else 'loop'}",
         flush=True,
     )
