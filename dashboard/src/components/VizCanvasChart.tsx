@@ -427,9 +427,9 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ctx.beginPath();
     ctx.rect(left, top, width, height);
     ctx.clip();
-    // Command summaries sit on top of the plot, so use a readable weight/size
-    // and a dark backing box instead of thin 12px text over the series.
-    ctx.font = '600 14px system-ui, sans-serif';
+    // Command summaries sit on top of the plot, so use a large bold label and
+    // a dark backing box instead of thin text over the series.
+    ctx.font = '700 18px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     let lastLabelRight = -Infinity;
     for (const event of events) {
@@ -459,20 +459,33 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       ctx.closePath();
       ctx.fill();
       const label = event.summary;
-      if (label && x > lastLabelRight + 8) {
+      if (label) {
         const textWidth = ctx.measureText(label).width;
-        const boxHeight = 22;
-        const padX = 7;
+        const boxHeight = 28;
+        const padX = 10;
         const boxWidth = textWidth + padX * 2;
-        const boxY = top + 4;
+        const boxY = top + 6;
         const preferRight = x + 3 + boxWidth <= left + width;
         const boxX = preferRight ? x + 3 : x - 3 - boxWidth;
+        // Boxes are timestamp-ordered. Skip a label that would overlap the
+        // previous one (especially when a right-edge label flips left) or
+        // leave the plot entirely.
+        if (
+          boxX < left + 2
+          || boxX < lastLabelRight + 8
+          || boxX + boxWidth > left + width - 2
+        ) {
+          continue;
+        }
 
-        ctx.fillStyle = 'rgba(8, 10, 16, 0.86)';
+        ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
         if (typeof ctx.roundRect === 'function') {
           ctx.beginPath();
-          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 5);
+          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 7);
           ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
         } else {
           ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
         }
@@ -480,8 +493,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         // Keep the command color as a compact accent bar; the text itself is
         // near-white so it stays readable on every series color.
         ctx.fillStyle = color;
-        ctx.fillRect(boxX, boxY, 2, boxHeight);
-        ctx.fillStyle = 'rgba(240, 244, 255, 0.96)';
+        ctx.fillRect(boxX, boxY, 3, boxHeight);
+        ctx.fillStyle = 'rgba(244, 247, 255, 0.98)';
         ctx.fillText(label, boxX + padX, boxY + boxHeight / 2 + 1);
         lastLabelRight = boxX + boxWidth;
       }
