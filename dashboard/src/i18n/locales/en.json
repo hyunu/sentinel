@@ -417,6 +417,7 @@
     "autoLayoutNoData": "No analog data to lay out. Load data first.",
     "commandOverlayToggle": "Show control commands (TX/RX markers)",
     "commandStrip": "Control commands",
+    "commandStripWindow": "last {{seconds}}s",
     "commandStripCount": "{{count}}",
     "commandStripEmpty": "No commands in this range",
     "commandStripEmptyLive": "Waiting for live control commands",

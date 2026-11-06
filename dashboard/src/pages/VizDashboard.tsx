@@ -143,6 +143,9 @@ const MAX_PROFILES = 20;
 const POLL_INTERVAL = 3000;
 /** Seed the live tail with a few minutes of recent data so commands are visible immediately. */
 const LIVE_TAIL_SEED_MS = 5 * 60_000;
+/** The command ticker keeps everything that arrived within this window. */
+const COMMAND_TICKER_WINDOW_MS = 60_000;
+const COMMAND_TICKER_WINDOW_SECONDS = COMMAND_TICKER_WINDOW_MS / 1000;
 const MIN_CHART_ZOOM_POINTS = 10;
 /** Defer React zoom commit while panning/wheeling — canvas updates imperatively. */
 const ZOOM_COMMIT_DEBOUNCE_MS = 64;
@@ -1092,6 +1095,15 @@ export default function VizDashboardPage() {
     }
     prevLiveModeRef.current = liveMode;
   }, [liveMode]);
+  // Ticks once per second so ticker entries expire even when no new commands
+  // arrive.
+  const [commandTickerNowMs, setCommandTickerNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!showCommands || !liveMode) return;
+    setCommandTickerNowMs(Date.now());
+    const timer = window.setInterval(() => setCommandTickerNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [showCommands, liveMode]);
   const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
   const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
   const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
@@ -3707,10 +3719,27 @@ export default function VizDashboardPage() {
       return type !== 'series' && visible;
     });
   }, [commandEvents, eventConfig, eventOverrides, showCommands]);
-  const recentCommandEvents = useMemo(
-    () => chartCommandEvents.slice(-8).reverse(),
-    [chartCommandEvents],
-  );
+  const recentCommandEvents = useMemo(() => {
+    if (chartCommandEvents.length === 0) return [];
+    const lastMs = Date.parse(chartCommandEvents[chartCommandEvents.length - 1].timestamp);
+    // Live follows the wall clock; a static range anchors at its last command
+    // so the ticker still shows the most recent slice of the selected range.
+    const anchorMs = liveMode
+      ? commandTickerNowMs
+      : (Number.isFinite(lastMs) ? lastMs : commandTickerNowMs);
+    const cutoffMs = anchorMs - COMMAND_TICKER_WINDOW_MS;
+    return chartCommandEvents.filter(event => {
+      const ms = Date.parse(event.timestamp);
+      return Number.isFinite(ms) && ms >= cutoffMs;
+    });
+  }, [chartCommandEvents, liveMode, commandTickerNowMs]);
+  const commandStripRef = useRef<HTMLDivElement | null>(null);
+  const commandStripStickRef = useRef(true);
+  useEffect(() => {
+    const el = commandStripRef.current;
+    if (!el || !commandStripStickRef.current) return;
+    el.scrollLeft = el.scrollWidth;
+  }, [recentCommandEvents]);
   const saveCurrentProfile = async () => {
     if (!activeProfile) return;
     await saveProfile(activeProfile.name, activeProfile.id);
@@ -5530,21 +5559,32 @@ export default function VizDashboardPage() {
         {chartDataLoading && rawVizData.length > 0 && (
           <span className="viz-chart-progress-label">{chartProgressNode}</span>
         )}
-        {showCommands && (
+        {showCommands && liveMode && (
           <div
-            className={`viz-command-strip${chartCommandEvents.length === 0 ? ' is-empty' : ''}`}
+            className={`viz-command-strip${recentCommandEvents.length === 0 ? ' is-empty' : ''}`}
             aria-live="polite"
           >
             <span className="viz-command-strip-title">{t('viz.commandStrip')}</span>
-            <span className="viz-command-strip-count">
-              {t('viz.commandStripCount', { count: chartCommandEvents.length })}
+            <span className="viz-command-strip-window">
+              {t('viz.commandStripWindow', { seconds: COMMAND_TICKER_WINDOW_SECONDS })}
             </span>
-            {chartCommandEvents.length === 0 ? (
+            <span className="viz-command-strip-count">
+              {t('viz.commandStripCount', { count: recentCommandEvents.length })}
+            </span>
+            {recentCommandEvents.length === 0 ? (
               <span className="viz-command-strip-empty">
                 {liveMode ? t('viz.commandStripEmptyLive') : t('viz.commandStripEmpty')}
               </span>
             ) : (
-              <div className="viz-command-strip-chips">
+              <div
+                className="viz-command-strip-chips"
+                ref={commandStripRef}
+                onScroll={event => {
+                  const el = event.currentTarget;
+                  commandStripStickRef.current =
+                    el.scrollWidth - el.scrollLeft - el.clientWidth < 24;
+                }}
+              >
                 {recentCommandEvents.map((event, idx) => (
                   <span
                     className="viz-command-strip-chip"

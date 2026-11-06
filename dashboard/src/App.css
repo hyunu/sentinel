@@ -2276,6 +2276,13 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
+.viz-command-strip-window {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-muted, #8b90a3);
+  white-space: nowrap;
+}
+
 .viz-command-strip-empty {
   font-size: 12px;
   color: var(--text-muted, #8b90a3);
