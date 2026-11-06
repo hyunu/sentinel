@@ -243,6 +243,12 @@
     "selectDateRange": "날짜 범위 선택",
     "dateRangeHint": "시작일을 먼저 선택한 뒤 끝날을 선택하세요.",
     "spectrumHint": "드래그하여 조회할 시간 범위 선택",
+    "spectrumBudget": {
+      "max": "최대 {{rows}}행 · {{mb}} MB ({{fields}}필드 기준)",
+      "selected": "선택 {{rows}}행 · {{mb}} MB",
+      "over": "최대 초과 — 샘플링으로 표시됩니다",
+      "fitMax": "최대 구간"
+    },
     "prevMonth": "이전 달",
     "liveMode": "Live 모드 (L)",
     "live": "Live",

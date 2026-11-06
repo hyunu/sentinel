@@ -16,6 +16,8 @@ export const FULL_LOAD_BYTE_BUDGET = 100 * 1024 * 1024;
 
 /** Safety cap for point count when loading entire series into memory. */
 export const FULL_LOAD_MAX_POINTS = 100_000;
+/** Measured stable in-browser chart memory budget (desktop). */
+export const CHART_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
 /** Rough whole-range preview size. Envelope mode returns min+max per bucket,
  *  so the response is about twice this number of rows. */
 export const OVERVIEW_SAMPLE_POINTS = 4_000;

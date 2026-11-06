@@ -72,6 +72,7 @@ import {
   assessAllTimeRangeLoad,
   estimateVizPayloadBytes,
   formatFullLoadBytes,
+  CHART_MEMORY_BUDGET_BYTES,
   FULL_LOAD_BYTE_BUDGET,
   FULL_LOAD_CONCURRENCY,
   FULL_LOAD_MAX_POINTS,
@@ -699,6 +700,8 @@ async function queryVizDataset(
     onPartial?: VizDataHandler;
     /** Preview only these series. Defaults to params.items. */
     overviewItems?: VizItem[];
+    /** Skip the raw full load even when the row count would allow it. */
+    forceSample?: boolean;
   },
 ): Promise<{
   data: VizDataRow[];
@@ -731,7 +734,8 @@ async function queryVizDataset(
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
     : null;
-  const willLoadFull = !!meta
+  const willLoadFull = !options?.forceSample
+    && !!meta
     && (shouldFullLoadInMemory(meta, overview.data) || shouldChunkedFullLoad(meta));
 
   if (!willLoadFull) {
@@ -1032,10 +1036,16 @@ export default function VizDashboardPage() {
   const [customEnd, setCustomEnd] = useState('');
   /** Exact chart query range from spectrum drag — preserved separately from date-only custom range. */
   const [chartQueryTimeRange, setChartQueryTimeRange] = useState<{ start: string; end: string } | null>(null);
-  const [spectrum, setSpectrum] = useState<{ present: boolean[]; start: string; end: string } | null>(null);
+  const [spectrum, setSpectrum] = useState<{
+    present: boolean[];
+    counts: number[];
+    start: string;
+    end: string;
+  } | null>(null);
   const [spectrumLoading, setSpectrumLoading] = useState(false);
   const [spectrumSel, setSpectrumSel] = useState<{ start: number; end: number } | null>(null);
   const spectrumSelRef = useRef<{ start: number; end: number } | null>(null);
+  const applySpectrumSelectionRef = useRef<((start: number, end: number) => void) | null>(null);
   const spectrumDragRef = useRef<{ pointerId: number; startIndex: number } | null>(null);
   const spectrumTrackRef = useRef<HTMLDivElement | null>(null);
   /** After spectrum-driven query, fit the chart viewport to this time span. */
@@ -2779,7 +2789,12 @@ export default function VizDashboardPage() {
         { timeoutMs: 20000 },
       );
       if (res.bins > 0) {
-        setSpectrum({ present: res.present, start: res.start, end: res.end });
+        setSpectrum({
+          present: res.present,
+          counts: res.counts ?? res.present.map(present => (present ? 1 : 0)),
+          start: res.start,
+          end: res.end,
+        });
       }
     } catch (e) {
       console.error('spectrum fetch failed', e);
@@ -2810,6 +2825,85 @@ export default function VizDashboardPage() {
 
   const timeSpectrumCells = spectrum?.present ?? null;
 
+  // A truthful budget for the current profile: the 100k point cap, further
+  // reduced by the 100 MiB payload budget at the measured bytes-per-row.
+  const estimatedVizBytesPerRow = useMemo(() => {
+    if (fullLoadBytesEstimate && queryMeta?.total_matched && queryMeta.total_matched > 0) {
+      return fullLoadBytesEstimate / queryMeta.total_matched;
+    }
+    return Math.max(64, items.length * 34);
+  }, [fullLoadBytesEstimate, queryMeta?.total_matched, items.length]);
+
+  const spectrumMaxRows = useMemo(
+    () => Math.max(1, Math.min(
+      FULL_LOAD_MAX_POINTS,
+      Math.floor(CHART_MEMORY_BUDGET_BYTES / Math.max(1, estimatedVizBytesPerRow)),
+    )),
+    [estimatedVizBytesPerRow],
+  );
+
+  const spectrumSelectedRows = useMemo(() => {
+    if (!spectrum || !spectrumSel) return null;
+    const lo = Math.max(0, Math.min(spectrumSel.start, spectrumSel.end));
+    const hi = Math.min(
+      spectrum.counts.length - 1,
+      Math.max(spectrumSel.start, spectrumSel.end),
+    );
+    let rows = 0;
+    for (let i = lo; i <= hi; i += 1) rows += spectrum.counts[i] ?? 0;
+    return rows;
+  }, [spectrum, spectrumSel]);
+
+  const spectrumSelectedBytes = spectrumSelectedRows != null
+    ? spectrumSelectedRows * estimatedVizBytesPerRow
+    : null;
+  const spectrumOverBudget = spectrumSelectedRows != null
+    && (
+      spectrumSelectedRows > spectrumMaxRows
+      || (spectrumSelectedBytes ?? 0) > CHART_MEMORY_BUDGET_BYTES
+    );
+
+  const expandSpectrumToBudget = useCallback(() => {
+    if (!spectrum || spectrum.counts.length === 0) return;
+    const counts = spectrum.counts;
+    const center = spectrumSel
+      ? Math.floor((spectrumSel.start + spectrumSel.end) / 2)
+      : Math.floor(counts.length / 2);
+    let lo = Math.max(0, Math.min(counts.length - 1, center));
+    let hi = lo;
+    let rows = counts[lo] ?? 0;
+    if (rows > spectrumMaxRows) {
+      setSpectrumSel({ start: lo, end: hi });
+      spectrumSelRef.current = { start: lo, end: hi };
+      applySpectrumSelectionRef.current?.(lo, hi);
+      return;
+    }
+    let left = lo - 1;
+    let right = hi + 1;
+    while (left >= 0 || right < counts.length) {
+      const leftCount = left >= 0
+        ? counts[left] ?? 0
+        : Number.POSITIVE_INFINITY;
+      const rightCount = right < counts.length
+        ? counts[right] ?? 0
+        : Number.POSITIVE_INFINITY;
+      if (leftCount <= rightCount && rows + leftCount <= spectrumMaxRows) {
+        rows += leftCount;
+        lo = left;
+        left -= 1;
+      } else if (rightCount < leftCount && rows + rightCount <= spectrumMaxRows) {
+        rows += rightCount;
+        hi = right;
+        right += 1;
+      } else {
+        break;
+      }
+    }
+    setSpectrumSel({ start: lo, end: hi });
+    spectrumSelRef.current = { start: lo, end: hi };
+    applySpectrumSelectionRef.current?.(lo, hi);
+  }, [spectrum, spectrumSel, spectrumMaxRows]);
+
   const applyTimePresetState = useCallback((id: TimePresetId) => {
     setTimeRangePresetId(id);
     setCustomStart('');
@@ -2825,6 +2919,7 @@ export default function VizDashboardPage() {
   const runVizQuery = useCallback(async (
     timeRange: { start: string; end: string } | undefined,
     assessAllRange: boolean,
+    options?: { forceSample?: boolean },
   ) => {
     if (!selectedBoard || !itemsRef.current.length) return;
     overviewAbortRef.current?.abort();
@@ -2854,6 +2949,7 @@ export default function VizDashboardPage() {
         ...aiAggregationParams,
       }, {
         assessAllRange,
+        forceSample: options?.forceSample,
         signal: controller.signal,
         timeoutMs: 45000,
         overviewItems,
@@ -2939,8 +3035,13 @@ export default function VizDashboardPage() {
       applyViewportTimeMsImmediateRef.current(range.startMs, range.endMs);
     }
 
-    void runVizQuery(queryRange, false);
-  }, [spectrum, runVizQuery]);
+    let selectedRows = 0;
+    for (let i = lo; i <= hi; i += 1) selectedRows += spectrum.counts[i] ?? 0;
+    const overBudget = selectedRows > spectrumMaxRows
+      || selectedRows * estimatedVizBytesPerRow > CHART_MEMORY_BUDGET_BYTES;
+    void runVizQuery(queryRange, false, { forceSample: overBudget });
+  }, [spectrum, runVizQuery, spectrumMaxRows, estimatedVizBytesPerRow]);
+  applySpectrumSelectionRef.current = applySpectrumSelection;
 
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
@@ -4629,6 +4730,39 @@ export default function VizDashboardPage() {
                       width: `${((spectrumSel.end - spectrumSel.start + 1) / spectrum.present.length) * 100}%`,
                     }}
                   />
+                )}
+              </div>
+            )}
+            {spectrum && (
+              <div className={`viz-spectrum-budget${spectrumOverBudget ? ' is-over' : ''}`}>
+                <span className="viz-spectrum-budget-max">
+                  {t('viz.spectrumBudget.max', {
+                    rows: spectrumMaxRows.toLocaleString(),
+                    mb: (CHART_MEMORY_BUDGET_BYTES / 1024 / 1024).toFixed(0),
+                    fields: items.length,
+                  })}
+                </span>
+                {spectrumSelectedRows != null && (
+                  <span className="viz-spectrum-budget-selected">
+                    {t('viz.spectrumBudget.selected', {
+                      rows: spectrumSelectedRows.toLocaleString(),
+                      mb: ((spectrumSelectedBytes ?? 0) / 1024 / 1024).toFixed(1),
+                    })}
+                  </span>
+                )}
+                {spectrumSelectedRows != null && (
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={expandSpectrumToBudget}
+                  >
+                    {t('viz.spectrumBudget.fitMax')}
+                  </button>
+                )}
+                {spectrumOverBudget && (
+                  <strong className="viz-spectrum-budget-over">
+                    {t('viz.spectrumBudget.over')}
+                  </strong>
                 )}
               </div>
             )}

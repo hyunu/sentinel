@@ -1398,6 +1398,44 @@ tbody tr:last-child td {
   50% { opacity: 0.4; }
 }
 
+.viz-spectrum-budget {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.viz-spectrum-budget.is-over {
+  border-color: rgba(248, 113, 113, 0.75);
+}
+
+.viz-spectrum-budget-max {
+  color: var(--text-muted);
+}
+
+.viz-spectrum-budget-selected {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-spectrum-budget-over {
+  color: #f87171;
+  font-weight: 600;
+}
+
+.viz-spectrum-budget .btn-sm {
+  margin-left: auto;
+}
+
 .viz-chart-session-breaks {
   position: absolute;
   top: 0;

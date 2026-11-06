@@ -350,6 +350,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 			"end":     end,
 			"bins":    bins,
 			"present": make([]bool, bins),
+			"counts":  make([]int64, bins),
 		})
 		return
 	}
@@ -380,8 +381,9 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 					},
 				},
 			},
+			"count": bson.M{"$sum": 1},
 		}}},
-		{{Key: "$project", Value: bson.M{"_id": 0, "idx": "$_id"}}},
+		{{Key: "$project", Value: bson.M{"_id": 0, "idx": "$_id", "count": 1}}},
 	}
 
 	cur, err := h.db.UartData().Aggregate(ctx, pipeline, options.Aggregate().SetAllowDiskUse(true))
@@ -393,15 +395,18 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 	defer cur.Close(ctx)
 
 	present := make([]bool, bins)
+	counts := make([]int64, bins)
 	for cur.Next(ctx) {
 		var row struct {
-			Idx int64 `bson:"idx"`
+			Idx   int64 `bson:"idx"`
+			Count int64 `bson:"count"`
 		}
 		if err := cur.Decode(&row); err != nil {
 			continue
 		}
 		if row.Idx >= 0 && row.Idx < int64(bins) {
-			present[row.Idx] = true
+			present[row.Idx] = row.Count > 0
+			counts[row.Idx] = row.Count
 		}
 	}
 	if err := cur.Err(); err != nil {
@@ -414,6 +419,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 		"end":     end,
 		"bins":    bins,
 		"present": present,
+		"counts":  counts,
 	})
 }
 

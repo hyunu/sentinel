@@ -514,6 +514,8 @@ export const api = {
         end: string;
         bins: number;
         present: boolean[];
+        /** Raw frame count per presence bin (newer servers). */
+        counts?: number[];
       }>(
         '/viz/spectrum', {
           method: 'POST',
