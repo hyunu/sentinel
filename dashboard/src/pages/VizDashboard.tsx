@@ -3708,7 +3708,7 @@ export default function VizDashboardPage() {
     });
   }, [commandEvents, eventConfig, eventOverrides, showCommands]);
   const recentCommandEvents = useMemo(
-    () => chartCommandEvents.slice(-8),
+    () => chartCommandEvents.slice(-8).reverse(),
     [chartCommandEvents],
   );
   const saveCurrentProfile = async () => {
