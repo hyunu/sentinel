@@ -8,6 +8,9 @@ type ChartSeriesGroupProps = {
   timeKey: string | null;
   formatTime: (iso: string) => string;
   rows: CursorValueRow[];
+  /** When docked left, match the chart viewport height so the grid scrolls
+   *  internally instead of stretching the page. */
+  panelHeight?: number;
   onToggleVisibility: (itemId: string) => void;
   onToggleFavorite?: (itemId: string) => void;
 };
@@ -42,6 +45,7 @@ export default function ChartSeriesGroup({
   timeKey,
   formatTime,
   rows,
+  panelHeight,
   onToggleVisibility,
   onToggleFavorite,
 }: ChartSeriesGroupProps) {
@@ -108,13 +112,16 @@ export default function ChartSeriesGroup({
   if (!open || rows.length === 0) return null;
 
   const resizable = layout === 'bottom';
-  const panelHeight = Math.min(height, maxFieldValuesHeight());
+  const resolvedHeight = Math.min(height, maxFieldValuesHeight());
+  const dockedHeight = layout === 'left' && panelHeight ? panelHeight : undefined;
 
   return (
     <section
       className={`viz-series-group${layout === 'left' ? ' is-layout-left' : ''}${resizing ? ' is-resizing' : ''}`}
       aria-label={t('viz.valuePanel.title')}
-      style={resizable ? { height: `${panelHeight}px` } : undefined}
+      style={dockedHeight
+        ? { height: `${dockedHeight}px`, maxHeight: `${dockedHeight}px` }
+        : resizable ? { height: `${resolvedHeight}px` } : undefined}
     >
       <ChartCursorValues
         embedded
@@ -133,7 +140,7 @@ export default function ChartSeriesGroup({
           aria-label={t('viz.valuePanel.resize')}
           aria-valuemin={MIN_FIELD_VALUES_HEIGHT}
           aria-valuemax={maxFieldValuesHeight()}
-          aria-valuenow={Math.round(panelHeight)}
+          aria-valuenow={Math.round(resolvedHeight)}
           tabIndex={0}
           title={t('viz.valuePanel.resize')}
           onPointerDown={event => {
@@ -141,7 +148,7 @@ export default function ChartSeriesGroup({
             dragRef.current = {
               pointerId: event.pointerId,
               startY: event.clientY,
-              startHeight: panelHeight,
+              startHeight: resolvedHeight,
             };
             setResizing(true);
             event.currentTarget.setPointerCapture(event.pointerId);
@@ -152,7 +159,7 @@ export default function ChartSeriesGroup({
             if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
             event.preventDefault();
             const delta = event.key === 'ArrowUp' ? -16 : 16;
-            applyHeight(panelHeight + delta, true);
+            applyHeight(resolvedHeight + delta, true);
           }}
         />
       )}

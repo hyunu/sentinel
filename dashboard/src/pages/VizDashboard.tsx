@@ -5310,6 +5310,7 @@ export default function VizDashboardPage() {
           <ChartSeriesGroup
             open={seriesValuesOpen}
             layout={fieldValuesLayout}
+            panelHeight={chartViewportHeight}
             timeKey={hoverTimeKey}
             formatTime={formatChartAxisTime}
             rows={cursorValueRows}
