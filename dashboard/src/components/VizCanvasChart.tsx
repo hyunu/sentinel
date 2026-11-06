@@ -437,7 +437,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const labelRowHeight = labelBoxHeight + labelRowGap;
     // Stack close-together commands on following rows instead of hiding them.
     const maxLabelRows = Math.max(1, Math.min(4, Math.floor((height - 8) / labelRowHeight)));
-    const rowRight: number[] = new Array(maxLabelRows).fill(Number.NEGATIVE_INFINITY);
+    // Pass 1: marker lines. Dense live streams can produce thousands of events
+    // in a small window; collapse lines that land on the same few pixels so the
+    // series stay readable underneath.
+    let lastLineX = Number.NEGATIVE_INFINITY;
     for (const event of events) {
       const sec = Date.parse(event.timestamp) / 1000;
       if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
@@ -447,27 +450,47 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         || (event.direction === 'TX'
           ? 'rgba(255, 170, 80, 0.75)'
           : 'rgba(90, 190, 255, 0.75)');
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.lineWidth = 1;
-      if ((event.style ?? 'vline') === 'vline') {
+      const isLine = (event.style ?? 'vline') === 'vline';
+      if (isLine) {
+        if (x - lastLineX < 3) continue;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
         ctx.setLineDash([2, 4]);
         ctx.beginPath();
         ctx.moveTo(x, top);
         ctx.lineTo(x, top + height);
         ctx.stroke();
         ctx.setLineDash([]);
+        lastLineX = x;
       }
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.moveTo(x, top + 1);
       ctx.lineTo(x - 3, top + 7);
       ctx.lineTo(x + 3, top + 7);
       ctx.closePath();
       ctx.fill();
+    }
+
+    // Pass 2: labels, newest first. In Live the most recent commands sit at the
+    // right edge, so giving them the rows first keeps the important ones
+    // visible instead of letting older labels crowd them out.
+    const rowLeft: number[] = new Array(maxLabelRows).fill(Number.POSITIVE_INFINITY);
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      const sec = Date.parse(event.timestamp) / 1000;
+      if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
+      const x = u.valToPos(sec, 'x', true);
+      if (!Number.isFinite(x)) continue;
+      const color = event.color
+        || (event.direction === 'TX'
+          ? 'rgba(255, 170, 80, 0.75)'
+          : 'rgba(90, 190, 255, 0.75)');
       const label = event.summary;
       if (label) {
         const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + labelPadX * 2;
+        if (boxWidth > width - 4) continue;
         const preferRight = x + 3 + boxWidth <= left + width;
         let boxX = preferRight ? x + 3 : x - 3 - boxWidth;
         // Labels for commands near the right edge used to be dropped entirely.
@@ -478,16 +501,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         if (boxX < left + 2) {
           boxX = left + 2;
         }
-        if (boxWidth > width - 4) {
-          continue;
-        }
 
-        // Use the first row where this box starts after the previous label.
+        // Use the first row where this box ends before the next label.
         // Close commands therefore move to row 1, row 2, ... instead of
         // disappearing behind a single row.
         let row = -1;
         for (let r = 0; r < maxLabelRows; r += 1) {
-          if (boxX >= rowRight[r] + 8) {
+          if (boxX + boxWidth <= rowLeft[r] - 8) {
             row = r;
             break;
           }
@@ -517,7 +537,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           boxX + labelPadX,
           boxY + labelBoxHeight / 2 + 1,
         );
-        rowRight[row] = boxX + boxWidth;
+        rowLeft[row] = boxX;
       }
     }
     ctx.restore();
