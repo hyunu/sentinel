@@ -431,7 +431,13 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     // a dark backing box instead of thin text over the series.
     ctx.font = '700 22px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
-    let lastLabelRight = -Infinity;
+    const labelBoxHeight = 34;
+    const labelPadX = 12;
+    const labelRowGap = 4;
+    const labelRowHeight = labelBoxHeight + labelRowGap;
+    // Stack close-together commands on following rows instead of hiding them.
+    const maxLabelRows = Math.max(1, Math.min(4, Math.floor((height - 8) / labelRowHeight)));
+    const rowRight: number[] = new Array(maxLabelRows).fill(Number.NEGATIVE_INFINITY);
     for (const event of events) {
       const sec = Date.parse(event.timestamp) / 1000;
       if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
@@ -461,42 +467,49 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       const label = event.summary;
       if (label) {
         const textWidth = ctx.measureText(label).width;
-        const boxHeight = 34;
-        const padX = 12;
-        const boxWidth = textWidth + padX * 2;
-        const boxY = top + 7;
+        const boxWidth = textWidth + labelPadX * 2;
         const preferRight = x + 3 + boxWidth <= left + width;
         const boxX = preferRight ? x + 3 : x - 3 - boxWidth;
-        // Boxes are timestamp-ordered. Skip a label that would overlap the
-        // previous one (especially when a right-edge label flips left) or
-        // leave the plot entirely.
-        if (
-          boxX < left + 2
-          || boxX < lastLabelRight + 8
-          || boxX + boxWidth > left + width - 2
-        ) {
+        if (boxX < left + 2 || boxX + boxWidth > left + width - 2) {
           continue;
         }
 
+        // Use the first row where this box starts after the previous label.
+        // Close commands therefore move to row 1, row 2, ... instead of
+        // disappearing behind a single row.
+        let row = -1;
+        for (let r = 0; r < maxLabelRows; r += 1) {
+          if (boxX >= rowRight[r] + 8) {
+            row = r;
+            break;
+          }
+        }
+        if (row < 0) continue;
+
+        const boxY = top + 7 + row * labelRowHeight;
         ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
         if (typeof ctx.roundRect === 'function') {
           ctx.beginPath();
-          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 8);
+          ctx.roundRect(boxX, boxY, boxWidth, labelBoxHeight, 8);
           ctx.fill();
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
           ctx.lineWidth = 1;
           ctx.stroke();
         } else {
-          ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+          ctx.fillRect(boxX, boxY, boxWidth, labelBoxHeight);
         }
 
         // Keep the command color as a compact accent bar; the text itself is
         // near-white so it stays readable on every series color.
         ctx.fillStyle = color;
-        ctx.fillRect(boxX, boxY, 3, boxHeight);
+        ctx.fillRect(boxX, boxY, 3, labelBoxHeight);
         ctx.fillStyle = 'rgba(244, 247, 255, 0.98)';
-        ctx.fillText(label, boxX + padX, boxY + boxHeight / 2 + 1);
-        lastLabelRight = boxX + boxWidth;
+        ctx.fillText(
+          label,
+          boxX + labelPadX,
+          boxY + labelBoxHeight / 2 + 1,
+        );
+        rowRight[row] = boxX + boxWidth;
       }
     }
     ctx.restore();
