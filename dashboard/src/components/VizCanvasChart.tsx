@@ -429,7 +429,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ctx.clip();
     // Command summaries sit on top of the plot, so use a large bold label and
     // a dark backing box instead of thin text over the series.
-    ctx.font = '700 18px system-ui, sans-serif';
+    ctx.font = '700 22px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     let lastLabelRight = -Infinity;
     for (const event of events) {
@@ -461,10 +461,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       const label = event.summary;
       if (label) {
         const textWidth = ctx.measureText(label).width;
-        const boxHeight = 28;
-        const padX = 10;
+        const boxHeight = 34;
+        const padX = 12;
         const boxWidth = textWidth + padX * 2;
-        const boxY = top + 6;
+        const boxY = top + 7;
         const preferRight = x + 3 + boxWidth <= left + width;
         const boxX = preferRight ? x + 3 : x - 3 - boxWidth;
         // Boxes are timestamp-ordered. Skip a label that would overlap the
@@ -481,7 +481,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
         if (typeof ctx.roundRect === 'function') {
           ctx.beginPath();
-          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 7);
+          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 8);
           ctx.fill();
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
           ctx.lineWidth = 1;
