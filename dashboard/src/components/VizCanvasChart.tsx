@@ -427,8 +427,11 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ctx.beginPath();
     ctx.rect(left, top, width, height);
     ctx.clip();
-    ctx.font = '12px system-ui, sans-serif';
-    let lastLabelX = -Infinity;
+    // Command summaries sit on top of the plot, so use a readable weight/size
+    // and a dark backing box instead of thin 12px text over the series.
+    ctx.font = '600 14px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    let lastLabelRight = -Infinity;
     for (const event of events) {
       const sec = Date.parse(event.timestamp) / 1000;
       if (!Number.isFinite(sec) || sec < xMin || sec > xMax) continue;
@@ -455,13 +458,32 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       ctx.lineTo(x + 3, top + 7);
       ctx.closePath();
       ctx.fill();
-      if (event.summary && x - lastLabelX > 72) {
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
-        ctx.strokeText(event.summary, x + 4, top + 18);
+      const label = event.summary;
+      if (label && x > lastLabelRight + 8) {
+        const textWidth = ctx.measureText(label).width;
+        const boxHeight = 22;
+        const padX = 7;
+        const boxWidth = textWidth + padX * 2;
+        const boxY = top + 4;
+        const preferRight = x + 3 + boxWidth <= left + width;
+        const boxX = preferRight ? x + 3 : x - 3 - boxWidth;
+
+        ctx.fillStyle = 'rgba(8, 10, 16, 0.86)';
+        if (typeof ctx.roundRect === 'function') {
+          ctx.beginPath();
+          ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 5);
+          ctx.fill();
+        } else {
+          ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        }
+
+        // Keep the command color as a compact accent bar; the text itself is
+        // near-white so it stays readable on every series color.
         ctx.fillStyle = color;
-        ctx.fillText(event.summary, x + 4, top + 18);
-        lastLabelX = x;
+        ctx.fillRect(boxX, boxY, 2, boxHeight);
+        ctx.fillStyle = 'rgba(240, 244, 255, 0.96)';
+        ctx.fillText(label, boxX + padX, boxY + boxHeight / 2 + 1);
+        lastLabelRight = boxX + boxWidth;
       }
     }
     ctx.restore();
