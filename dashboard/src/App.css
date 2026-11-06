@@ -2216,6 +2216,30 @@ tbody tr:last-child td {
   transition: background 0.15s, color 0.15s;
 }
 
+.viz-chart-command-btn {
+  position: relative;
+}
+
+.viz-command-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #16120a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
 .viz-chart-icon-btn:hover:not(:disabled) {
   background: var(--elevate-hover);
   color: var(--text-secondary);

@@ -154,6 +154,7 @@ type FieldValuesLayout = 'bottom' | 'left';
 type AxisRange = { min: number; max: number };
 type AxisRangeDraft = { auto: boolean; min: string; max: string };
 const AXIS_RANGE_STORAGE_PREFIX = 'sentinel.viz.axis-range.';
+const SHOW_COMMANDS_STORAGE_KEY = 'sentinel.viz.show-commands';
 
 function normalizeAxisRange(range?: { min: number; max: number } | null): AxisRange | null {
   if (!range) return null;
@@ -1066,7 +1067,20 @@ export default function VizDashboardPage() {
   const [liveMode, setLiveMode] = useState(false);
   const [chartTooltipEnabled, setChartTooltipEnabled] = useState(true);
   const [commandEvents, setCommandEvents] = useState<VizCommandEvent[]>([]);
-  const [showCommands, setShowCommands] = useState(false);
+  const [showCommands, setShowCommands] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_COMMANDS_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SHOW_COMMANDS_STORAGE_KEY, showCommands ? '1' : '0');
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [showCommands]);
   const [eventConfig, setEventConfig] = useState<VizCommandConfig[]>([]);
   const [eventOverrides, setEventOverrides] = useState<Record<string, { type?: string; visible?: boolean }>>({});
   const [eventSettingsOpen, setEventSettingsOpen] = useState(false);
@@ -5353,13 +5367,20 @@ export default function VizDashboardPage() {
                   </button>
                   <button
                     type="button"
-                    className={`viz-chart-icon-btn${showCommands ? ' active' : ''}`}
+                    className={`viz-chart-icon-btn viz-chart-command-btn${showCommands ? ' active' : ''}`}
                     onClick={() => setShowCommands(v => !v)}
-                    title={t('viz.commandOverlayToggle')}
+                    title={`${t('viz.commandOverlayToggle')} (${commandEvents.length})`}
                     aria-label={t('viz.commandOverlayToggle')}
                     aria-pressed={showCommands}
                   >
                     <span className="viz-chart-axis-range-glyph">C</span>
+                    {!showCommands && commandEvents.length > 0 && (
+                      <span className="viz-command-badge">
+                        {commandEvents.length > 999
+                          ? `${(commandEvents.length / 1000).toFixed(1)}k`
+                          : commandEvents.length}
+                      </span>
+                    )}
                   </button>
                   <button
                     type="button"
