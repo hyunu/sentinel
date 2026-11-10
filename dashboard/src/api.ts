@@ -160,6 +160,19 @@ export interface UartQueryResult {
   next_before?: UartCursor;
 }
 
+export interface DataDeleteResult {
+  board_id: string;
+  since?: string | null;
+  until?: string | null;
+  deleted: {
+    uart_data: number;
+    viz_rollups: number;
+    sessions: number;
+    temperatures: number;
+    heartbeats: number;
+  };
+}
+
 export interface Session {
   id: string;
   board_id: string;
@@ -384,6 +397,51 @@ export const api = {
     },
     ingest: (board_id: string, raw_hex: string, direction: string) =>
       request<UartData>('/data/uart', { method: 'POST', body: JSON.stringify({ board_id, raw_hex, direction }) }),
+  },
+
+  data: {
+    /** Same-origin URL for the streaming dump endpoint (used by <a download>). */
+    dumpUrl: (params: {
+      board_id: string;
+      since?: string;
+      until?: string;
+      session_id?: string;
+      direction?: string;
+      include?: string;
+      limit?: number;
+      format?: 'ndjson' | 'json';
+      gzip?: boolean;
+    }) => {
+      const qs = new URLSearchParams();
+      qs.set('board_id', params.board_id);
+      if (params.since) qs.set('since', params.since);
+      if (params.until) qs.set('until', params.until);
+      if (params.session_id) qs.set('session_id', params.session_id);
+      if (params.direction) qs.set('direction', params.direction);
+      if (params.include) qs.set('include', params.include);
+      if (params.limit) qs.set('limit', String(params.limit));
+      if (params.format) qs.set('format', params.format);
+      if (params.gzip) qs.set('gzip', 'true');
+      return `${BASE}/data/dump?${qs}`;
+    },
+    delete: (params: {
+      board_id: string;
+      confirm: boolean;
+      since?: string;
+      until?: string;
+      include?: string;
+    }) => {
+      const qs = new URLSearchParams();
+      qs.set('board_id', params.board_id);
+      qs.set('confirm', params.confirm ? 'true' : 'false');
+      if (params.since) qs.set('since', params.since);
+      if (params.until) qs.set('until', params.until);
+      if (params.include) qs.set('include', params.include);
+      return request<DataDeleteResult>(`/data?${qs}`, {
+        method: 'DELETE',
+        timeoutMs: 120000,
+      });
+    },
   },
 
   temperature: {

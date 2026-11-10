@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { UartData, Board, UartCursor, Session } from '../api';
 import PageHeader from '../components/PageHeader';
+import Modal from '../components/Modal';
 import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
 
@@ -91,6 +92,12 @@ export default function DataViewerPage() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteCount, setDeleteCount] = useState<number | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     api.boards.list().then(setBoards).catch(console.error);
@@ -178,6 +185,73 @@ export default function DataViewerPage() {
       ? t('dataViewer.showing', { count: formatCount(data.length) })
       : t('dataViewer.noRecords');
 
+  const handleDownload = useCallback(() => {
+    if (!selectedBoard) return;
+    const url = api.data.dumpUrl({
+      board_id: selectedBoard,
+      session_id: selectedSession || undefined,
+      direction: direction || undefined,
+      since: sinceForRange(timeRange),
+      include: 'uart',
+      gzip: true,
+    });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `sentinel-${board?.uid ?? selectedBoard}-uart-${stamp}.ndjson.gz`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [selectedBoard, selectedSession, direction, timeRange, board?.uid]);
+
+  const openDeleteAll = useCallback(async () => {
+    if (!selectedBoard) return;
+    setDeleteOpen(true);
+    setDeleteConfirmText('');
+    setDeleteError('');
+    setDeleteCount(null);
+    setNotice('');
+    try {
+      // Count every UART row for the board, not just the filtered page: the
+      // delete-all action ignores the current time/session filter.
+      const result = await api.uart.list({
+        board_id: selectedBoard,
+        limit: 1,
+        include_total: true,
+      });
+      setDeleteCount(result.total ?? 0);
+    } catch {
+      setDeleteCount(null);
+    }
+  }, [selectedBoard]);
+
+  const deleteConfirmWord = t('dataViewer.deleteConfirmWord');
+  const deleteConfirmed = deleteConfirmText.trim().toUpperCase() === deleteConfirmWord;
+
+  const confirmDeleteAll = useCallback(async () => {
+    if (!selectedBoard || !deleteConfirmed) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const result = await api.data.delete({
+        board_id: selectedBoard,
+        confirm: true,
+        include: 'uart,rollups',
+      });
+      setDeleteOpen(false);
+      setNotice(t('dataViewer.deleted', { count: formatCount(result.deleted.uart_data) }));
+      setData([]);
+      setTotal(0);
+      setHasMore(false);
+      setNextBefore(null);
+    } catch (e) {
+      console.error(e);
+      setDeleteError(t('dataViewer.deleteFailed'));
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedBoard, deleteConfirmed, t]);
+
   return (
     <div className="page">
       <PageHeader
@@ -199,6 +273,7 @@ export default function DataViewerPage() {
                 setTotal(null);
                 setHasMore(false);
                 setNextBefore(null);
+                setNotice('');
               }}
             >
               <option value="">{t('dataViewer.selectBoard')}</option>
@@ -266,16 +341,38 @@ export default function DataViewerPage() {
         <div className="toolbar" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <span className="toolbar-stat muted">{statLabel}</span>
           {selectedBoard && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={loading}
-              onClick={() => fetchPage()}
-            >
-              {t('common.refresh')}
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={loading}
+                onClick={() => fetchPage()}
+              >
+                {t('common.refresh')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={loading}
+                onClick={handleDownload}
+              >
+                {t('dataViewer.download')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={loading || deleting}
+                onClick={() => void openDeleteAll()}
+              >
+                {t('dataViewer.deleteAll')}
+              </button>
+            </>
           )}
         </div>
+
+        {notice && (
+          <p className="data-viewer-notice" style={{ padding: '10px 16px' }}>{notice}</p>
+        )}
 
         {error && (
           <p className="muted" style={{ padding: '12px 16px' }}>{error}</p>
@@ -331,6 +428,58 @@ export default function DataViewerPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => {
+          if (!deleting) setDeleteOpen(false);
+        }}
+        title={t('dataViewer.deleteTitle')}
+        footer={(
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={deleting}
+              onClick={() => setDeleteOpen(false)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={deleting || !deleteConfirmed}
+              onClick={() => void confirmDeleteAll()}
+            >
+              {deleting ? t('dataViewer.deleteRunning') : t('dataViewer.deleteAction')}
+            </button>
+          </>
+        )}
+      >
+        <div className="data-delete-warning">
+          <strong>⚠ {t('dataViewer.deleteWarningHeadline')}</strong>
+          <p>
+            {t('dataViewer.deleteWarningBody', {
+              board: board?.name ?? selectedBoard,
+              count: deleteCount != null ? formatCount(deleteCount) : '—',
+            })}
+          </p>
+          <p>{t('dataViewer.deleteWarningBackup')}</p>
+        </div>
+        <label className="data-delete-confirm" htmlFor="uart-delete-confirm">
+          {t('dataViewer.deleteConfirmLabel')}
+        </label>
+        <input
+          id="uart-delete-confirm"
+          value={deleteConfirmText}
+          onChange={e => setDeleteConfirmText(e.target.value)}
+          placeholder={deleteConfirmWord}
+          autoComplete="off"
+          disabled={deleting}
+          autoFocus
+        />
+        {deleteError && <p className="data-delete-error">{deleteError}</p>}
+      </Modal>
     </div>
   );
 }

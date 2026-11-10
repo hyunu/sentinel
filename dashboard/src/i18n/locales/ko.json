@@ -166,7 +166,19 @@
     "dir": "방향",
     "raw": "Raw",
     "ascii": "ASCII",
-    "parsed": "Parsed"
+    "parsed": "Parsed",
+    "download": "다운로드",
+    "deleteAll": "모두 삭제",
+    "deleteTitle": "UART 데이터 전체 삭제",
+    "deleteWarningHeadline": "경고: 이 작업은 되돌릴 수 없습니다.",
+    "deleteWarningBody": "{{board}}의 UART 데이터 {{count}}건과 이 데이터로 생성된 시각화 롤업이 서버에서 영구 삭제됩니다. 현재 기간/세션 필터와 관계없이 보드의 모든 UART 기록이 삭제됩니다.",
+    "deleteWarningBackup": "삭제 전에 반드시 '다운로드' 버튼으로 백업하세요.",
+    "deleteConfirmLabel": "계속하려면 DELETE를 입력하세요.",
+    "deleteConfirmWord": "DELETE",
+    "deleteRunning": "삭제 중…",
+    "deleteAction": "영구 삭제",
+    "deleted": "UART 데이터 {{count}}건을 삭제했습니다.",
+    "deleteFailed": "UART 데이터를 삭제하지 못했습니다."
   },
   "ai": {
     "title": "AI 질의",

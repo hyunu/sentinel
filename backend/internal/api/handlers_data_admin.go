@@ -287,6 +287,15 @@ func (h *Handler) DumpData(c *gin.Context) {
 	}
 
 	exportedAt := time.Now().UTC()
+	// Prefer the human-friendly board UID (e.g. "0015") in the filename while
+	// keeping the internal id in the meta record.
+	boardLabel := boardID
+	var boardDoc bson.M
+	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&boardDoc); err == nil {
+		if uid, ok := boardDoc["uid"].(string); ok && strings.TrimSpace(uid) != "" {
+			boardLabel = uid
+		}
+	}
 	ext := ".ndjson"
 	if format == "json" {
 		ext = ".json"
@@ -295,7 +304,7 @@ func (h *Handler) DumpData(c *gin.Context) {
 		c.Header("Content-Encoding", "gzip")
 		ext += ".gz"
 	}
-	filename := fmt.Sprintf("sentinel-%s-%s%s", boardID, exportedAt.Format("20060102T150405Z"), ext)
+	filename := fmt.Sprintf("sentinel-%s-%s%s", boardLabel, exportedAt.Format("20060102T150405Z"), ext)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	if format == "json" {
 		c.Header("Content-Type", "application/json; charset=utf-8")

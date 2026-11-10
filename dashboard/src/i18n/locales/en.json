@@ -166,7 +166,19 @@
     "dir": "Dir",
     "raw": "Raw",
     "ascii": "ASCII",
-    "parsed": "Parsed"
+    "parsed": "Parsed",
+    "download": "Download",
+    "deleteAll": "Delete all",
+    "deleteTitle": "Delete all UART data",
+    "deleteWarningHeadline": "Warning: this cannot be undone.",
+    "deleteWarningBody": "All {{count}} UART records for {{board}} and the visualization rollups derived from them will be permanently deleted from the server. Every UART record for this board is removed regardless of the current time/session filter.",
+    "deleteWarningBackup": "Back up the data with the 'Download' button before deleting.",
+    "deleteConfirmLabel": "Type DELETE to continue.",
+    "deleteConfirmWord": "DELETE",
+    "deleteRunning": "Deleting…",
+    "deleteAction": "Delete permanently",
+    "deleted": "Deleted {{count}} UART records.",
+    "deleteFailed": "Failed to delete UART data."
   },
   "ai": {
     "title": "AI Query",
