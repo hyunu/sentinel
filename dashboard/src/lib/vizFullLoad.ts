@@ -26,8 +26,10 @@ export const OVERVIEW_BUCKETS = OVERVIEW_SAMPLE_POINTS / 2;
 /** Rows per partition used to decide how many partitions to refine in parallel. */
 export const PROGRESSIVE_PARTITION_ROWS = 5_000;
 export const PROGRESSIVE_MAX_PARTITIONS = 24;
-/** Raw rows per striped request. Each row is downloaded exactly once. */
-export const PROGRESSIVE_STRIPE_ROWS = 800;
+/** Raw rows per striped request. Each row is downloaded exactly once.
+ *  Larger pages reduce request overhead; the payload stays small because a
+ *  query now only asks for the chart series (<= 24 fields), not every item. */
+export const PROGRESSIVE_STRIPE_ROWS = 1600;
 /** Concurrent requests. Browsers use at most ~6 HTTP/1.1 connections per
  *  origin; going higher just queues and measurably slows the server. */
 export const FULL_LOAD_CONCURRENCY = 6;

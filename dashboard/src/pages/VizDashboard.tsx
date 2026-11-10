@@ -386,10 +386,18 @@ function itemsForDataQuery(items: VizItem[]): VizItem[] {
   }));
 }
 
-/** The preview only needs the series that can actually be drawn. */
-function itemsForOverviewQuery(items: VizItem[]): VizItem[] {
+/**
+ * The chart can only draw the first MAX_CHART_SERIES visible items, so the
+ * server should only send those fields. Sending every configured item made a
+ * 90k-row full load ~7x larger than the byte budget estimated from the
+ * preview (262 MB vs 38 MB) and caused long GC pauses in the browser.
+ */
+function itemsForSeriesQuery(items: VizItem[]): VizItem[] {
   return itemsForDataQuery(items.filter(i => i.visible).slice(0, MAX_CHART_SERIES));
 }
+
+/** The preview only needs the series that can actually be drawn. */
+const itemsForOverviewQuery = itemsForSeriesQuery;
 
 type VizQueryParams = {
   board_id: string;
@@ -428,11 +436,12 @@ function buildVizPartitions(
   endMs: number,
   totalRows: number,
   overview: VizDataRow[],
+  maxPartitions = PROGRESSIVE_MAX_PARTITIONS,
 ): VizPartition[] {
   const count = Math.max(
     1,
     Math.min(
-      PROGRESSIVE_MAX_PARTITIONS,
+      maxPartitions,
       Math.ceil(totalRows / PROGRESSIVE_PARTITION_ROWS),
     ),
   );
@@ -483,6 +492,9 @@ async function queryFullDatasetProgressive(
     timeoutMs?: number;
     onProgress?: VizLoadProgressHandler;
     onPartial?: VizDataHandler;
+    /** Override the derived page size / partition count (series merge). */
+    stripeRows?: number;
+    maxPartitions?: number;
   },
 ): Promise<{ data: VizDataRow[]; meta: VizQueryMeta }> {
   const total = meta.total_matched;
@@ -512,14 +524,19 @@ async function queryFullDatasetProgressive(
     return { data: full.data, meta: full.meta ?? meta };
   }
 
-  const partitions = buildVizPartitions(startMs, endMs, total, overview);
+  const partitions = buildVizPartitions(
+    startMs,
+    endMs,
+    total,
+    overview,
+    options?.maxPartitions,
+  );
   const partitionRows = Math.max(1, Math.ceil(total / partitions.length));
   // Each request is one contiguous raw page. The whole range is transferred
   // exactly once; no bucket rounds and no second completion pass.
-  const stripeRows = Math.min(
-    PROGRESSIVE_STRIPE_ROWS,
-    Math.max(200, Math.ceil(partitionRows / 6)),
-  );
+  const stripeRows = options?.stripeRows != null
+    ? Math.max(1, Math.floor(options.stripeRows))
+    : Math.min(PROGRESSIVE_STRIPE_ROWS, Math.max(400, partitionRows));
   const stripesPerPartition = Math.max(
     1,
     Math.ceil(partitionRows / stripeRows) + 1,
@@ -535,13 +552,27 @@ async function queryFullDatasetProgressive(
   let lastPublishMs = 0;
   let failed = false;
 
+  // Date.parse is expensive and sorting 90k rows used to call it on every
+  // comparison (~1.5M parses per publish). Cache each timestamp once per load.
+  const tsMsCache = new Map<string, number>();
+  const timestampMs = (timestamp: string): number => {
+    let ms = tsMsCache.get(timestamp);
+    if (ms === undefined) {
+      ms = Date.parse(timestamp);
+      tsMsCache.set(timestamp, ms);
+    }
+    return ms;
+  };
   const sortRows = (rows: VizDataRow[]) => rows.sort(
-    (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+    (a, b) => timestampMs(a.timestamp) - timestampMs(b.timestamp),
   );
+  // Large progressive loads rebuild the whole chart on every publish, so give
+  // them a wider interval instead of re-rendering several times per second.
+  const publishIntervalMs = total > 40_000 ? 1000 : 250;
 
   const publish = (force: boolean, final = false) => {
     const now = Date.now();
-    if (!force && now - lastPublishMs < 250) return;
+    if (!force && now - lastPublishMs < publishIntervalMs) return;
     lastPublishMs = now;
     // Refresh the row-based progress with the latest unique-row count.
     reportProgress(0);
@@ -688,6 +719,47 @@ async function queryFullDatasetProgressive(
       downsampled: false,
     },
   };
+}
+
+/** Merge rows fetched for additional series into an existing dataset. */
+function mergeVizRowsByTimestamp(
+  base: VizDataRow[],
+  extra: VizDataRow[],
+): VizDataRow[] {
+  if (!extra.length) return base;
+  const byTimestamp = new Map<string, VizDataRow>();
+  for (const row of base) byTimestamp.set(row.timestamp, row);
+  let added = 0;
+  for (const row of extra) {
+    const existing = byTimestamp.get(row.timestamp);
+    if (existing) {
+      byTimestamp.set(row.timestamp, {
+        ...existing,
+        values: { ...existing.values, ...row.values },
+      });
+    } else {
+      byTimestamp.set(row.timestamp, row);
+      added += 1;
+    }
+  }
+  const merged = Array.from(byTimestamp.values());
+  if (added > 0) {
+    const parsed = new Map<string, number>();
+    merged.sort((a, b) => {
+      let aMs = parsed.get(a.timestamp);
+      if (aMs === undefined) {
+        aMs = Date.parse(a.timestamp);
+        parsed.set(a.timestamp, aMs);
+      }
+      let bMs = parsed.get(b.timestamp);
+      if (bMs === undefined) {
+        bMs = Date.parse(b.timestamp);
+        parsed.set(b.timestamp, bMs);
+      }
+      return aMs - bMs;
+    });
+  }
+  return merged;
 }
 
 async function queryVizDataset(
@@ -1263,6 +1335,9 @@ export default function VizDashboardPage() {
   liveModeRef.current = liveMode;
   const inMemoryFullRef = useRef(inMemoryFull);
   inMemoryFullRef.current = inMemoryFull;
+  /** Series (id -> label) that the dataset in rawVizData was fetched with. */
+  const loadedSeriesRef = useRef<Map<string, string>>(new Map());
+  const seriesFetchSeqRef = useRef(0);
 
   const rawVizDataKey = useMemo(
     () => (rawVizData.length > 0
@@ -2645,13 +2720,9 @@ export default function VizDashboardPage() {
     if (preview && meta && data.length > 0) {
       const sample = data.length > 500 ? data.slice(0, 500) : data;
       const bytesPerRow = estimateVizPayloadBytes(sample) / sample.length;
-      // The preview only requests the chart series; the full load requests all
-      // profile items, so scale the byte estimate to the full payload.
-      const overviewCount = Math.max(1, overviewItems.length);
-      const fullCount = Math.max(overviewCount, itemsRef.current.length);
-      setFullLoadBytesEstimate(
-        Math.ceil(bytesPerRow * meta.total_matched * fullCount / overviewCount),
-      );
+      // The preview and the full load now request the same chart series, so
+      // the estimate needs no scaling.
+      setFullLoadBytesEstimate(Math.ceil(bytesPerRow * meta.total_matched));
     } else {
       setFullLoadBytesEstimate(null);
     }
@@ -2701,6 +2772,9 @@ export default function VizDashboardPage() {
     try {
       const p = await api.viz.getProfile(id);
       overviewItemsRef.current = itemsForOverviewQuery(p.items);
+      loadedSeriesRef.current = new Map(
+        itemsForSeriesQuery(p.items).map(i => [i.id, i.label]),
+      );
       // The profile owns the fixed Y ranges. Mirror them into localStorage so
       // the existing per-profile storage effect and the toolbar state agree.
       const loadedLeftRange = normalizeAxisRange(p.y_axis_range?.left);
@@ -2737,7 +2811,7 @@ export default function VizDashboardPage() {
       const isAllRange = !p.time_range?.start || !p.time_range?.end;
       const result = await queryVizDataset({
         board_id: p.board_id,
-        items: itemsForDataQuery(p.items),
+        items: itemsForSeriesQuery(p.items),
         time_range: p.time_range?.start && p.time_range?.end
           ? { start: p.time_range.start, end: p.time_range.end }
           : undefined,
@@ -3000,9 +3074,10 @@ export default function VizDashboardPage() {
     try {
       const overviewItems = itemsForOverviewQuery(itemsRef.current);
       overviewItemsRef.current = overviewItems;
+      loadedSeriesRef.current = new Map(overviewItems.map(i => [i.id, i.label]));
       const result = await queryVizDataset({
         board_id: selectedBoard,
-        items: itemsForDataQuery(itemsRef.current),
+        items: itemsForSeriesQuery(itemsRef.current),
         time_range: timeRange,
         ...aiAggregationParams,
       }, {
@@ -3296,6 +3371,70 @@ export default function VizDashboardPage() {
   }, [selectedBoard, t]);
   reloadLiveTailRef.current = reloadLiveTail;
 
+  // Queries fetch only the series the chart can draw. When a user turns on a
+  // series that was hidden during the load, pull just that series' rows and
+  // merge them into the in-memory dataset instead of re-downloading everything.
+  useEffect(() => {
+    if (!selectedBoard || !chartSeriesItems.length) return;
+    if (liveMode) {
+      const loaded = loadedSeriesRef.current;
+      if (chartSeriesItems.some(i => loaded.get(i.id) !== i.label)) {
+        loadedSeriesRef.current = new Map(chartSeriesItems.map(i => [i.id, i.label]));
+        void reloadLiveTail();
+      }
+      return;
+    }
+    if (!rawVizData.length) return;
+    const loaded = loadedSeriesRef.current;
+    const missing = chartSeriesItems.filter(i => loaded.get(i.id) !== i.label);
+    if (!missing.length) return;
+    for (const item of missing) loaded.set(item.id, item.label);
+    if (!inMemoryFull || Object.keys(aiAggregationParams).length > 0) {
+      // Sampled or aggregated data cannot be merged row-by-row; refetch it.
+      void runVizQuery(chartQueryTimeRange ?? undefined, false);
+      return;
+    }
+    const range = chartQueryTimeRange ?? {
+      start: rawVizData[0].timestamp,
+      end: rawVizData[rawVizData.length - 1].timestamp,
+    };
+    const seq = ++seriesFetchSeqRef.current;
+    // A few extra series is a small payload: use fewer, larger pages instead
+    // of the ~85 tiny stripes a full-range load would make.
+    const seriesCount = Math.max(1, loaded.size);
+    const mergeStripeRows = Math.max(
+      PROGRESSIVE_STRIPE_ROWS,
+      Math.min(
+        Math.ceil(rawVizData.length / 6),
+        Math.floor(2_000_000 / (40 * seriesCount)),
+      ),
+    );
+    void (async () => {
+      try {
+        const extra = await queryFullDatasetProgressive(
+          { board_id: selectedBoard, items: itemsForDataQuery(missing), time_range: range },
+          [],
+          { total_matched: rawVizData.length, returned: rawVizData.length, downsampled: false },
+          { timeoutMs: 120000, maxPartitions: 1, stripeRows: mergeStripeRows },
+        );
+        if (seq !== seriesFetchSeqRef.current) return;
+        setRawVizData(prev => mergeVizRowsByTimestamp(prev, extra.data));
+      } catch {
+        // Keep the series marked as loaded; an explicit refresh retries.
+      }
+    })();
+  }, [
+    selectedBoard,
+    chartSeriesItems,
+    rawVizData,
+    inMemoryFull,
+    liveMode,
+    aiAggregationParams,
+    chartQueryTimeRange,
+    runVizQuery,
+    reloadLiveTail,
+  ]);
+
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
     const since = lastTimestampRef.current;
@@ -3305,7 +3444,7 @@ export default function VizDashboardPage() {
     try {
       const result = await api.viz.queryItems({
         board_id: selectedBoard,
-        items: itemsForDataQuery(itemsRef.current),
+        items: itemsForSeriesQuery(itemsRef.current),
         mode: 'live',
         since: since || undefined,
         limit: MAX_POINTS,
@@ -4007,7 +4146,7 @@ export default function VizDashboardPage() {
         try {
           const result = await api.viz.queryItems({
             board_id: selectedBoard,
-            items: itemsForDataQuery(itemsRef.current),
+            items: itemsForSeriesQuery(itemsRef.current),
             time_range: { start: startTs, end: endTs },
             limit: detailLimit,
             ...aiAggregationParams,
@@ -4102,7 +4241,7 @@ export default function VizDashboardPage() {
     const timer = window.setTimeout(() => {
       void api.viz.queryItems({
         board_id: selectedBoard,
-        items: itemsForDataQuery(itemsRef.current),
+        items: itemsForSeriesQuery(itemsRef.current),
         time_range: { start: startTs, end: endTs },
         limit: Math.min(
           DETAIL_MAX_POINTS,
@@ -4522,7 +4661,9 @@ export default function VizDashboardPage() {
       hoverTimeKey ? rawValuesByTimeKey.get(hoverTimeKey) : undefined,
       hoverPrevTimeKey ? rawValuesByTimeKey.get(hoverPrevTimeKey) : undefined,
       chartItemIds,
-    );
+    // Queries only carry the chart series now. Keep rows that can actually
+    // show a value instead of rendering a wall of empty hidden fields.
+    ).filter(row => row.onChart || row.raw !== undefined || row.prevRaw !== undefined);
     return rows.sort((a, b) => {
       const aFav = !!a.item.favorite;
       const bFav = !!b.item.favorite;
