@@ -162,7 +162,7 @@ func (h *Handler) VizCommands(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"items": []vizCommandEvent{}, "total": 0})
 		return
 	}
-	enums := enumsFromMeta(spec.ParseRules.Meta)
+	enums := enumsForProtocol(&spec)
 	functionArgs := functionArgsFromMeta(spec.ParseRules.Meta)
 	fieldsByFID := make(map[int][]eventFieldSpec)
 	fidSet := make(map[int]bool)

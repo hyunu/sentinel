@@ -5,6 +5,7 @@ import type { JsonRuleDocument, ParseResult, SchemaPreset } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
 import ProtocolDisplayEditor from '../components/ProtocolDisplayEditor';
+import ProtocolEnumsEditor, { type ProtocolEnumMap } from '../components/ProtocolEnumsEditor';
 import ParseRulesManual from '../components/ParseRulesManual';
 import { useTranslation } from '../i18n';
 import { DEFAULT_LCP_PARSE_RULES } from '../lib/protocolFormat';
@@ -12,6 +13,32 @@ import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '..
 
 function normalizeParseRules(raw?: JsonRuleDocument | null): JsonRuleDocument {
   return structuredClone(normalizeParseRulesDocument(raw));
+}
+
+function extractLegacyEnums(doc?: JsonRuleDocument | null): ProtocolEnumMap {
+  const raw = doc?._meta?.enums;
+  if (!raw || typeof raw !== 'object') return {};
+  const out: ProtocolEnumMap = {};
+  for (const [name, values] of Object.entries(raw as Record<string, unknown>)) {
+    if (!values || typeof values !== 'object') continue;
+    const map: Record<string, string> = {};
+    for (const [key, label] of Object.entries(values as Record<string, unknown>)) {
+      map[String(key)] = String(label);
+    }
+    out[name] = map;
+  }
+  return out;
+}
+
+/** Keep parse_rules free of enums; they are edited in their own protocol group. */
+function stripRulesEnums(doc: JsonRuleDocument): JsonRuleDocument {
+  const clone = structuredClone(doc);
+  const meta = clone._meta as Record<string, unknown> | undefined;
+  if (meta && 'enums' in meta) {
+    delete meta.enums;
+    if (Object.keys(meta).length === 0) delete clone._meta;
+  }
+  return clone;
 }
 
 function isParseError(result: ParseResult | { error: string }): result is { error: string } {
@@ -30,6 +57,7 @@ export default function ProtocolEditPage() {
   const [description, setDescription] = useState('');
   const [rulesText, setRulesText] = useState(JSON.stringify(blankParseRules(), null, 2));
   const [rules, setRules] = useState<JsonRuleDocument>(() => blankParseRules());
+  const [enums, setEnums] = useState<ProtocolEnumMap>({});
   const [rulesError, setRulesError] = useState('');
   const [legacyNoRules, setLegacyNoRules] = useState(false);
   const [testHex, setTestHex] = useState('');
@@ -44,8 +72,9 @@ export default function ProtocolEditPage() {
       setRulesError(t('protocols.fieldRequired'));
       return;
     }
-    setRules(doc);
-    setRulesText(documentToJson(doc));
+    const cleaned = stripRulesEnums(doc);
+    setRules(cleaned);
+    setRulesText(documentToJson(cleaned));
     setRulesError('');
     setLegacyNoRules(false);
   }, []);
@@ -65,6 +94,11 @@ export default function ProtocolEditPage() {
         setDescription(p.description || '');
         const hasRules = Boolean(p.parse_rules?.fields?.length);
         setLegacyNoRules(!hasRules);
+        setEnums(
+          p.enums && Object.keys(p.enums).length > 0
+            ? p.enums
+            : extractLegacyEnums(p.parse_rules),
+        );
         applyRules(normalizeParseRules(p.parse_rules));
       })
       .catch(() => navigate('/protocols'))
@@ -74,7 +108,12 @@ export default function ProtocolEditPage() {
   const onRulesChange = (text: string) => {
     setRulesText(text);
     try {
-      applyRules(JSON.parse(text) as JsonRuleDocument);
+      const parsed = JSON.parse(text) as JsonRuleDocument;
+      const legacy = extractLegacyEnums(parsed);
+      if (Object.keys(legacy).length > 0) {
+        setEnums(prev => ({ ...legacy, ...prev }));
+      }
+      applyRules(parsed);
     } catch (e) {
       setRulesError(e instanceof Error ? e.message : t('protocols.invalidJson'));
     }
@@ -103,7 +142,13 @@ export default function ProtocolEditPage() {
     if (!name || saving || rulesError) return;
     setSaving(true);
     try {
-      const body = { name, version, description, parse_rules: rules };
+      const body = {
+        name,
+        version,
+        description,
+        parse_rules: stripRulesEnums(rules),
+        enums,
+      };
       if (isNew) await api.protocols.create(body);
       else if (id) await api.protocols.update(id, body);
       navigate('/protocols');
@@ -114,7 +159,9 @@ export default function ProtocolEditPage() {
 
   const applyPreset = (presetId: string) => {
     if (presetId === 'lcp') {
-      applyRules(structuredClone(DEFAULT_LCP_PARSE_RULES));
+      const doc = structuredClone(DEFAULT_LCP_PARSE_RULES);
+      setEnums(extractLegacyEnums(doc));
+      applyRules(doc);
       return;
     }
     const preset = presets.find(p => p.id === presetId);
@@ -122,7 +169,9 @@ export default function ProtocolEditPage() {
     setName(preset.name);
     setVersion(preset.protocol_version || '1.0');
     setDescription(preset.description || '');
-    applyRules(normalizeParseRules(preset.parse_rules));
+    const doc = normalizeParseRules(preset.parse_rules);
+    setEnums(extractLegacyEnums(doc));
+    applyRules(doc);
   };
 
   if (loading) {
@@ -206,6 +255,14 @@ export default function ProtocolEditPage() {
           </div>
         </div>
 
+        <div className="card protocol-enums-card">
+          <div className="card-header">
+            <h2>Enums</h2>
+            <span className="muted">parse_rules와 분리된 프로토콜 Enum 그룹</span>
+          </div>
+          <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
+        </div>
+
         <div className="card rules-editor-card">
           <div className="card-header">
             <h2>{t('protocols.parseRules')}</h2>
@@ -222,7 +279,7 @@ export default function ProtocolEditPage() {
                 className={editMode === 'json' ? 'is-active' : ''}
                 onClick={() => {
                   setEditMode('json');
-                  if (!rulesError) setRulesText(documentToJson(rules));
+                  if (!rulesError) setRulesText(documentToJson(stripRulesEnums(rules)));
                 }}
               >
                 {t('protocols.jsonMode')}
@@ -243,7 +300,7 @@ export default function ProtocolEditPage() {
           {editMode === 'ui' ? (
             <>
               <ParseRulesBuilder document={rules} onChange={applyRules} />
-              <ProtocolDisplayEditor document={rules} onChange={applyRules} />
+              <ProtocolDisplayEditor document={rules} onChange={applyRules} enums={enums} />
             </>
           ) : (
             <textarea

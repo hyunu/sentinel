@@ -5731,6 +5731,14 @@ pre {
   gap: 8px;
 }
 
+.protocol-enums-card .protocol-enums-editor {
+  padding: 0 16px 16px;
+}
+
+.protocol-enums-card .protocol-enums-editor > .muted:first-child {
+  margin-top: 0;
+}
+
 .protocol-display-editor {
   margin-top: 24px;
   padding-top: 16px;

@@ -989,6 +989,7 @@ func (h *Handler) CreateProtocol(c *gin.Context) {
 		Version     string                       `json:"version" binding:"required"`
 		Description string                       `json:"description,omitempty"`
 		ParseRules  *ruleparser.JsonRuleDocument `json:"parse_rules" binding:"required"`
+		Enums       map[string]map[string]string `json:"enums,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1005,9 +1006,11 @@ func (h *Handler) CreateProtocol(c *gin.Context) {
 		Version:     req.Version,
 		Description: req.Description,
 		ParseRules:  req.ParseRules,
+		Enums:       req.Enums,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
+	normalizeProtocolEnums(&proto)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -1040,6 +1043,9 @@ func (h *Handler) ListProtocols(c *gin.Context) {
 	if results == nil {
 		results = []models.ProtocolSpec{}
 	}
+	for i := range results {
+		hydrateProtocolEnums(&results[i])
+	}
 
 	c.JSON(http.StatusOK, results)
 }
@@ -1054,6 +1060,7 @@ func (h *Handler) GetProtocol(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "protocol not found"})
 		return
 	}
+	hydrateProtocolEnums(&proto)
 
 	c.JSON(http.StatusOK, proto)
 }
@@ -1065,6 +1072,7 @@ func (h *Handler) UpdateProtocol(c *gin.Context) {
 		Version     string                       `json:"version,omitempty"`
 		Description string                       `json:"description,omitempty"`
 		ParseRules  *ruleparser.JsonRuleDocument `json:"parse_rules,omitempty"`
+		Enums       map[string]map[string]string `json:"enums,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1082,7 +1090,14 @@ func (h *Handler) UpdateProtocol(c *gin.Context) {
 		update["description"] = req.Description
 	}
 	if req.ParseRules != nil {
+		legacyEnums := extractEnumsFromParseRules(req.ParseRules)
 		update["parse_rules"] = req.ParseRules
+		if req.Enums == nil && len(legacyEnums) > 0 {
+			update["enums"] = legacyEnums
+		}
+	}
+	if req.Enums != nil {
+		update["enums"] = req.Enums
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)

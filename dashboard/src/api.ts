@@ -124,6 +124,8 @@ export interface ProtocolSpec {
   version: string;
   description?: string;
   parse_rules: JsonRuleDocument;
+  /** Protocol-level value→label maps, separate from parse_rules. */
+  enums?: Record<string, Record<string, string>>;
   created_at: string;
   updated_at: string;
 }
