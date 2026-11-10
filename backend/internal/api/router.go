@@ -30,6 +30,8 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 			data.POST("/uart", h.IngestUART)
 			data.POST("/uart/batch", h.IngestUARTBatch)
 			data.GET("/uart", h.QueryUART)
+			data.GET("/dump", h.DumpData)
+			data.DELETE("", h.DeleteData)
 			data.POST("/temperature", h.IngestTemperature)
 			data.GET("/temperature", h.QueryTemperature)
 		}
@@ -76,7 +78,7 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 			viz.POST("/query", h.VizQuery)
 			viz.POST("/query-items", h.VizQueryItems)
 			viz.POST("/spectrum", h.VizSpectrum)
-		viz.GET("/commands", h.VizCommands)
+			viz.GET("/commands", h.VizCommands)
 		}
 
 		v1.GET("/ai/status", h.AIStatus)
