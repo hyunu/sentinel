@@ -417,7 +417,24 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
 
   const drawCommandOverlay = useCallback((u: uPlot) => {
     const events = commandEventsRef.current;
-    if (!showCommandsRef.current || events.length === 0) return;
+    // Keep the cursor crosshair out of the label band and reset it whenever
+    // labels are hidden so the line spans the whole plot again.
+    const applyCursorLineInset = (bandCss: number) => {
+      commandBandCssRef.current = bandCss;
+      const cursorLine = u.over?.querySelector<HTMLElement>('.u-cursor-x');
+      if (!cursorLine) return;
+      if (bandCss > 0) {
+        cursorLine.style.top = `${bandCss}px`;
+        cursorLine.style.height = `calc(100% - ${bandCss}px)`;
+      } else {
+        cursorLine.style.top = '';
+        cursorLine.style.height = '';
+      }
+    };
+    if (!showCommandsRef.current || events.length === 0) {
+      applyCursorLineInset(0);
+      return;
+    }
     const xMin = u.scales.x.min;
     const xMax = u.scales.x.max;
     if (typeof xMin !== 'number' || typeof xMax !== 'number') return;
@@ -431,15 +448,18 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     const px = uPlot.pxRatio || 1;
     const css = (value: number) => value * px;
     ctx.save();
+    // uPlot can leave a non-default alpha/composite behind after series draws.
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
     ctx.beginPath();
     ctx.rect(left, top, width, height);
     ctx.clip();
-    // Readable label matching the field-value text size, identical on every
-    // platform because the size is expressed in CSS px.
-    ctx.font = `700 ${Math.max(1, Math.round(css(12)))}px system-ui, sans-serif`;
+    // Regular weight, same CSS size as the field list text on every platform.
+    ctx.font = `${Math.max(1, Math.round(css(12)))}px system-ui, sans-serif`;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const labelBoxHeight = css(18);
-    const labelPadX = css(6);
+    const labelBoxHeight = css(17);
+    const labelPadX = css(4);
     const labelRowGap = css(3);
     const labelRowHeight = labelBoxHeight + labelRowGap;
     const labelTop = css(4);
@@ -495,6 +515,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     // other, whether they were placed to the left or right of their marker.
     const rowLeft: number[] = new Array(maxLabelRows).fill(Number.POSITIVE_INFINITY);
     const rowRight: number[] = new Array(maxLabelRows).fill(Number.NEGATIVE_INFINITY);
+    let usedRows = 0;
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const event = events[i];
       const sec = Date.parse(event.timestamp) / 1000;
@@ -563,12 +584,20 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         );
         rowLeft[row] = Math.min(rowLeft[row], boxX);
         rowRight[row] = Math.max(rowRight[row], boxX + boxWidth);
+        usedRows = Math.max(usedRows, row + 1);
       }
     }
+    // The HTML cursor crosshair sits above the canvas; shorten it to start
+    // below the label band so the dashed line never crosses label text.
+    applyCursorLineInset(
+      usedRows > 0 ? (labelTop + usedRows * labelRowHeight + labelGap) / px : 0,
+    );
     ctx.restore();
   }, []);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  /** Height (CSS px) of the command-label band above the plot. */
+  const commandBandCssRef = useRef(0);
   /** Hover label pinned to the Y axis of the nearest series. */
   const axisHoverRef = useRef<HTMLDivElement | null>(null);
   const sessionBreaksRef = useRef<HTMLDivElement | null>(null);
@@ -1091,6 +1120,19 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           const point = pointsRef.current[idx];
           propsRef.current.onHoverTimeKey(point?.timeKey ?? null);
 
+          // Hovering the command-label band should not cover the labels with
+          // the floating tooltip or the nearest-series pill.
+          if (
+            commandBandCssRef.current > 0
+            && u.cursor.top != null
+            && u.cursor.top <= commandBandCssRef.current
+          ) {
+            hideTooltipEl();
+            const axisEl = axisHoverRef.current;
+            if (axisEl) axisEl.hidden = true;
+            return;
+          }
+
           const {
             tooltipEnabled: enabled,
             hideTooltip: hidden,
@@ -1112,7 +1154,12 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           if (el && enabled) {
             el.hidden = false;
             const lineX = bb.left + (u.cursor.left ?? 0);
-            const mouseY = bb.top + (u.cursor.top ?? 0);
+            // Keep the popup below the command labels so its opaque background
+            // never hides label text.
+            const mouseY = Math.max(
+              bb.top + (u.cursor.top ?? 0),
+              bb.top + commandBandCssRef.current + 4,
+            );
             let html = `<div class="viz-chart-tooltip-label">${formatChartAxisTime(point.timeKey)}</div>`;
             let visibleRank = 0;
             for (let seriesIdx = 0; seriesIdx < chartItemsRef.current.length; seriesIdx++) {
