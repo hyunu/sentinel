@@ -87,7 +87,7 @@ export default function DataViewerPage() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [protocolNames, setProtocolNames] = useState<Record<string, string>>({});
   const [selectedBoard, setSelectedBoard] = useState('');
-  const [timeRange, setTimeRange] = useState<TimeRange>('24h');
+  const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [direction, setDirection] = useState<DirectionFilter>('');
@@ -128,16 +128,18 @@ export default function DataViewerPage() {
   const customEndValid = !!customEndDate && Number.isFinite(customEndDate.getTime());
   const customRangeValid = timeRange !== 'custom'
     || (customStartValid && customEndValid && customEndDate!.getTime() > customStartDate!.getTime());
-  const querySince = timeRange === 'custom'
-    ? (customStartValid ? customStartDate!.toISOString() : undefined)
-    : sinceForRange(timeRange);
-  const queryUntil = timeRange === 'custom'
-    ? (customEndValid ? customEndDate!.toISOString() : undefined)
-    : undefined;
+  // Stable strings for the custom range. Preset ranges must be resolved inside
+  // fetchPage instead: computing "now - 24h" during render changes the string
+  // on every render and would retrigger the fetch effect in a loop.
+  const customSince = customStartValid ? customStartDate!.toISOString() : undefined;
+  const customUntil = customEndValid ? customEndDate!.toISOString() : undefined;
 
   const fetchPage = useCallback(async (opts: { append?: boolean; cursor?: UartCursor | null } = {}) => {
     if (!selectedBoard) return;
     if (timeRange === 'custom' && !customRangeValid) return;
+
+    const since = timeRange === 'custom' ? customSince : sinceForRange(timeRange);
+    const until = timeRange === 'custom' ? customUntil : undefined;
 
     const { append = false, cursor = null } = opts;
     if (append) {
@@ -152,8 +154,8 @@ export default function DataViewerPage() {
         board_id: selectedBoard,
         session_id: selectedSession || undefined,
         direction: direction || undefined,
-        since: querySince,
-        until: queryUntil,
+        since,
+        until,
         limit: pageSize,
         include_total: !append,
         before_ts: cursor?.timestamp,
@@ -179,7 +181,7 @@ export default function DataViewerPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [selectedBoard, selectedSession, direction, pageSize, t, querySince, queryUntil, timeRange, customRangeValid]);
+  }, [selectedBoard, selectedSession, direction, pageSize, t, timeRange, customSince, customUntil, customRangeValid]);
 
   useEffect(() => {
     if (!selectedBoard) return;
@@ -215,8 +217,8 @@ export default function DataViewerPage() {
       board_id: selectedBoard,
       session_id: selectedSession || undefined,
       direction: direction || undefined,
-      since: querySince,
-      until: queryUntil,
+      since: timeRange === 'custom' ? customSince : sinceForRange(timeRange),
+      until: timeRange === 'custom' ? customUntil : undefined,
       include: 'uart',
       gzip: true,
     });
@@ -227,7 +229,7 @@ export default function DataViewerPage() {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-  }, [selectedBoard, selectedSession, direction, querySince, queryUntil, customRangeValid, board?.uid]);
+  }, [selectedBoard, selectedSession, direction, timeRange, customSince, customUntil, customRangeValid, board?.uid]);
 
   const openDeleteAll = useCallback(async () => {
     if (!selectedBoard) return;
