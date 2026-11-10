@@ -26,8 +26,8 @@ export default function CollapsibleSection({
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
         >
-          <span className="collapsible-chevron" aria-hidden>{open ? '▾' : '▸'}</span>
           <span className="collapsible-section-title">{title}</span>
+          <span className="collapsible-chevron" aria-hidden>{open ? '▾' : '▸'}</span>
         </button>
         {actions ? <div className="collapsible-section-actions">{actions}</div> : null}
       </div>

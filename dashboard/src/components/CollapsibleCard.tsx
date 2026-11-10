@@ -26,8 +26,8 @@ export default function CollapsibleCard({
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
         >
-          <span className="collapsible-chevron" aria-hidden>{open ? '▾' : '▸'}</span>
           <span className="collapsible-card-title">{title}</span>
+          <span className="collapsible-chevron" aria-hidden>{open ? '▾' : '▸'}</span>
         </button>
         {actions ? <div className="collapsible-card-actions">{actions}</div> : null}
       </div>

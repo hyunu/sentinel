@@ -5763,10 +5763,10 @@ pre {
 
 .collapsible-chevron {
   display: inline-block;
-  width: 12px;
   flex: none;
+  margin-left: 6px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
 }
 
@@ -5813,10 +5813,6 @@ pre {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
-}
-
-.protocol-enums-section .protocol-enums-editor > .muted:first-child {
-  margin-top: 0;
 }
 
 .protocol-display-editor {

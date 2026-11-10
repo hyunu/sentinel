@@ -279,10 +279,6 @@ export default function ProtocolEditPage() {
             </div>
           )}
         >
-          <CollapsibleSection title={t('protocols.enums')} className="protocol-enums-section">
-            <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
-          </CollapsibleSection>
-
           {legacyNoRules && (
             <div className="alert-banner alert-banner--warning">
               {t('protocols.noRulesWarning')}
@@ -312,6 +308,10 @@ export default function ProtocolEditPage() {
               onChange={e => onRulesChange(e.target.value)}
             />
           )}
+        </CollapsibleCard>
+
+        <CollapsibleCard title={t('protocols.enums')} className="protocol-enums-card">
+          <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
         </CollapsibleCard>
 
         <CollapsibleCard title={t('protocols.testParse')} className="parse-test-card">
