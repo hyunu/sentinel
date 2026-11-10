@@ -568,7 +568,7 @@ async function queryFullDatasetProgressive(
   );
   // Large progressive loads rebuild the whole chart on every publish, so give
   // them a wider interval instead of re-rendering several times per second.
-  const publishIntervalMs = total > 40_000 ? 1000 : 250;
+  const publishIntervalMs = total > 60_000 ? 3000 : total > 40_000 ? 1000 : 250;
 
   const publish = (force: boolean, final = false) => {
     const now = Date.now();
