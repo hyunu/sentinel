@@ -434,15 +434,18 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     ctx.beginPath();
     ctx.rect(left, top, width, height);
     ctx.clip();
-    // Compact label: ~1/3 of the previous Windows rendering, identical on Mac.
-    ctx.font = `700 ${Math.max(1, Math.round(css(8)))}px system-ui, sans-serif`;
+    // Readable label matching the field-value text size, identical on every
+    // platform because the size is expressed in CSS px.
+    ctx.font = `700 ${Math.max(1, Math.round(css(12)))}px system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
-    const labelBoxHeight = css(13);
-    const labelPadX = css(4);
-    const labelRowGap = css(2);
+    const labelBoxHeight = css(18);
+    const labelPadX = css(6);
+    const labelRowGap = css(3);
     const labelRowHeight = labelBoxHeight + labelRowGap;
-    const labelTop = css(3);
-    const labelRadius = css(4);
+    const labelTop = css(4);
+    const labelRadius = css(5);
+    const labelOffset = css(3);
+    const labelGap = css(6);
     // Stack close-together commands on following rows instead of hiding them.
     // When deeply zoomed, allow more rows so bursts can still be read.
     const zoomedRowCap = (xMax - xMin) <= 60 ? 6 : 4;
@@ -488,7 +491,10 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     // Pass 2: labels, newest first. In Live the most recent commands sit at the
     // right edge, so giving them the rows first keeps the important ones
     // visible instead of letting older labels crowd them out.
+    // Track both edges of the boxes on each row so labels never overlap each
+    // other, whether they were placed to the left or right of their marker.
     const rowLeft: number[] = new Array(maxLabelRows).fill(Number.POSITIVE_INFINITY);
+    const rowRight: number[] = new Array(maxLabelRows).fill(Number.NEGATIVE_INFINITY);
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const event = events[i];
       const sec = Date.parse(event.timestamp) / 1000;
@@ -504,8 +510,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + labelPadX * 2;
         if (boxWidth > width - css(2)) continue;
-        const preferRight = x + css(1.5) + boxWidth <= left + width;
-        let boxX = preferRight ? x + css(1.5) : x - css(1.5) - boxWidth;
+        const preferRight = x + labelOffset + boxWidth <= left + width;
+        let boxX = preferRight ? x + labelOffset : x - labelOffset - boxWidth;
         // Labels for commands near the right edge used to be dropped entirely.
         // Clamp them inside the plot instead so live commands always show.
         if (boxX + boxWidth > left + width - css(1)) {
@@ -515,12 +521,15 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           boxX = left + css(1);
         }
 
-        // Use the first row where this box ends before the next label.
-        // Close commands therefore move to row 1, row 2, ... instead of
-        // disappearing behind a single row.
+        // Use the first row where this box does not collide with a label that
+        // is already on that row. Close commands therefore move to row 1,
+        // row 2, ... instead of disappearing behind a single row.
         let row = -1;
         for (let r = 0; r < maxLabelRows; r += 1) {
-          if (boxX + boxWidth <= rowLeft[r] - css(4)) {
+          if (
+            boxX + boxWidth + labelGap <= rowLeft[r]
+            || boxX >= rowRight[r] + labelGap
+          ) {
             row = r;
             break;
           }
@@ -528,12 +537,14 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         if (row < 0) continue;
 
         const boxY = top + labelTop + row * labelRowHeight;
-        ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
+        // Fully opaque backing: the dashed command lines and plot grid must not
+        // show through the text.
+        ctx.fillStyle = 'rgba(8, 10, 16, 1)';
         if (typeof ctx.roundRect === 'function') {
           ctx.beginPath();
           ctx.roundRect(boxX, boxY, boxWidth, labelBoxHeight, labelRadius);
           ctx.fill();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
           ctx.lineWidth = 1;
           ctx.stroke();
         } else {
@@ -550,7 +561,8 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
           boxX + labelPadX,
           boxY + labelBoxHeight / 2 + css(0.5),
         );
-        rowLeft[row] = boxX;
+        rowLeft[row] = Math.min(rowLeft[row], boxX);
+        rowRight[row] = Math.max(rowRight[row], boxX + boxWidth);
       }
     }
     ctx.restore();
