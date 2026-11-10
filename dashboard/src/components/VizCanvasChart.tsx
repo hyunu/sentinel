@@ -47,7 +47,12 @@ export interface VizYAxisMetrics {
 }
 
 export interface VizCanvasChartHandle {
-  setWindowByIndex(start: number, end: number, opts?: VizViewportSyncOptions): void;
+  setWindowByIndex(
+    start: number,
+    end: number,
+    opts?: VizViewportSyncOptions,
+    rangeMs?: { startMs: number; endMs: number },
+  ): void;
   setWindowByTimeKeys(startTimeKey: string, endTimeKey: string, opts?: VizViewportSyncOptions): void;
   setWindowByTimeMs(startMs: number, endMs: number, opts?: VizViewportSyncOptions): void;
   getXScaleMs(): { startMs: number; endMs: number } | null;
@@ -145,6 +150,8 @@ export interface VizCanvasChartProps {
   sessionBreakTimesSec?: readonly number[];
   fullTimeline?: VizChartPoint[];
   windowIndices?: { start: number; end: number } | null;
+  /** Exact time range for an index window (keeps pan/zoom spans stable). */
+  windowTimeRange?: { startMs: number; endMs: number } | null;
   xWindowTimeKeys?: { start: string; end: string } | null;
   /** Changes whenever explicit Y min/max (profile or global range) change. */
   yDomainOverrideKey?: string;
@@ -382,6 +389,7 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     sessionBreakTimesSec = [],
     fullTimeline,
     windowIndices,
+    windowTimeRange,
     xWindowTimeKeys,
     yDomainOverrideKey = '',
     filterPointsToXWindow = true,
@@ -508,13 +516,21 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       ctx.fill();
     }
 
-    // Pass 2: labels, newest first. In Live the most recent commands sit at the
-    // right edge, so giving them the rows first keeps the important ones
-    // visible instead of letting older labels crowd them out.
+    // Pass 2: choose label rows newest-first. The newest command keeps the
+    // first row so Live never loses it, but the rows are drawn bottom-up:
+    // the oldest visible command ends up at the top, so a call is shown above
+    // its later result instead of the result appearing first.
     // Track both edges of the boxes on each row so labels never overlap each
     // other, whether they were placed to the left or right of their marker.
     const rowLeft: number[] = new Array(maxLabelRows).fill(Number.POSITIVE_INFINITY);
     const rowRight: number[] = new Array(maxLabelRows).fill(Number.NEGATIVE_INFINITY);
+    const placed: Array<{
+      row: number;
+      boxX: number;
+      boxWidth: number;
+      label: string;
+      color: string;
+    }> = [];
     let usedRows = 0;
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const event = events[i];
@@ -557,35 +573,40 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
         }
         if (row < 0) continue;
 
-        const boxY = top + labelTop + row * labelRowHeight;
-        // Fully opaque backing: the dashed command lines and plot grid must not
-        // show through the text.
-        ctx.fillStyle = 'rgba(8, 10, 16, 1)';
-        if (typeof ctx.roundRect === 'function') {
-          ctx.beginPath();
-          ctx.roundRect(boxX, boxY, boxWidth, labelBoxHeight, labelRadius);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-        } else {
-          ctx.fillRect(boxX, boxY, boxWidth, labelBoxHeight);
-        }
-
-        // Keep the command color as a compact accent bar; the text itself is
-        // near-white so it stays readable on every series color.
-        ctx.fillStyle = color;
-        ctx.fillRect(boxX, boxY, Math.max(1, css(1.5)), labelBoxHeight);
-        ctx.fillStyle = 'rgba(244, 247, 255, 0.98)';
-        ctx.fillText(
-          label,
-          boxX + labelPadX,
-          boxY + labelBoxHeight / 2 + css(0.5),
-        );
+        placed.push({ row, boxX, boxWidth, label, color });
         rowLeft[row] = Math.min(rowLeft[row], boxX);
         rowRight[row] = Math.max(rowRight[row], boxX + boxWidth);
         usedRows = Math.max(usedRows, row + 1);
       }
+    }
+    for (const item of placed) {
+      // Newest row (0) is drawn at the bottom of the band, older rows above.
+      const rowFromTop = usedRows - 1 - item.row;
+      const boxY = top + labelTop + rowFromTop * labelRowHeight;
+      // Fully opaque backing: the dashed command lines and plot grid must not
+      // show through the text.
+      ctx.fillStyle = 'rgba(8, 10, 16, 1)';
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(item.boxX, boxY, item.boxWidth, labelBoxHeight, labelRadius);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      } else {
+        ctx.fillRect(item.boxX, boxY, item.boxWidth, labelBoxHeight);
+      }
+
+      // Keep the command color as a compact accent bar; the text itself is
+      // near-white so it stays readable on every series color.
+      ctx.fillStyle = item.color;
+      ctx.fillRect(item.boxX, boxY, Math.max(1, css(1.5)), labelBoxHeight);
+      ctx.fillStyle = 'rgba(244, 247, 255, 0.98)';
+      ctx.fillText(
+        item.label,
+        item.boxX + labelPadX,
+        boxY + labelBoxHeight / 2 + css(0.5),
+      );
     }
     // The HTML cursor crosshair sits above the canvas; shorten it to start
     // below the label band so the dashed line never crosses label text.
@@ -725,12 +746,24 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
     }
   }, [syncPlotAndBreaks]);
 
-  const applyWindowIndices = useCallback((start: number, end: number, opts?: VizViewportSyncOptions) => {
+  const applyWindowIndices = useCallback((
+    start: number,
+    end: number,
+    opts?: VizViewportSyncOptions,
+    rangeMs?: { startMs: number; endMs: number },
+  ) => {
     const u = plotRef.current;
     const timeline = fullTimelineRef.current;
     if (!u || !timeline || timeline.length === 0) return;
-    const range = xScaleFromIndices(timeline, start, end);
-    if (!range) return;
+    const range = rangeMs
+      ? {
+        min: rangeMs.startMs / 1000,
+        max: rangeMs.endMs / 1000,
+      }
+      : xScaleFromIndices(timeline, start, end);
+    if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.max <= range.min) {
+      return;
+    }
     applyXRangeToPlot(u, range, opts);
     windowIndicesRef.current = { start, end };
   }, [applyXRangeToPlot]);
@@ -885,11 +918,16 @@ const VizCanvasChart = forwardRef<VizCanvasChartHandle, VizCanvasChartProps>(fun
       return;
     }
     if (fullTimeline && windowIndices) {
-      applyWindowIndices(windowIndices.start, windowIndices.end);
+      applyWindowIndices(
+        windowIndices.start,
+        windowIndices.end,
+        undefined,
+        windowTimeRange ?? undefined,
+      );
       return;
     }
     // No React window — keep imperative viewport from pan/wheel; reset via resetWindow() only.
-  }, [xWindowTimeKeys, windowIndices, fullTimeline, applyXWindowTimeKeys, applyWindowIndices]);
+  }, [xWindowTimeKeys, windowIndices, windowTimeRange, fullTimeline, applyXWindowTimeKeys, applyWindowIndices]);
 
   useImperativeHandle(ref, () => ({
     setWindowByIndex: applyWindowIndices,

@@ -1569,10 +1569,15 @@ export default function VizDashboardPage() {
     if (inMemoryFullRef.current) {
       // Keep Y-scale computation out of the gesture loop. It is flushed once
       // when the viewport settles, same as the downsampled/detail path.
+      const startMs = nextRange.startTs ? Date.parse(nextRange.startTs) : NaN;
+      const endMs = nextRange.endTs ? Date.parse(nextRange.endTs) : NaN;
       chartCanvasRef.current?.setWindowByIndex(
         nextRange.start,
         nextRange.end,
         { syncY: false, lightweight: true },
+        Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+          ? { startMs, endMs }
+          : undefined,
       );
       scheduleViewportFinishRef.current();
     } else if (nextRange.startTs && nextRange.endTs) {
@@ -4446,6 +4451,19 @@ export default function VizDashboardPage() {
     [zoomWindow?.start, zoomWindow?.end, inMemoryFull],
   );
 
+  // In-memory windows are index-based, but the requested time span must win:
+  // otherwise panning a deeply zoomed sparse series snaps the window to two
+  // data points and the zoom ratio visibly changes mid-drag.
+  const canvasWindowTimeRange = useMemo(() => {
+    if (!inMemoryFull || !zoomWindow?.startTs || !zoomWindow?.endTs) return null;
+    const startMs = Date.parse(zoomWindow.startTs);
+    const endMs = Date.parse(zoomWindow.endTs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      return null;
+    }
+    return { startMs, endMs };
+  }, [inMemoryFull, zoomWindow?.startTs, zoomWindow?.endTs]);
+
   const canvasXWindowTimeKeys = useMemo(() => {
     if (inMemoryFull || !chartZoom?.startTs || !chartZoom?.endTs) return null;
     const fullSpan = fullChartTimeSpan(chartData);
@@ -5805,6 +5823,7 @@ export default function VizDashboardPage() {
             sessionBreakTimesSec={sessionBreakTimesSec}
             fullTimeline={inMemoryFull && chartData.length > 0 ? chartData : undefined}
             windowIndices={canvasWindowIndices}
+            windowTimeRange={canvasWindowTimeRange}
             xWindowTimeKeys={canvasXWindowTimeKeys}
             yDomainOverrideKey={yDomainOverrideKey}
             filterPointsToXWindow={!canvasClipViewport}
