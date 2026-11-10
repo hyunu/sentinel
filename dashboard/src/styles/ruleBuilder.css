@@ -295,9 +295,45 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+
+.rb-drag-handle {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.rb-drag-handle:hover {
+  background: var(--surface-inset);
+  color: var(--text);
+}
+
+.rb-drag-handle:active {
+  cursor: grabbing;
+}
+
+.rb-drag-grip {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.45;
+}
+
+.rb-row:hover .rb-drag-grip {
+  opacity: 0.9;
+}
+
+.rb-field-card.is-dragging {
+  opacity: 0.45;
+}
+
+.rb-field-card.is-drop-target {
+  border-color: var(--accent, #7c83ff);
+  box-shadow: 0 0 0 2px var(--primary-dim);
 }
 
 .rb-name {

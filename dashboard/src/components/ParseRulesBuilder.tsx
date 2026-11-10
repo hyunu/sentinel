@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type DragEvent,
   type ReactNode,
 } from 'react';
 import type { BitDef, JsonFieldRule, JsonRuleDocument } from '../types/ruleparser';
@@ -564,6 +565,53 @@ type FieldRulesEditorProps = {
 
 function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'root' }: FieldRulesEditorProps) {
   const collapseCtx = useContext(CollapseContext);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = (i: number, e: DragEvent<HTMLElement>) => {
+    e.stopPropagation();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', `${pathPrefix}\n${i}`);
+    setDragIndex(i);
+    setDragOverIndex(i);
+  };
+
+  const handleDragOver = (i: number, e: DragEvent<HTMLElement>) => {
+    // Nested lists handle their own drops; don't let the parent card react to
+    // a drag that is moving over a child list.
+    e.stopPropagation();
+    if (dragIndex == null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIndex !== i) setDragOverIndex(i);
+  };
+
+  const handleDragLeave = (i: number, e: DragEvent<HTMLElement>) => {
+    if (dragOverIndex !== i) return;
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) return;
+    setDragOverIndex(null);
+  };
+
+  const handleDrop = (i: number, e: DragEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const [fromList, rawIndex] = e.dataTransfer.getData('text/plain').split('\n');
+    const from = Number(rawIndex);
+    setDragIndex(null);
+    setDragOverIndex(null);
+    if (fromList !== pathPrefix || !Number.isInteger(from) || from === i) return;
+    e.preventDefault();
+    const next = [...rules];
+    const [moved] = next.splice(from, 1);
+    if (!moved) return;
+    next.splice(i, 0, moved);
+    onChange(next);
+  };
+
+  const resetDrag = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
 
   const update = (i: number, patch: Partial<JsonFieldRule>) => {
     onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -621,12 +669,19 @@ function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'roo
             total={rules.length}
             depth={depth}
             fieldKey={`${pathPrefix}.${i}`}
+            dragging={dragIndex === i}
+            dropTarget={dragOverIndex === i}
             onChange={patch => update(i, patch)}
             onChangeType={t => updateType(i, t)}
             onMoveUp={() => onChange(moveRule(rules, i, -1))}
             onMoveDown={() => onChange(moveRule(rules, i, 1))}
             onDuplicate={() => onChange(duplicateRule(rules, i))}
             onRemove={() => remove(i)}
+            onDragStart={e => handleDragStart(i, e)}
+            onDragOver={e => handleDragOver(i, e)}
+            onDragLeave={e => handleDragLeave(i, e)}
+            onDrop={e => handleDrop(i, e)}
+            onDragEnd={resetDrag}
           />
         ))}
       </div>
@@ -644,24 +699,38 @@ function FieldBlock({
   total,
   depth,
   fieldKey,
+  dragging = false,
+  dropTarget = false,
   onChange,
   onChangeType,
   onMoveUp,
   onMoveDown,
   onDuplicate,
   onRemove,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
 }: {
   rule: JsonFieldRule;
   index: number;
   total: number;
   depth: number;
   fieldKey: string;
+  dragging?: boolean;
+  dropTarget?: boolean;
   onChange: (patch: Partial<JsonFieldRule>) => void;
   onChangeType: (type: string) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onDuplicate: () => void;
   onRemove: () => void;
+  onDragStart: (e: DragEvent<HTMLElement>) => void;
+  onDragOver: (e: DragEvent<HTMLElement>) => void;
+  onDragLeave: (e: DragEvent<HTMLElement>) => void;
+  onDrop: (e: DragEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
 }) {
   const hasNested = fieldHasNestedChildren(rule);
   const defaultOpen = depth === 0 && !['Switch', 'RepeatCount'].includes(rule.type);
@@ -676,7 +745,12 @@ function FieldBlock({
   const summary = hasNested ? nestedChildSummary(rule) : '';
 
   return (
-    <div className={`rb-field-card${hasNested ? ' has-children' : ''}${hasNested && open ? ' is-expanded' : ''}${hasNested && !open ? ' is-collapsed' : ''}`}>
+    <div
+      className={`rb-field-card${hasNested ? ' has-children' : ''}${hasNested && open ? ' is-expanded' : ''}${hasNested && !open ? ' is-collapsed' : ''}${dragging ? ' is-dragging' : ''}${dropTarget ? ' is-drop-target' : ''}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="rb-row">
         {hasNested ? (
           <button type="button" className="rb-chevron-btn" onClick={() => collapse.setOpen(!open)} aria-expanded={open} aria-label={open ? 'Collapse' : 'Expand'}>
@@ -685,7 +759,17 @@ function FieldBlock({
         ) : (
           <span className="rb-chevron-spacer" />
         )}
-        <span className="rb-index">{index + 1}</span>
+        <span
+          className="rb-index rb-drag-handle"
+          draggable
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          title="Drag to reorder"
+          aria-label="Drag to reorder"
+        >
+          <span className="rb-drag-grip" aria-hidden>⠿</span>
+          {index + 1}
+        </span>
         <input
           className="rb-name"
           value={rule.name}
