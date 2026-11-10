@@ -5731,11 +5731,91 @@ pre {
   gap: 8px;
 }
 
-.protocol-enums-card .protocol-enums-editor {
-  padding: 0 16px 16px;
+/* ── Collapsible protocol groups ── */
+
+.collapsible-card-header {
+  margin-bottom: 16px;
 }
 
-.protocol-enums-card .protocol-enums-editor > .muted:first-child {
+.collapsible-card.is-collapsed .collapsible-card-header {
+  margin-bottom: 0;
+}
+
+.collapsible-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.collapsible-card-header .collapsible-card-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.collapsible-chevron {
+  display: inline-block;
+  width: 12px;
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.collapsible-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collapsible-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.collapsible-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.collapsible-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.collapsible-section.is-collapsed .collapsible-section-header {
+  margin-bottom: 0;
+}
+
+.collapsible-section-header .collapsible-section-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.protocol-display-section .protocol-display-editor {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.protocol-enums-section .protocol-enums-editor > .muted:first-child {
   margin-top: 0;
 }
 

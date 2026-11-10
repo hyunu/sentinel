@@ -6,6 +6,8 @@ import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
 import ProtocolDisplayEditor from '../components/ProtocolDisplayEditor';
 import ProtocolEnumsEditor, { type ProtocolEnumMap } from '../components/ProtocolEnumsEditor';
+import CollapsibleCard from '../components/CollapsibleCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import ParseRulesManual from '../components/ParseRulesManual';
 import { useTranslation } from '../i18n';
 import { DEFAULT_LCP_PARSE_RULES } from '../lib/protocolFormat';
@@ -216,10 +218,7 @@ export default function ProtocolEditPage() {
       <ParseRulesManual open={manualOpen} onClose={() => setManualOpen(false)} />
 
       <div className="protocol-edit-stack">
-        <div className="card protocol-info-card">
-          <div className="card-header">
-            <h2>{t('common.general')}</h2>
-          </div>
+        <CollapsibleCard title={t('common.general')} className="protocol-info-card">
           <div className="protocol-info-grid">
             <div className="form-field">
               <label>{t('common.name')}</label>
@@ -253,19 +252,12 @@ export default function ProtocolEditPage() {
               </select>
             </div>
           </div>
-        </div>
+        </CollapsibleCard>
 
-        <div className="card protocol-enums-card">
-          <div className="card-header">
-            <h2>Enums</h2>
-            <span className="muted">parse_rules와 분리된 프로토콜 Enum 그룹</span>
-          </div>
-          <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
-        </div>
-
-        <div className="card rules-editor-card">
-          <div className="card-header">
-            <h2>{t('protocols.parseRules')}</h2>
+        <CollapsibleCard
+          title={t('protocols.parseRules')}
+          className="rules-editor-card"
+          actions={(
             <div className="segmented-control">
               <button
                 type="button"
@@ -285,11 +277,15 @@ export default function ProtocolEditPage() {
                 {t('protocols.jsonMode')}
               </button>
             </div>
-          </div>
+          )}
+        >
+          <CollapsibleSection title={t('protocols.enums')} className="protocol-enums-section">
+            <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
+          </CollapsibleSection>
 
           {legacyNoRules && (
             <div className="alert-banner alert-banner--warning">
-              This protocol has no parse_rules. Load a template and save.
+              {t('protocols.noRulesWarning')}
             </div>
           )}
 
@@ -300,7 +296,12 @@ export default function ProtocolEditPage() {
           {editMode === 'ui' ? (
             <>
               <ParseRulesBuilder document={rules} onChange={applyRules} />
-              <ProtocolDisplayEditor document={rules} onChange={applyRules} enums={enums} />
+              <CollapsibleSection
+                title={t('protocols.fieldDisplay')}
+                className="protocol-display-section"
+              >
+                <ProtocolDisplayEditor document={rules} onChange={applyRules} enums={enums} />
+              </CollapsibleSection>
             </>
           ) : (
             <textarea
@@ -311,12 +312,9 @@ export default function ProtocolEditPage() {
               onChange={e => onRulesChange(e.target.value)}
             />
           )}
-        </div>
+        </CollapsibleCard>
 
-        <div className="card parse-test-card">
-          <div className="card-header">
-            <h2>{t('protocols.testParse')}</h2>
-          </div>
+        <CollapsibleCard title={t('protocols.testParse')} className="parse-test-card">
           <p className="parse-test-hint">Enter HEX to validate instantly via the Go engine.</p>
           <input
             className="mono parse-test-input"
@@ -340,7 +338,7 @@ export default function ProtocolEditPage() {
           {!testHex && (
             <p className="muted parse-test-empty">Enter HEX to see results.</p>
           )}
-        </div>
+        </CollapsibleCard>
       </div>
     </div>
   );

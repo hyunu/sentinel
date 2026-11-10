@@ -164,7 +164,7 @@ export default function ProtocolEnumsEditor({ enums, onChange }: ProtocolEnumsEd
   return (
     <section className="protocol-enums-editor">
       <p className="muted">
-        Enum은 parse_rules와 별도로 관리되는 프로토콜 그룹입니다. 필드 규칙에서는 Enum 이름만 참조합니다.
+        Enum은 파싱 규칙과 별도로 관리되는 프로토콜 그룹입니다. 필드 규칙에서는 Enum 이름만 참조합니다.
       </p>
 
       <div className="pde-enum-toolbar">
