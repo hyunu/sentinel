@@ -290,15 +290,7 @@ export default function ProtocolEditPage() {
           )}
 
           {editMode === 'ui' ? (
-            <>
-              <ParseRulesBuilder document={rules} onChange={applyRules} />
-              <CollapsibleSection
-                title={t('protocols.fieldDisplay')}
-                className="protocol-display-section"
-              >
-                <ProtocolDisplayEditor document={rules} onChange={applyRules} enums={enums} />
-              </CollapsibleSection>
-            </>
+            <ParseRulesBuilder document={rules} onChange={applyRules} />
           ) : (
             <textarea
               className="mono parse-rules-editor"
@@ -312,6 +304,12 @@ export default function ProtocolEditPage() {
 
         <CollapsibleCard title={t('protocols.enums')} className="protocol-enums-card">
           <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
+          <CollapsibleSection
+            title={t('protocols.fieldDisplay')}
+            className="protocol-display-section"
+          >
+            <ProtocolDisplayEditor document={rules} onChange={applyRules} enums={enums} />
+          </CollapsibleSection>
         </CollapsibleCard>
 
         <CollapsibleCard title={t('protocols.testParse')} className="parse-test-card">

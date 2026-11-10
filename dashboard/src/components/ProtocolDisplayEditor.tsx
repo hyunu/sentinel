@@ -108,7 +108,7 @@ export default function ProtocolDisplayEditor({ document, onChange, enums }: Pro
   return (
     <section className="protocol-display-editor">
       <p className="muted">
-        필드별로 연속/이벤트/숨김을 지정하고, 이벤트 값은 별도 Enum 그룹에서 해석해 차트에 표시합니다.
+        필드별로 연속/이벤트/숨김을 지정하고, 이벤트 값은 위 Enum 정의로 해석해 차트에 표시합니다.
       </p>
 
       <div className="pde-block">
