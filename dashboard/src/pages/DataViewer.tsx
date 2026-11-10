@@ -6,7 +6,7 @@ import Modal from '../components/Modal';
 import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
 
-type TimeRange = 'all' | '1h' | '24h' | '7d';
+type TimeRange = 'all' | '1h' | '24h' | '7d' | 'custom';
 type DirectionFilter = '' | 'TX' | 'RX';
 
 const PAGE_SIZES = [50, 100, 200, 500, 1000, 2000, 5000] as const;
@@ -35,9 +35,16 @@ function hexToAscii(hex: string): string {
 }
 
 function sinceForRange(range: TimeRange): string | undefined {
-  if (range === 'all') return undefined;
+  if (range === 'all' || range === 'custom') return undefined;
   const ms = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
   return new Date(Date.now() - ms).toISOString();
+}
+
+/** Format a Date for <input type="datetime-local"> in the browser's local time. */
+function toDateTimeLocalValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatCount(n: number): string {
@@ -81,6 +88,8 @@ export default function DataViewerPage() {
   const [protocolNames, setProtocolNames] = useState<Record<string, string>>({});
   const [selectedBoard, setSelectedBoard] = useState('');
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [direction, setDirection] = useState<DirectionFilter>('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedSession, setSelectedSession] = useState('');
@@ -113,8 +122,22 @@ export default function DataViewerPage() {
     ? (protocolNames[board.protocol_id] ?? board.protocol_id)
     : t('dataViewer.notAssigned');
 
+  const customStartDate = customStart ? new Date(customStart) : null;
+  const customEndDate = customEnd ? new Date(customEnd) : null;
+  const customStartValid = !!customStartDate && Number.isFinite(customStartDate.getTime());
+  const customEndValid = !!customEndDate && Number.isFinite(customEndDate.getTime());
+  const customRangeValid = timeRange !== 'custom'
+    || (customStartValid && customEndValid && customEndDate!.getTime() > customStartDate!.getTime());
+  const querySince = timeRange === 'custom'
+    ? (customStartValid ? customStartDate!.toISOString() : undefined)
+    : sinceForRange(timeRange);
+  const queryUntil = timeRange === 'custom'
+    ? (customEndValid ? customEndDate!.toISOString() : undefined)
+    : undefined;
+
   const fetchPage = useCallback(async (opts: { append?: boolean; cursor?: UartCursor | null } = {}) => {
     if (!selectedBoard) return;
+    if (timeRange === 'custom' && !customRangeValid) return;
 
     const { append = false, cursor = null } = opts;
     if (append) {
@@ -129,7 +152,8 @@ export default function DataViewerPage() {
         board_id: selectedBoard,
         session_id: selectedSession || undefined,
         direction: direction || undefined,
-        since: sinceForRange(timeRange),
+        since: querySince,
+        until: queryUntil,
         limit: pageSize,
         include_total: !append,
         before_ts: cursor?.timestamp,
@@ -155,7 +179,7 @@ export default function DataViewerPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [selectedBoard, selectedSession, timeRange, direction, pageSize, t]);
+  }, [selectedBoard, selectedSession, direction, pageSize, t, querySince, queryUntil, timeRange, customRangeValid]);
 
   useEffect(() => {
     if (!selectedBoard) return;
@@ -177,7 +201,7 @@ export default function DataViewerPage() {
     if (!selectedBoard) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchPage sets loading state before the async request
     fetchPage();
-  }, [selectedBoard, selectedSession, timeRange, direction, pageSize, t, fetchPage]);
+  }, [selectedBoard, selectedSession, direction, timeRange, pageSize, t, fetchPage]);
 
   const statLabel = total !== null
     ? t('dataViewer.showingOf', { shown: formatCount(data.length), total: formatCount(total) })
@@ -186,12 +210,13 @@ export default function DataViewerPage() {
       : t('dataViewer.noRecords');
 
   const handleDownload = useCallback(() => {
-    if (!selectedBoard) return;
+    if (!selectedBoard || !customRangeValid) return;
     const url = api.data.dumpUrl({
       board_id: selectedBoard,
       session_id: selectedSession || undefined,
       direction: direction || undefined,
-      since: sinceForRange(timeRange),
+      since: querySince,
+      until: queryUntil,
       include: 'uart',
       gzip: true,
     });
@@ -202,7 +227,7 @@ export default function DataViewerPage() {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-  }, [selectedBoard, selectedSession, direction, timeRange, board?.uid]);
+  }, [selectedBoard, selectedSession, direction, querySince, queryUntil, customRangeValid, board?.uid]);
 
   const openDeleteAll = useCallback(async () => {
     if (!selectedBoard) return;
@@ -288,13 +313,46 @@ export default function DataViewerPage() {
           </div>
           <div className="form-field">
             <label>{t('dataViewer.timeRange')}</label>
-            <select value={timeRange} onChange={e => setTimeRange(e.target.value as TimeRange)}>
+            <select
+              value={timeRange}
+              onChange={e => {
+                const value = e.target.value as TimeRange;
+                setTimeRange(value);
+                if (value === 'custom' && !customStart && !customEnd) {
+                  const end = new Date();
+                  const start = new Date(end.getTime() - 86_400_000);
+                  setCustomStart(toDateTimeLocalValue(start));
+                  setCustomEnd(toDateTimeLocalValue(end));
+                }
+              }}
+            >
               <option value="1h">{t('dataViewer.last1h')}</option>
               <option value="24h">{t('dataViewer.last24h')}</option>
               <option value="7d">{t('dataViewer.last7d')}</option>
+              <option value="custom">{t('dataViewer.customRange')}</option>
               <option value="all">{t('dataViewer.allTime')}</option>
             </select>
           </div>
+          {timeRange === 'custom' && (
+            <>
+              <div className="form-field">
+                <label>{t('dataViewer.startDateTime')}</label>
+                <input
+                  type="datetime-local"
+                  value={customStart}
+                  onChange={e => setCustomStart(e.target.value)}
+                />
+              </div>
+              <div className="form-field">
+                <label>{t('dataViewer.endDateTime')}</label>
+                <input
+                  type="datetime-local"
+                  value={customEnd}
+                  onChange={e => setCustomEnd(e.target.value)}
+                />
+              </div>
+            </>
+          )}
           <div className="form-field">
             <label>{t('dataViewer.direction')}</label>
             <select value={direction} onChange={e => setDirection(e.target.value as DirectionFilter)}>
@@ -335,6 +393,11 @@ export default function DataViewerPage() {
             {t('dataViewer.noProtocolHint')}
           </p>
         )}
+        {timeRange === 'custom' && !customRangeValid && (
+          <p className="muted section-hint">
+            {t('dataViewer.customRangeInvalid')}
+          </p>
+        )}
       </div>
 
       <div className="card data-viewer-table-card">
@@ -345,7 +408,7 @@ export default function DataViewerPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={loading}
+                disabled={loading || (timeRange === 'custom' && !customRangeValid)}
                 onClick={() => fetchPage()}
               >
                 {t('common.refresh')}
@@ -353,7 +416,7 @@ export default function DataViewerPage() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={loading}
+                disabled={loading || (timeRange === 'custom' && !customRangeValid)}
                 onClick={handleDownload}
               >
                 {t('dataViewer.download')}
