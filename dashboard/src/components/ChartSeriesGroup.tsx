@@ -8,6 +8,8 @@ type ChartSeriesGroupProps = {
   timeKey: string | null;
   formatTime: (iso: string) => string;
   rows: CursorValueRow[];
+  /** Items whose values are being fetched after being turned back on. */
+  loadingItemIds?: readonly string[];
   /** When docked left, match the chart viewport height so the grid scrolls
    *  internally instead of stretching the page. */
   panelHeight?: number;
@@ -45,6 +47,7 @@ export default function ChartSeriesGroup({
   timeKey,
   formatTime,
   rows,
+  loadingItemIds,
   panelHeight,
   onToggleVisibility,
   onToggleFavorite,
@@ -129,6 +132,7 @@ export default function ChartSeriesGroup({
         timeKey={timeKey}
         formatTime={formatTime}
         rows={rows}
+        loadingItemIds={loadingItemIds}
         onToggleVisibility={onToggleVisibility}
         onToggleFavorite={onToggleFavorite}
       />
