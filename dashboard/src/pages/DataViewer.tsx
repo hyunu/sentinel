@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
-import type { UartData, Board, UartCursor, Session } from '../api';
+import type { UartData, Board, UartCursor, Session, ProtocolSpec, DataReparseJob } from '../api';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import DataCell from '../components/DataCell';
-import { formatDateTime } from '../utils/date';
+import { formatDateTime, formatTimeInterval } from '../utils/date';
 import { useTranslation } from '../i18n';
 
 type TimeRange = 'all' | '1h' | '24h' | '7d' | 'custom';
@@ -51,6 +51,7 @@ function DirectionPill({ direction }: { direction: string }) {
 export default function DataViewerPage() {
   const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
+  const [protocols, setProtocols] = useState<ProtocolSpec[]>([]);
   const [protocolNames, setProtocolNames] = useState<Record<string, string>>({});
   const [selectedBoard, setSelectedBoard] = useState('');
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
@@ -73,10 +74,21 @@ export default function DataViewerPage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [reparseOpen, setReparseOpen] = useState(false);
+  const [reparseProtocol, setReparseProtocol] = useState('');
+  const [reparseMode, setReparseMode] = useState<'missing' | 'all'>('missing');
+  const [reparseScope, setReparseScope] = useState<'filter' | 'board'>('filter');
+  const [reparseBackup, setReparseBackup] = useState(false);
+  const [reparseClearRollups, setReparseClearRollups] = useState(true);
+  const [reparseConfirmed, setReparseConfirmed] = useState(false);
+  const [reparseJob, setReparseJob] = useState<DataReparseJob | null>(null);
+  const [reparseStarting, setReparseStarting] = useState(false);
+  const [reparseError, setReparseError] = useState('');
 
   useEffect(() => {
     api.boards.list().then(setBoards).catch(console.error);
     api.protocols.list().then(list => {
+      setProtocols(list);
       const names: Record<string, string> = {};
       for (const p of list) names[p.id] = p.name;
       setProtocolNames(names);
@@ -245,6 +257,170 @@ export default function DataViewerPage() {
     }
   }, [selectedBoard, deleteConfirmed, t]);
 
+  const finishedReparseRef = useRef<string | null>(null);
+
+  const openReparse = useCallback(() => {
+    if (!selectedBoard) return;
+    const boardProtocol = board?.protocol_id;
+    const preferred = boardProtocol && protocols.some(p => p.id === boardProtocol)
+      ? boardProtocol
+      : protocols[0]?.id ?? '';
+    setReparseProtocol(preferred);
+    setReparseMode('missing');
+    setReparseScope('filter');
+    setReparseBackup(false);
+    setReparseClearRollups(true);
+    setReparseConfirmed(false);
+    setReparseJob(null);
+    setReparseError('');
+    setReparseOpen(true);
+  }, [selectedBoard, board?.protocol_id, protocols]);
+
+  const startReparse = useCallback(async () => {
+    if (!selectedBoard || !reparseProtocol || reparseStarting) return;
+    setReparseStarting(true);
+    setReparseError('');
+    try {
+      const scoped = reparseScope === 'filter';
+      const since = scoped
+        ? (timeRange === 'custom' ? customSince : sinceForRange(timeRange))
+        : undefined;
+      const until = scoped && timeRange === 'custom' ? customUntil : undefined;
+      const result = await api.data.reparseStart({
+        board_id: selectedBoard,
+        protocol_id: reparseProtocol,
+        mode: reparseMode,
+        since,
+        until,
+        session_id: scoped ? (selectedSession || undefined) : undefined,
+        direction: scoped ? (direction || undefined) : undefined,
+        backup_parsed: reparseBackup,
+        clear_rollups: reparseClearRollups,
+      });
+      try {
+        const job = await api.data.reparseStatus(result.job_id);
+        setReparseJob(job);
+      } catch {
+        setReparseJob({
+          id: result.job_id,
+          board_id: selectedBoard,
+          protocol_id: reparseProtocol,
+          protocol_version: '',
+          mode: reparseMode,
+          since: since ?? null,
+          until: until ?? null,
+          session_id: scoped ? selectedSession : undefined,
+          direction: scoped ? direction : undefined,
+          backup_parsed: reparseBackup,
+          clear_rollups: reparseClearRollups,
+          state: 'running',
+          phase: 'parse',
+          total: result.total,
+          processed: 0,
+          success: 0,
+          failed: 0,
+          skipped: 0,
+          rollups_cleared: 0,
+          cancel_requested: false,
+          created_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      setReparseError(t('dataViewer.reparseStartFailed'));
+    } finally {
+      setReparseStarting(false);
+    }
+  }, [
+    selectedBoard, reparseProtocol, reparseStarting, reparseScope, timeRange,
+    customSince, customUntil, selectedSession, direction, reparseMode,
+    reparseBackup, reparseClearRollups, t,
+  ]);
+
+  const cancelReparse = useCallback(async () => {
+    if (!reparseJob) return;
+    setReparseError('');
+    try {
+      await api.data.reparseCancel(reparseJob.id);
+      setReparseJob(prev => (prev ? { ...prev, state: 'canceling', cancel_requested: true } : prev));
+    } catch (e) {
+      console.error(e);
+      setReparseError(t('dataViewer.reparseCancelFailed'));
+    }
+  }, [reparseJob, t]);
+
+  const closeReparse = useCallback(() => {
+    if (reparseJob && (reparseJob.state === 'running' || reparseJob.state === 'canceling')) {
+      return;
+    }
+    setReparseOpen(false);
+  }, [reparseJob]);
+
+  useEffect(() => {
+    if (!reparseJob) return;
+    if (reparseJob.state !== 'running' && reparseJob.state !== 'canceling') return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const job = await api.data.reparseStatus(reparseJob.id);
+        if (!cancelled) setReparseJob(job);
+      } catch (e) {
+        if (!cancelled) {
+          console.error(e);
+          setReparseError(t('dataViewer.reparseStatusFailed'));
+        }
+      }
+    };
+    const timer = window.setInterval(() => void tick(), 800);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [reparseJob?.id, reparseJob?.state, t]);
+
+  useEffect(() => {
+    if (!reparseJob) return;
+    if (reparseJob.state === 'running' || reparseJob.state === 'canceling') return;
+    if (finishedReparseRef.current === reparseJob.id) return;
+    finishedReparseRef.current = reparseJob.id;
+    if (reparseJob.processed > 0) void fetchPage();
+    if (reparseJob.state === 'done') {
+      setNotice(t('dataViewer.reparseDoneNotice', {
+        count: formatCount(reparseJob.success),
+        failed: formatCount(reparseJob.failed),
+      }));
+    } else if (reparseJob.state === 'canceled') {
+      setNotice(t('dataViewer.reparseCanceledNotice', {
+        count: formatCount(reparseJob.processed),
+      }));
+    }
+  }, [reparseJob, fetchPage, t]);
+
+  const reparseActive = !!reparseJob
+    && (reparseJob.state === 'running' || reparseJob.state === 'canceling');
+  const reparseRangeInvalid = reparseScope === 'filter'
+    && timeRange === 'custom'
+    && !customRangeValid;
+  const reparsePercent = reparseJob
+    ? (reparseJob.total > 0
+      ? Math.min(100, (reparseJob.processed / reparseJob.total) * 100)
+      : reparseJob.state === 'done' ? 100 : 0)
+    : 0;
+  const reparseElapsedSec = reparseJob
+    ? Math.max(0, (Date.now() - Date.parse(reparseJob.started_at)) / 1000)
+    : 0;
+  const reparseEtaSec = reparseJob && reparseJob.processed > 0 && reparseJob.total > reparseJob.processed
+    ? (reparseElapsedSec / reparseJob.processed) * (reparseJob.total - reparseJob.processed)
+    : null;
+  const reparsePhaseLabel = reparseJob?.phase === 'rollups'
+    ? t('dataViewer.reparsePhaseRollups')
+    : reparseJob?.phase === 'done'
+      ? t('dataViewer.reparsePhaseDone')
+      : t('dataViewer.reparsePhaseParse');
+
   return (
     <div className="page">
       <PageHeader
@@ -391,6 +567,14 @@ export default function DataViewerPage() {
               </button>
               <button
                 type="button"
+                className="btn btn-secondary"
+                disabled={loading || protocols.length === 0}
+                onClick={openReparse}
+              >
+                {t('dataViewer.reparse')}
+              </button>
+              <button
+                type="button"
                 className="btn btn-danger"
                 disabled={loading || deleting}
                 onClick={() => void openDeleteAll()}
@@ -472,6 +656,222 @@ export default function DataViewerPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={reparseOpen}
+        onClose={closeReparse}
+        title={t('dataViewer.reparseTitle')}
+        footer={!reparseJob ? (
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={reparseStarting}
+              onClick={closeReparse}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={
+                !reparseProtocol
+                || reparseStarting
+                || reparseRangeInvalid
+                || (reparseMode === 'all' && !reparseConfirmed)
+              }
+              onClick={() => void startReparse()}
+            >
+              {reparseStarting ? t('common.loading') : t('dataViewer.reparseStart')}
+            </button>
+          </>
+        ) : (
+          <>
+            {reparseActive && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={reparseJob.state === 'canceling'}
+                onClick={() => void cancelReparse()}
+              >
+                {reparseJob.state === 'canceling'
+                  ? t('dataViewer.reparseCanceling')
+                  : t('dataViewer.reparseCancel')}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={reparseActive}
+              onClick={closeReparse}
+            >
+              {t('common.close')}
+            </button>
+          </>
+        )}
+      >
+        {!reparseJob ? (
+          <div className="data-reparse-form">
+            <div className="form-field">
+              <label>{t('dataViewer.reparseProtocol')}</label>
+              <select
+                value={reparseProtocol}
+                onChange={e => setReparseProtocol(e.target.value)}
+              >
+                {protocols.map(protocol => (
+                  <option key={protocol.id} value={protocol.id}>
+                    {protocol.name} {protocol.version ? `v${protocol.version}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label>{t('dataViewer.reparseScope')}</label>
+              <div className="data-reparse-options">
+                <label className={`data-reparse-option${reparseScope === 'filter' ? ' is-active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="reparse-scope"
+                    checked={reparseScope === 'filter'}
+                    onChange={() => setReparseScope('filter')}
+                  />
+                  <span>
+                    <strong>{t('dataViewer.reparseScopeFilter')}</strong>
+                    <small>{t('dataViewer.reparseScopeFilterHint')}</small>
+                  </span>
+                </label>
+                <label className={`data-reparse-option${reparseScope === 'board' ? ' is-active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="reparse-scope"
+                    checked={reparseScope === 'board'}
+                    onChange={() => setReparseScope('board')}
+                  />
+                  <span>
+                    <strong>{t('dataViewer.reparseScopeBoard')}</strong>
+                    <small>{t('dataViewer.reparseScopeBoardHint')}</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label>{t('dataViewer.reparseMode')}</label>
+              <div className="data-reparse-options">
+                <label className={`data-reparse-option${reparseMode === 'missing' ? ' is-active' : ''}`}>
+                  <input
+                    type="radio"
+                    name="reparse-mode"
+                    checked={reparseMode === 'missing'}
+                    onChange={() => setReparseMode('missing')}
+                  />
+                  <span>
+                    <strong>{t('dataViewer.reparseModeMissing')}</strong>
+                    <small>{t('dataViewer.reparseModeMissingHint')}</small>
+                  </span>
+                </label>
+                <label className={`data-reparse-option${reparseMode === 'all' ? ' is-active is-danger' : ''}`}>
+                  <input
+                    type="radio"
+                    name="reparse-mode"
+                    checked={reparseMode === 'all'}
+                    onChange={() => setReparseMode('all')}
+                  />
+                  <span>
+                    <strong>{t('dataViewer.reparseModeAll')}</strong>
+                    <small>{t('dataViewer.reparseModeAllHint')}</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <label className="data-reparse-check">
+              <input
+                type="checkbox"
+                checked={reparseBackup}
+                onChange={e => setReparseBackup(e.target.checked)}
+              />
+              {t('dataViewer.reparseBackup')}
+            </label>
+            <label className="data-reparse-check">
+              <input
+                type="checkbox"
+                checked={reparseClearRollups}
+                onChange={e => setReparseClearRollups(e.target.checked)}
+              />
+              {t('dataViewer.reparseClearRollups')}
+            </label>
+
+            {reparseMode === 'all' ? (
+              <>
+                <div className="data-delete-warning">
+                  <strong>⚠ {t('dataViewer.reparseWarningTitle')}</strong>
+                  <p>{t('dataViewer.reparseWarningAll')}</p>
+                </div>
+                <label className="data-reparse-confirm">
+                  <input
+                    type="checkbox"
+                    checked={reparseConfirmed}
+                    onChange={e => setReparseConfirmed(e.target.checked)}
+                  />
+                  {t('dataViewer.reparseConfirm')}
+                </label>
+              </>
+            ) : (
+              <p className="muted data-reparse-hint">{t('dataViewer.reparseModeMissingHint')}</p>
+            )}
+
+            {reparseRangeInvalid && (
+              <p className="data-delete-error">{t('dataViewer.customRangeInvalid')}</p>
+            )}
+
+            {reparseError && <p className="data-delete-error">{reparseError}</p>}
+          </div>
+        ) : (
+          <div className="data-reparse-progress">
+            <div className="data-reparse-progress-head">
+              <strong>{reparsePhaseLabel}</strong>
+              <span>{Math.round(reparsePercent)}%</span>
+            </div>
+            <div className="data-reparse-bar">
+              <div style={{ width: `${reparsePercent}%` }} />
+            </div>
+            <div className="data-reparse-stats">
+              <span>{t('dataViewer.reparseProcessed', {
+                processed: formatCount(reparseJob.processed),
+                total: formatCount(reparseJob.total),
+              })}</span>
+              <span>{t('dataViewer.reparseSuccess', { count: formatCount(reparseJob.success) })}</span>
+              <span>{t('dataViewer.reparseFailed', { count: formatCount(reparseJob.failed) })}</span>
+            </div>
+            {reparseActive && reparseEtaSec != null && (
+              <p className="muted data-reparse-eta">
+                {t('dataViewer.reparseEta', { time: formatTimeInterval(reparseEtaSec * 1000) })}
+              </p>
+            )}
+            {reparseJob.rollups_cleared > 0 && (
+              <p className="muted">
+                {t('dataViewer.reparseRollupsCleared', {
+                  count: formatCount(reparseJob.rollups_cleared),
+                })}
+              </p>
+            )}
+            {reparseJob.state === 'canceled' && (
+              <p className="data-reparse-canceled">{t('dataViewer.reparseCanceled')}</p>
+            )}
+            {reparseJob.state === 'failed' && (
+              <p className="data-delete-error">
+                {reparseJob.error || t('dataViewer.reparseJobFailed')}
+              </p>
+            )}
+            {reparseJob.state === 'done' && (
+              <p className="data-reparse-done">{t('dataViewer.reparseDone')}</p>
+            )}
+            {reparseError && <p className="data-delete-error">{reparseError}</p>}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={deleteOpen}

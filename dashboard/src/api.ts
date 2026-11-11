@@ -175,6 +175,34 @@ export interface DataDeleteResult {
   };
 }
 
+export interface DataReparseJob {
+  id: string;
+  board_id: string;
+  protocol_id: string;
+  protocol_version: string;
+  mode: 'missing' | 'all';
+  since?: string | null;
+  until?: string | null;
+  session_id?: string;
+  direction?: string;
+  backup_parsed: boolean;
+  clear_rollups: boolean;
+  state: 'running' | 'canceling' | 'canceled' | 'done' | 'failed';
+  phase: 'parse' | 'rollups' | 'done';
+  total: number;
+  processed: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  rollups_cleared: number;
+  cancel_requested: boolean;
+  error?: string;
+  created_at: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+}
+
 export interface Session {
   id: string;
   board_id: string;
@@ -444,6 +472,25 @@ export const api = {
         timeoutMs: 120000,
       });
     },
+    reparseStart: (params: {
+      board_id: string;
+      protocol_id: string;
+      mode: 'missing' | 'all';
+      since?: string;
+      until?: string;
+      session_id?: string;
+      direction?: string;
+      backup_parsed?: boolean;
+      clear_rollups?: boolean;
+    }) => request<{ job_id: string; total: number }>('/data/reparse', {
+      method: 'POST',
+      body: JSON.stringify(params),
+      timeoutMs: 30000,
+    }),
+    reparseStatus: (jobId: string) =>
+      request<DataReparseJob>(`/data/reparse/${jobId}`),
+    reparseCancel: (jobId: string) =>
+      request<{ message: string }>(`/data/reparse/${jobId}/cancel`, { method: 'POST' }),
   },
 
   temperature: {

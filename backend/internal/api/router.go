@@ -32,6 +32,9 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 			data.GET("/uart", h.QueryUART)
 			data.GET("/dump", h.DumpData)
 			data.DELETE("", h.DeleteData)
+			data.POST("/reparse", h.StartDataReparse)
+			data.GET("/reparse/:job_id", h.GetDataReparseJob)
+			data.POST("/reparse/:job_id/cancel", h.CancelDataReparseJob)
 			data.POST("/temperature", h.IngestTemperature)
 			data.GET("/temperature", h.QueryTemperature)
 		}

@@ -75,6 +75,11 @@ type UartData struct {
 	RawHex       string                 `json:"raw_hex" bson:"raw_hex"`
 	ParsedFields map[string]interface{} `json:"parsed_fields,omitempty" bson:"parsed_fields,omitempty"`
 	Direction    string                 `json:"direction" bson:"direction"`
+	// Parse metadata for audit and version-aware re-parsing.
+	ParseProtocolID      string     `json:"parse_protocol_id,omitempty" bson:"parse_protocol_id,omitempty"`
+	ParseProtocolVersion string     `json:"parse_protocol_version,omitempty" bson:"parse_protocol_version,omitempty"`
+	ParsedAt             *time.Time `json:"parsed_at,omitempty" bson:"parsed_at,omitempty"`
+	ParseStatus          string     `json:"parse_status,omitempty" bson:"parse_status,omitempty"`
 }
 
 type UartCursor struct {

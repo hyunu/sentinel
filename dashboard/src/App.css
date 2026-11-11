@@ -1056,6 +1056,182 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 
+.data-reparse-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.data-reparse-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.data-reparse-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.data-reparse-option.is-active {
+  border-color: var(--accent, #7c83ff);
+  background: var(--primary-dim);
+}
+
+.data-reparse-option.is-danger.is-active {
+  border-color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.data-reparse-option input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.data-reparse-option input[type="radio"],
+.data-reparse-check input[type="checkbox"],
+.data-reparse-confirm input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--primary);
+  flex: none;
+}
+
+.data-reparse-option {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.form-field .data-reparse-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.form-field .data-reparse-option.is-active {
+  border-color: var(--accent, #7c83ff);
+  background: var(--primary-dim);
+}
+
+.form-field .data-reparse-option.is-danger.is-active {
+  border-color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.data-reparse-option strong {
+  display: block;
+  font-size: 12px;
+}
+
+.data-reparse-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.data-reparse-check,
+.data-reparse-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.data-reparse-check input,
+.data-reparse-confirm input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.data-reparse-confirm {
+  padding: 10px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-dim);
+}
+
+.data-reparse-hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.data-reparse-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.data-reparse-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.data-reparse-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.data-reparse-bar > div {
+  height: 100%;
+  background: var(--primary);
+  border-radius: inherit;
+  transition: width 0.2s ease;
+}
+
+.data-reparse-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-reparse-eta {
+  margin: 0;
+  font-size: 12px;
+}
+
+.data-reparse-done {
+  margin: 0;
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.data-reparse-canceled {
+  margin: 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
 .data-viewer-table-scroll {
   display: block;
   width: 100%;
