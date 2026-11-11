@@ -1,6 +1,9 @@
 import Modal from './Modal';
 import ManualBlocks from './ManualBlocks';
 import {
+  CHART_MANUAL_COMMANDS,
+  CHART_MANUAL_CONFIGURATION,
+  CHART_MANUAL_DATA,
   CHART_MANUAL_INTERACTIONS,
   CHART_MANUAL_KEYBOARD,
   CHART_MANUAL_LIVE,
@@ -34,23 +37,31 @@ export default function ChartHelpManual({ open, onClose }: ChartHelpManualProps)
           </div>
         </details>
 
-        <details className="manual-section" open>
+        <details className="manual-section">
+          <summary>{manualT(CHART_MANUAL_UI.configuration, locale)}</summary>
+          <div className="manual-section-body">
+            <ManualBlocks blocks={CHART_MANUAL_CONFIGURATION} locale={locale} tipLabel={tipLabel} />
+          </div>
+        </details>
+
+        <details className="manual-section">
           <summary>{manualT(CHART_MANUAL_UI.interactions, locale)}</summary>
           <div className="manual-section-body">
             <ManualBlocks blocks={CHART_MANUAL_INTERACTIONS} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
-        <details className="manual-section" open>
-          <summary>{manualT(CHART_MANUAL_UI.keyboard, locale)}</summary>
+        <details className="manual-section">
+          <summary>{manualT(CHART_MANUAL_UI.minimap, locale)}</summary>
           <div className="manual-section-body">
-            <ManualBlocks blocks={CHART_MANUAL_KEYBOARD} locale={locale} tipLabel={tipLabel} />
+            <ManualBlocks blocks={CHART_MANUAL_MINIMAP} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
         <details className="manual-section">
+          <summary>{manualT(CHART_MANUAL_UI.commands, locale)}</summary>
           <div className="manual-section-body">
-            <ManualBlocks blocks={CHART_MANUAL_MINIMAP} locale={locale} tipLabel={tipLabel} />
+            <ManualBlocks blocks={CHART_MANUAL_COMMANDS} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
@@ -65,6 +76,20 @@ export default function ChartHelpManual({ open, onClose }: ChartHelpManualProps)
           <summary>{manualT(CHART_MANUAL_UI.toolbar, locale)}</summary>
           <div className="manual-section-body">
             <ManualBlocks blocks={CHART_MANUAL_TOOLBAR} locale={locale} tipLabel={tipLabel} />
+          </div>
+        </details>
+
+        <details className="manual-section">
+          <summary>{manualT(CHART_MANUAL_UI.data, locale)}</summary>
+          <div className="manual-section-body">
+            <ManualBlocks blocks={CHART_MANUAL_DATA} locale={locale} tipLabel={tipLabel} />
+          </div>
+        </details>
+
+        <details className="manual-section">
+          <summary>{manualT(CHART_MANUAL_UI.keyboard, locale)}</summary>
+          <div className="manual-section-body">
+            <ManualBlocks blocks={CHART_MANUAL_KEYBOARD} locale={locale} tipLabel={tipLabel} />
           </div>
         </details>
 
