@@ -6029,17 +6029,74 @@ pre {
 }
 
 .sessions-create-form {
-  align-items: stretch;
+  display: flex;
   flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.sessions-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sessions-form-head strong {
+  font-size: 13px;
+}
+
+.sessions-form-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sessions-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.sessions-form-row .form-field {
+  margin: 0;
+}
+
+.sessions-form-name {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.sessions-form-desc {
+  flex: 1.6 1 280px;
+  min-width: 200px;
+}
+
+.sessions-form-time {
+  flex: 0 0 232px;
+  width: 232px;
+}
+
+.sessions-form-time input {
+  min-width: 0;
 }
 
 .sessions-form-hint {
-  margin: 8px 0;
-  font-size: 12px;
+  flex: 1 1 220px;
+  margin: 0 0 9px;
+  font-size: 11px;
 }
 
-.sessions-form-hint + .btn-group {
-  justify-content: flex-end;
+.sessions-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  margin-bottom: 1px;
 }
 
 .sessions-empty {
