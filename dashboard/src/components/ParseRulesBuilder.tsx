@@ -125,6 +125,42 @@ function InlineRef({
   );
 }
 
+function SwitchCaseKeyInput({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || next === value) {
+      setDraft(value);
+      return;
+    }
+    onCommit(next);
+  };
+
+  return (
+    <input
+      className="rb-inline-input rb-inline-num mono"
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          setDraft(value);
+          e.currentTarget.blur();
+        }
+      }}
+      placeholder="207"
+    />
+  );
+}
+
 function InlineExtras({
   rule,
   onChange,
@@ -407,11 +443,12 @@ function NestedChildren({
             >
               <div className="rb-case-key-row">
                 <span className="rb-inline-tag">Key</span>
-                <input
-                  className="rb-inline-input rb-inline-num mono"
+                <SwitchCaseKeyInput
+                  key={key}
                   value={key}
-                  onChange={e => onChange({ cases: setSwitchCase(rule, key, e.target.value, caseRules).cases })}
-                  placeholder="207"
+                  onCommit={next => onChange({
+                    cases: setSwitchCase(rule, key, next, caseRules).cases,
+                  })}
                 />
                 {switchCaseHex(key) != null && (
                   <span className="rb-inline-tag mono">{switchCaseHex(key)}</span>
@@ -663,7 +700,7 @@ function FieldRulesEditor({ rules, onChange, depth = 0, label, pathPrefix = 'roo
           <div className="rb-empty">No fields.</div>
         ) : rules.map((rule, i) => (
           <FieldBlock
-            key={`${pathPrefix}-${i}-${rule.name}`}
+            key={`${pathPrefix}-${i}`}
             rule={rule}
             index={i}
             total={rules.length}
