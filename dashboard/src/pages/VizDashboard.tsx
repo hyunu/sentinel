@@ -790,24 +790,47 @@ async function queryVizDataset(
   const overviewParams: VizQueryParams = options?.overviewItems
     ? { ...params, items: options.overviewItems }
     : params;
-  const overview = await api.viz.queryItems(
-    {
-      ...overviewParams,
-      limit: OVERVIEW_SAMPLE_POINTS,
-      sampling: 'envelope',
-      buckets: OVERVIEW_BUCKETS,
-    },
-    {
-      signal: options?.signal,
-      timeoutMs: options?.timeoutMs,
-      onProgress: (loaded, total) => options?.onProgress?.({
-        phase: 'overview',
-        loaded,
-        total,
-        overallLoaded: loaded,
-      }),
-    },
-  );
+  const overviewItemCount = overviewParams.items?.length ?? 0;
+  // Envelope aggregation scans every row and computes min/max per field. With
+  // many series it exceeds the 30s query timeout on large boards, so wide
+  // profiles start from real samples instead.
+  const preferEnvelope = overviewItemCount > 0 && overviewItemCount <= 8;
+  let overview;
+  let usedEnvelope = preferEnvelope;
+  if (preferEnvelope) {
+    try {
+      overview = await api.viz.queryItems(
+        {
+          ...overviewParams,
+          limit: OVERVIEW_SAMPLE_POINTS,
+          sampling: 'envelope',
+          buckets: OVERVIEW_BUCKETS,
+        },
+        {
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+          onProgress: (loaded, total) => options?.onProgress?.({
+            phase: 'overview',
+            loaded,
+            total,
+            overallLoaded: loaded,
+          }),
+        },
+      );
+    } catch (error) {
+      if (options?.signal?.aborted) throw error;
+      usedEnvelope = false;
+      overview = await api.viz.queryItems(
+        { ...overviewParams, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+        { signal: options?.signal, timeoutMs: options?.timeoutMs },
+      );
+    }
+  } else {
+    overview = await api.viz.queryItems(
+      { ...overviewParams, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+      { signal: options?.signal, timeoutMs: options?.timeoutMs },
+    );
+  }
   const meta = overview.meta ?? null;
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
@@ -845,7 +868,7 @@ async function queryVizDataset(
     };
   }
 
-  options?.onOverview?.(overview.data, meta, true, true);
+  options?.onOverview?.(overview.data, meta, true, usedEnvelope);
   const full = await queryFullDatasetProgressive(params, overview.data, meta, {
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
