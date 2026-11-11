@@ -5760,12 +5760,28 @@ pre {
 }
 
 /* Sessions page */
+.sessions-page .form-row {
+  align-items: flex-end;
+}
+
 .sessions-actions {
   display: flex;
   align-items: flex-end;
+  align-self: flex-end;
   gap: 8px;
   flex-direction: row;
   flex-wrap: wrap;
+}
+
+.sessions-actions .sessions-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 35px;
+  padding: 0 14px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .sessions-error {

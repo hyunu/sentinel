@@ -205,13 +205,13 @@ export default function SessionsPage() {
             </select>
           </div>
           <div className="form-field sessions-actions">
-            <button type="button" className="btn-primary" onClick={openCreate} disabled={!selectedBoard}>
+            <button type="button" className="btn-primary sessions-action-btn" onClick={openCreate} disabled={!selectedBoard}>
               + {t('sessions.newSession')}
             </button>
-            <button type="button" className="btn-sm" onClick={() => setAutoSplitOpen(v => !v)} disabled={!selectedBoard}>
+            <button type="button" className="btn-sm sessions-action-btn" onClick={() => setAutoSplitOpen(v => !v)} disabled={!selectedBoard}>
               {t('sessions.autoSplit')}
             </button>
-            <button type="button" className="btn-sm" onClick={() => reload()} disabled={!selectedBoard || loading}>
+            <button type="button" className="btn-sm sessions-action-btn" onClick={() => reload()} disabled={!selectedBoard || loading}>
               {t('common.refresh')}
             </button>
           </div>
