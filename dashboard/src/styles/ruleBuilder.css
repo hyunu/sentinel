@@ -411,7 +411,7 @@
   min-width: 0;
   padding: 0 8px;
   font-size: 12px;
-  background: var(--surface-inset);
+  background-color: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
