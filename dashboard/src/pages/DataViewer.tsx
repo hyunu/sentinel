@@ -41,6 +41,13 @@ function formatCount(n: number): string {
   return n.toLocaleString();
 }
 
+/** UART 방향 표시 — TX/RX를 색상 + 둥근 보더 pill로 구분한다. */
+function DirectionPill({ direction }: { direction: string }) {
+  const dir = (direction || '').trim().toUpperCase();
+  const kind = dir === 'TX' ? 'is-tx' : dir === 'RX' ? 'is-rx' : 'is-unknown';
+  return <span className={`dir-pill ${kind}`}>{dir || '—'}</span>;
+}
+
 export default function DataViewerPage() {
   const { t } = useTranslation();
   const [boards, setBoards] = useState<Board[]>([]);
@@ -421,7 +428,9 @@ export default function DataViewerPage() {
                 {data.map(d => (
                   <tr key={d.id}>
                     <td className="data-viewer-time">{formatDateTime(d.timestamp)}</td>
-                    <td className="data-viewer-dir">{d.direction}</td>
+                    <td className="data-viewer-dir">
+                      <DirectionPill direction={d.direction} />
+                    </td>
                     <td className="data-viewer-raw-cell">
                       <DataCell
                         text={d.raw_hex}

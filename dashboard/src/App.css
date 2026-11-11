@@ -1095,6 +1095,42 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
+.data-viewer-table td.data-viewer-dir {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.dir-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 42%, transparent);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+
+.dir-pill.is-tx {
+  color: var(--primary);
+  background: var(--primary-dim);
+}
+
+.dir-pill.is-rx {
+  color: var(--success);
+  background: var(--success-dim);
+}
+
+.dir-pill.is-unknown {
+  color: var(--text-muted);
+  background: var(--surface-inset);
+}
+
 .data-viewer-time {
   font-variant-numeric: tabular-nums;
 }
