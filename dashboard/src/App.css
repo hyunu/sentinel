@@ -4665,6 +4665,14 @@ tbody tr:last-child td {
   font-weight: 500;
 }
 
+.tag-overlap {
+  margin-left: 6px;
+  background: rgba(244, 114, 182, 0.14);
+  color: #f9a8d4;
+  border: 1px solid rgba(244, 114, 182, 0.4);
+  font-weight: 500;
+}
+
 .tag-warning {
   background: var(--warning-dim, rgba(251, 191, 36, 0.12));
   color: var(--warning, #fbbf24);
@@ -6158,6 +6166,21 @@ pre {
   pointer-events: none;
 }
 
+.session-timeline-overlap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(244, 114, 182, 0.62) 0 3px,
+    rgba(244, 114, 182, 0.22) 3px 6px
+  );
+  border-left: 1px solid rgba(244, 114, 182, 0.95);
+  border-right: 1px solid rgba(244, 114, 182, 0.95);
+  pointer-events: none;
+  z-index: 2;
+}
+
 .session-timeline-selection {
   position: absolute;
   top: 0;
@@ -6235,6 +6258,7 @@ pre {
 .session-timeline-dot.is-assigned { background: rgba(110, 158, 214, 0.85); }
 .session-timeline-dot.is-unassigned { background: rgba(251, 191, 36, 0.75); }
 .session-timeline-dot.is-empty { background: rgba(148, 163, 184, 0.35); }
+.session-timeline-dot.is-overlap { background: rgba(244, 114, 182, 0.85); }
 
 .session-timeline-empty {
   margin: 0;

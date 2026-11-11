@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type { Board, Session } from '../api';
 import PageHeader from '../components/PageHeader';
@@ -62,6 +62,24 @@ export default function SessionsPage() {
 
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
   const loading = Boolean(selectedBoard) && sessionsByBoard[selectedBoard] === undefined;
+
+  const overlappingSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    const ranges = sessions.map(session => ({
+      id: session.id,
+      start: Date.parse(session.start_time),
+      end: session.end_time ? Date.parse(session.end_time) : Number.POSITIVE_INFINITY,
+    })).filter(range => Number.isFinite(range.start));
+    for (let i = 0; i < ranges.length; i += 1) {
+      for (let j = i + 1; j < ranges.length; j += 1) {
+        if (Math.min(ranges[i].end, ranges[j].end) > Math.max(ranges[i].start, ranges[j].start)) {
+          ids.add(ranges[i].id);
+          ids.add(ranges[j].id);
+        }
+      }
+    }
+    return ids;
+  }, [sessions]);
 
   useEffect(() => {
     api.boards.list().then(list => {
@@ -530,7 +548,14 @@ export default function SessionsPage() {
                           onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))}
                         />
                       ) : (
-                        <strong>{session.name}</strong>
+                        <>
+                          <strong>{session.name}</strong>
+                          {overlappingSessionIds.has(session.id) && (
+                            <span className="tag tag-overlap" title={t('sessions.overlapHint')}>
+                              {t('sessions.overlapTag')}
+                            </span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="mono sessions-range">

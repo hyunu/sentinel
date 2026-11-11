@@ -92,6 +92,35 @@ export default function SessionTimeline({
       });
   }, [sessions, hasRange, startMs, endMs]);
 
+  // Segments covered by two or more sessions at the same time.
+  const overlapSegments = useMemo(() => {
+    if (sessionRanges.length < 2) return [];
+    const points: { t: number; d: number }[] = [];
+    for (const range of sessionRanges) {
+      points.push({ t: range.start, d: 1 });
+      points.push({ t: range.end, d: -1 });
+    }
+    points.sort((a, b) => (a.t - b.t) || (a.d - b.d));
+    const out: { start: number; end: number; names: string[] }[] = [];
+    let active = 0;
+    let prev: number | null = null;
+    for (const point of points) {
+      if (prev != null && point.t > prev && active >= 2) {
+        const segStart = prev;
+        out.push({
+          start: segStart,
+          end: point.t,
+          names: sessionRanges
+            .filter(range => range.start < point.t && range.end > segStart)
+            .map(range => range.name),
+        });
+      }
+      active += point.d;
+      prev = point.t;
+    }
+    return out;
+  }, [sessionRanges]);
+
   const maxCount = useMemo(() => {
     let max = 0;
     for (let i = 0; i < present.length; i += 1) {
@@ -277,6 +306,18 @@ export default function SessionTimeline({
                 />
               );
             })}
+            {overlapSegments.map((segment, i) => {
+              const left = ((segment.start - startMs) / span) * 100;
+              const width = ((segment.end - segment.start) / span) * 100;
+              return (
+                <span
+                  key={`overlap-${i}`}
+                  className="session-timeline-overlap"
+                  style={{ left: `${left}%`, width: `${Math.max(width, 0.15)}%` }}
+                  title={`${t('sessions.timelineOverlap')} · ${segment.names.join(', ')}`}
+                />
+              );
+            })}
             {selectionStart != null && selectionEnd != null && (
               <span
                 className="session-timeline-selection"
@@ -305,11 +346,14 @@ export default function SessionTimeline({
             <span><i className="session-timeline-dot is-assigned" />{t('sessions.timelineAssigned')}</span>
             <span><i className="session-timeline-dot is-unassigned" />{t('sessions.timelineUnassigned')}</span>
             <span><i className="session-timeline-dot is-empty" />{t('sessions.timelineEmpty')}</span>
+            {overlapSegments.length > 0 && (
+              <span><i className="session-timeline-dot is-overlap" />{t('sessions.timelineOverlap')}</span>
+            )}
             <span className="muted">{t('sessions.timelineHint')}</span>
           </div>
-          {coverage && (
+          {(coverage || overlapSegments.length > 0) && (
             <p className="session-timeline-coverage">
-              {coverage.gapRuns === 0
+              {coverage && (coverage.gapRuns === 0
                 ? t('sessions.timelineCoverageFull', {
                   percent: coverage.percent >= 99.95 ? '100' : coverage.percent.toFixed(1),
                 })
@@ -317,7 +361,10 @@ export default function SessionTimeline({
                   percent: coverage.percent >= 99.95 ? '100' : coverage.percent.toFixed(1),
                   gaps: String(coverage.gapRuns),
                   gapTime: formatTimeInterval(coverage.gapMs),
-                })}
+                }))}
+              {overlapSegments.length > 0 && (
+                <> · {t('sessions.timelineOverlapCount', { count: String(overlapSegments.length) })}</>
+              )}
             </p>
           )}
         </>
