@@ -112,10 +112,22 @@ export interface Board {
   wifi_rssi?: number;
   location?: string;
   protocol_id?: string;
+  session_split_rules?: SessionSplitRule[];
   last_heartbeat: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface SessionSplitRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  fid?: string;
+  direction?: '' | 'TX' | 'RX';
+  field?: string;
+  operator?: 'eq' | 'neq' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+  value?: string;
 }
 
 export interface ProtocolSpec {
@@ -392,7 +404,7 @@ export const api = {
     register: (data: { name?: string; mac_address: string; wifi_mac?: string; location?: string; uid?: string; protocol_id?: string }) =>
       request<{ uid: string; board: Board }>('/boards/register', { method: 'POST', body: JSON.stringify(data) })
         .then(r => r.board),
-    update: (id: string, data: { name?: string; firmware_version?: string; location?: string; protocol_id?: string | null }) =>
+    update: (id: string, data: { name?: string; firmware_version?: string; location?: string; protocol_id?: string | null; session_split_rules?: SessionSplitRule[] }) =>
       request<Board>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<{ message: string; pending?: boolean; deleted?: Record<string, number> }>(`/boards/${id}`, { method: 'DELETE' }),
@@ -543,6 +555,12 @@ export const api = {
       request<{ sessions_created: number }>('/sessions/auto-split', {
         method: 'POST',
         body: JSON.stringify({ board_id, type, params: { gap_seconds: gapSeconds } }),
+      }),
+    splitByRules: (board_id: string, replace = true, minGapSeconds = 1) =>
+      request<{ sessions_created: number; cuts: number; rows_assigned: number }>('/sessions/split-by-rules', {
+        method: 'POST',
+        body: JSON.stringify({ board_id, replace, min_gap_seconds: minGapSeconds }),
+        timeoutMs: 180000,
       }),
   },
 

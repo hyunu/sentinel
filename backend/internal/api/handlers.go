@@ -356,10 +356,11 @@ func (h *Handler) GetBoard(c *gin.Context) {
 func (h *Handler) UpdateBoard(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name            string  `json:"name,omitempty"`
-		FirmwareVersion string  `json:"firmware_version,omitempty"`
-		Location        *string `json:"location"`
-		ProtocolID      *string `json:"protocol_id"`
+		Name            string                     `json:"name,omitempty"`
+		FirmwareVersion string                     `json:"firmware_version,omitempty"`
+		Location        *string                    `json:"location"`
+		ProtocolID      *string                    `json:"protocol_id"`
+		SessionRules    *[]models.SessionSplitRule `json:"session_split_rules"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -389,6 +390,9 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 		} else {
 			update["protocol_id"] = *req.ProtocolID
 		}
+	}
+	if req.SessionRules != nil {
+		update["session_split_rules"] = *req.SessionRules
 	}
 
 	updateDoc := bson.M{"$set": update}

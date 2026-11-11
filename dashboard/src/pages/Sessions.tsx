@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { Board, Session } from '../api';
 import PageHeader from '../components/PageHeader';
+import SessionTimeline from '../components/SessionTimeline';
 import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
+import type { SessionSplitRule } from '../api';
 
 interface CreateForm {
   name: string;
@@ -22,6 +24,10 @@ function toISOString(value: string): string | undefined {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return undefined;
   return date.toISOString();
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString();
 }
 
 function emptyForm(): CreateForm {
@@ -49,6 +55,10 @@ export default function SessionsPage() {
   const [autoSplitOpen, setAutoSplitOpen] = useState(false);
   const [gapSeconds, setGapSeconds] = useState(60);
   const [autoSplitting, setAutoSplitting] = useState(false);
+  const [rules, setRules] = useState<SessionSplitRule[]>([]);
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const [splitMessage, setSplitMessage] = useState('');
 
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
   const loading = Boolean(selectedBoard) && sessionsByBoard[selectedBoard] === undefined;
@@ -98,6 +108,84 @@ export default function SessionsPage() {
     setFormOpen(false);
     setAutoSplitOpen(false);
     setError('');
+    setSplitMessage('');
+  };
+
+  useEffect(() => {
+    const board = boards.find(item => item.id === selectedBoard);
+    setRules(board?.session_split_rules ?? []);
+  }, [selectedBoard, boards]);
+
+  const newRuleId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  };
+
+  const addRule = () => {
+    setRules(prev => [...prev, {
+      id: newRuleId(),
+      name: '',
+      enabled: true,
+      fid: '',
+      direction: '',
+      field: '',
+      operator: 'eq',
+      value: '',
+    }]);
+    setSplitMessage('');
+  };
+
+  const updateRule = (id: string, patch: Partial<SessionSplitRule>) => {
+    setRules(prev => prev.map(rule => (rule.id === id ? { ...rule, ...patch } : rule)));
+    setSplitMessage('');
+  };
+
+  const removeRule = (id: string) => {
+    setRules(prev => prev.filter(rule => rule.id !== id));
+    setSplitMessage('');
+  };
+
+  const saveRules = async () => {
+    if (!selectedBoard || rulesSaving) return;
+    setRulesSaving(true);
+    setError('');
+    try {
+      const updated = await api.boards.update(selectedBoard, { session_split_rules: rules });
+      setBoards(prev => prev.map(board => (board.id === updated.id ? updated : board)));
+      setSplitMessage(t('sessions.rulesSaved'));
+    } catch (e) {
+      console.error(e);
+      setError(t('sessions.rulesSaveFailed'));
+    } finally {
+      setRulesSaving(false);
+    }
+  };
+
+  const runRuleSplit = async () => {
+    if (!selectedBoard || splitting) return;
+    if (!window.confirm(t('sessions.splitConfirm'))) return;
+    setSplitting(true);
+    setError('');
+    setSplitMessage('');
+    try {
+      // Persist the current editor values first so the split uses what the
+      // user sees, not the previously saved rule set.
+      const updated = await api.boards.update(selectedBoard, { session_split_rules: rules });
+      setBoards(prev => prev.map(board => (board.id === updated.id ? updated : board)));
+      const result = await api.sessions.splitByRules(selectedBoard, true, 1);
+      await reload();
+      setSplitMessage(t('sessions.splitResult', {
+        sessions: formatCount(result.sessions_created),
+        rows: formatCount(result.rows_assigned),
+      }));
+    } catch (e) {
+      console.error(e);
+      setError(t('sessions.splitFailed'));
+    } finally {
+      setSplitting(false);
+    }
   };
 
   const openCreate = () => {
@@ -219,6 +307,125 @@ export default function SessionsPage() {
       </div>
 
       {error && <p className="muted sessions-error">{error}</p>}
+
+      {selectedBoard && (
+        <div className="card sessions-timeline-card">
+          <div className="card-header">
+            <h2>{t('sessions.timelineTitle')}</h2>
+          </div>
+          <SessionTimeline
+            boardId={selectedBoard}
+            sessions={sessions}
+            onSelectRange={(start, end) => {
+              setForm({
+                ...emptyForm(),
+                start: toDateTimeLocal(new Date(start)),
+                end: toDateTimeLocal(new Date(end)),
+              });
+              setFormOpen(true);
+              setAutoSplitOpen(false);
+              setError('');
+            }}
+          />
+        </div>
+      )}
+
+      {selectedBoard && (
+        <div className="card sessions-rules-card">
+          <div className="card-header">
+            <h2>{t('sessions.rulesTitle')}</h2>
+            <div className="btn-group">
+              <button type="button" className="btn-sm" onClick={addRule}>
+                + {t('sessions.addRule')}
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => void saveRules()}
+                disabled={rulesSaving}
+              >
+                {rulesSaving ? t('common.saving') : t('sessions.saveRules')}
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-sm"
+                onClick={() => void runRuleSplit()}
+                disabled={splitting || rules.every(rule => !rule.enabled)}
+              >
+                {splitting ? t('common.loading') : t('sessions.runRuleSplit')}
+              </button>
+            </div>
+          </div>
+          <p className="muted sessions-rules-hint">{t('sessions.rulesHint')}</p>
+          {rules.length === 0 ? (
+            <p className="muted sessions-empty">{t('sessions.noRules')}</p>
+          ) : (
+            <div className="sessions-rules-list">
+              {rules.map(rule => (
+                <div className="sessions-rule-row" key={rule.id}>
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled}
+                    onChange={e => updateRule(rule.id, { enabled: e.target.checked })}
+                    aria-label={t('sessions.ruleEnabled')}
+                  />
+                  <input
+                    className="sessions-rule-name"
+                    value={rule.name}
+                    placeholder={t('sessions.ruleName')}
+                    onChange={e => updateRule(rule.id, { name: e.target.value })}
+                  />
+                  <input
+                    className="mono sessions-rule-fid"
+                    value={rule.fid ?? ''}
+                    placeholder="0xCF"
+                    onChange={e => updateRule(rule.id, { fid: e.target.value })}
+                  />
+                  <select
+                    value={rule.direction ?? ''}
+                    onChange={e => updateRule(rule.id, { direction: e.target.value as '' | 'TX' | 'RX' })}
+                  >
+                    <option value="">{t('common.all')}</option>
+                    <option value="TX">TX</option>
+                    <option value="RX">RX</option>
+                  </select>
+                  <input
+                    className="mono sessions-rule-field"
+                    value={rule.field ?? ''}
+                    placeholder={t('sessions.ruleField')}
+                    onChange={e => updateRule(rule.id, { field: e.target.value })}
+                  />
+                  <select
+                    value={rule.operator ?? 'eq'}
+                    onChange={e => updateRule(rule.id, { operator: e.target.value as SessionSplitRule['operator'] })}
+                  >
+                    <option value="eq">{t('sessions.ruleOpEq')}</option>
+                    <option value="neq">{t('sessions.ruleOpNeq')}</option>
+                    <option value="contains">{t('sessions.ruleOpContains')}</option>
+                    <option value="exists">{t('sessions.ruleOpExists')}</option>
+                    <option value="gt">{t('sessions.ruleOpGt')}</option>
+                    <option value="lt">{t('sessions.ruleOpLt')}</option>
+                  </select>
+                  <input
+                    className="sessions-rule-value"
+                    value={rule.value ?? ''}
+                    placeholder={t('sessions.ruleValue')}
+                    onChange={e => updateRule(rule.id, { value: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="btn-danger btn-sm"
+                    onClick={() => removeRule(rule.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {splitMessage && <p className="sessions-split-message">{splitMessage}</p>}
+        </div>
+      )}
 
       {autoSplitOpen && (
         <div className="card sessions-panel">

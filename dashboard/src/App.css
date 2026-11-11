@@ -6051,6 +6051,195 @@ pre {
   white-space: nowrap;
 }
 
+.sessions-timeline-card .card-header {
+  margin-bottom: 10px;
+}
+
+.session-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.session-timeline-range,
+.session-timeline-cursor {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.session-timeline-range--end {
+  margin-left: auto;
+}
+
+.session-timeline-range-label {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-timeline-track {
+  position: relative;
+  height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-inset);
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+  user-select: none;
+}
+
+.session-timeline-bins {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.session-timeline-bin {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.session-timeline-bin.is-assigned {
+  background: rgba(74, 222, 128, 0.38);
+}
+
+.session-timeline-bin.is-unassigned {
+  background: rgba(251, 191, 36, 0.42);
+}
+
+.session-timeline-bin.is-empty {
+  background: rgba(148, 163, 184, 0.10);
+}
+
+.session-timeline-session {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid var(--primary);
+  border-right: 1px solid rgba(124, 131, 255, 0.55);
+  background: rgba(124, 131, 255, 0.10);
+  pointer-events: none;
+}
+
+.session-timeline-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(124, 131, 255, 0.28);
+  border-left: 1px solid var(--primary);
+  border-right: 1px solid var(--primary);
+  pointer-events: none;
+}
+
+.session-timeline-cursor-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.session-timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-timeline-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.session-timeline-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.session-timeline-dot.is-assigned { background: rgba(74, 222, 128, 0.7); }
+.session-timeline-dot.is-unassigned { background: rgba(251, 191, 36, 0.75); }
+.session-timeline-dot.is-empty { background: rgba(148, 163, 184, 0.35); }
+
+.session-timeline-empty {
+  margin: 0;
+  padding: 18px 0;
+  text-align: center;
+}
+
+.sessions-rules-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.sessions-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sessions-rule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sessions-rule-row input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.sessions-rule-row input:not([type="checkbox"]),
+.sessions-rule-row select {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.sessions-rule-name { flex: 1 1 150px; min-width: 120px; }
+.sessions-rule-fid { flex: 0 0 86px; width: 86px; }
+.sessions-rule-field { flex: 1 1 220px; min-width: 160px; }
+.sessions-rule-value { flex: 1 1 110px; min-width: 80px; }
+
+.sessions-rule-row select {
+  flex: 0 0 100px;
+  width: 100px;
+}
+
+.sessions-split-message {
+  margin: 10px 0 0;
+  color: var(--success);
+  font-size: 12px;
+}
+
 .sessions-table td {
   vertical-align: middle;
 }

@@ -7,21 +7,35 @@ import (
 )
 
 type Board struct {
-	ID              string    `json:"id" bson:"_id"`
-	UID             string    `json:"uid" bson:"uid"`
-	Name            string    `json:"name" bson:"name"`
-	MACAddress      string    `json:"mac_address" bson:"mac_address"` // BLE remote ID (iOS: UUID)
-	WifiMAC         string    `json:"wifi_mac,omitempty" bson:"wifi_mac,omitempty"`
-	FirmwareVersion string    `json:"firmware_version,omitempty" bson:"firmware_version,omitempty"`
-	WifiRSSI        int       `json:"wifi_rssi,omitempty" bson:"wifi_rssi,omitempty"`
-	Location        string    `json:"location,omitempty" bson:"location,omitempty"`
-	ProtocolID      string    `json:"protocol_id,omitempty" bson:"protocol_id,omitempty"`
-	PendingAction   string    `json:"pending_action,omitempty" bson:"pending_action,omitempty"`
-	PendingActionAt time.Time `json:"pending_action_at,omitempty" bson:"pending_action_at,omitempty"`
-	LastHeartbeat   time.Time `json:"last_heartbeat" bson:"last_heartbeat"`
-	IsActive        bool      `json:"is_active" bson:"is_active"`
-	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" bson:"updated_at"`
+	ID              string             `json:"id" bson:"_id"`
+	UID             string             `json:"uid" bson:"uid"`
+	Name            string             `json:"name" bson:"name"`
+	MACAddress      string             `json:"mac_address" bson:"mac_address"` // BLE remote ID (iOS: UUID)
+	WifiMAC         string             `json:"wifi_mac,omitempty" bson:"wifi_mac,omitempty"`
+	FirmwareVersion string             `json:"firmware_version,omitempty" bson:"firmware_version,omitempty"`
+	WifiRSSI        int                `json:"wifi_rssi,omitempty" bson:"wifi_rssi,omitempty"`
+	Location        string             `json:"location,omitempty" bson:"location,omitempty"`
+	ProtocolID      string             `json:"protocol_id,omitempty" bson:"protocol_id,omitempty"`
+	SessionRules    []SessionSplitRule `json:"session_split_rules,omitempty" bson:"session_split_rules,omitempty"`
+	PendingAction   string             `json:"pending_action,omitempty" bson:"pending_action,omitempty"`
+	PendingActionAt time.Time          `json:"pending_action_at,omitempty" bson:"pending_action_at,omitempty"`
+	LastHeartbeat   time.Time          `json:"last_heartbeat" bson:"last_heartbeat"`
+	IsActive        bool               `json:"is_active" bson:"is_active"`
+	CreatedAt       time.Time          `json:"created_at" bson:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at" bson:"updated_at"`
+}
+
+// SessionSplitRule marks a session boundary when a packet matches. Rules are
+// configured per board and evaluated against the board's parsed frames.
+type SessionSplitRule struct {
+	ID        string `json:"id" bson:"id"`
+	Name      string `json:"name" bson:"name"`
+	Enabled   bool   `json:"enabled" bson:"enabled"`
+	FID       string `json:"fid,omitempty" bson:"fid,omitempty"`
+	Direction string `json:"direction,omitempty" bson:"direction,omitempty"`
+	Field     string `json:"field,omitempty" bson:"field,omitempty"`
+	Operator  string `json:"operator,omitempty" bson:"operator,omitempty"`
+	Value     string `json:"value,omitempty" bson:"value,omitempty"`
 }
 
 type Heartbeat struct {
