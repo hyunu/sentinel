@@ -187,3 +187,26 @@ func TestChooseVizRollupGranularity(t *testing.T) {
 		t.Fatalf("expected 60s buckets for large all-range query, got gran=%d use=%v", gran, use)
 	}
 }
+
+func TestChooseVizRollupGranularityVeryLargeRanges(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := start.Add(30 * 24 * time.Hour)
+
+	gran, use := chooseVizRollupGranularity(5000000, 8000, start, true, monthEnd, true)
+	if !use || gran != 3600 {
+		t.Fatalf("expected 1h buckets for 30-day range, got gran=%d use=%v", gran, use)
+	}
+
+	yearEnd := start.Add(365 * 24 * time.Hour)
+	gran, use = chooseVizRollupGranularity(20000000, 8000, start, true, yearEnd, true)
+	if !use || gran != 3600 {
+		t.Fatalf("expected 1h buckets for 1-year range, got gran=%d use=%v", gran, use)
+	}
+
+	gran, use = chooseVizRollupGranularity(50000000, 8000, time.Time{}, false, time.Time{}, false)
+	if !use || gran != 3600 {
+		t.Fatalf("expected 1h buckets for huge all-range query, got gran=%d use=%v", gran, use)
+	}
+}

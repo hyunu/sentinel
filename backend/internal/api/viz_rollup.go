@@ -9,10 +9,11 @@ import (
 
 	"github.com/hyunu/sentinel/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var vizRollupGranularitySecs = []int{1, 10, 60}
+var vizRollupGranularitySecs = []int{1, 10, 60, 300, 3600}
 
 type vizRollupDoc struct {
 	BucketStart time.Time              `bson:"bucket_start"`
@@ -52,8 +53,28 @@ func extractNumericParsedFields(parsed map[string]interface{}) map[string]float6
 	return out
 }
 
-func (h *Handler) upsertVizRollups(ctx context.Context, samples []models.UartData) error {
-	now := time.Now().UTC()
+type vizRollupBucketKey struct {
+	granularitySec int
+	bucketUnix     int64
+}
+
+// vizRollupBucket is the in-memory aggregate for one (granularity, bucket)
+// before it is written back with a single upsert.
+type vizRollupBucket struct {
+	BoardID        string
+	GranularitySec int
+	BucketStart    time.Time
+	Count          int64
+	MinFields      map[string]float64
+	MaxFields      map[string]float64
+	SumFields      map[string]float64
+	LastTS         time.Time
+}
+
+// aggregateVizRollupBuckets folds samples into bucket aggregates so ingest can
+// issue one upsert per bucket instead of one per sample per granularity.
+func aggregateVizRollupBuckets(samples []models.UartData) []vizRollupBucket {
+	buckets := make(map[vizRollupBucketKey]*vizRollupBucket)
 	for _, sample := range samples {
 		if sample.BoardID == "" || sample.Timestamp.IsZero() {
 			continue
@@ -65,42 +86,112 @@ func (h *Handler) upsertVizRollups(ctx context.Context, samples []models.UartDat
 
 		for _, granularitySec := range vizRollupGranularitySecs {
 			bucketStart := rollupBucketStart(sample.Timestamp, granularitySec)
-			filter := bson.M{
-				"board_id":        sample.BoardID,
-				"granularity_sec": granularitySec,
-				"bucket_start":    bucketStart,
+			key := vizRollupBucketKey{
+				granularitySec: granularitySec,
+				bucketUnix:     bucketStart.Unix(),
+			}
+			bucket, ok := buckets[key]
+			if !ok {
+				bucket = &vizRollupBucket{
+					BoardID:        sample.BoardID,
+					GranularitySec: granularitySec,
+					BucketStart:    bucketStart,
+					MinFields:      make(map[string]float64, len(numeric)),
+					MaxFields:      make(map[string]float64, len(numeric)),
+					SumFields:      make(map[string]float64, len(numeric)),
+				}
+				buckets[key] = bucket
 			}
 
-			setFields := bson.M{
-				"board_id":        sample.BoardID,
-				"granularity_sec": granularitySec,
-				"bucket_start":    bucketStart,
-				"updated_at":      now,
+			bucket.Count += 1
+			if sample.Timestamp.After(bucket.LastTS) {
+				bucket.LastTS = sample.Timestamp
 			}
-			incFields := bson.M{"count": 1}
-			minFields := bson.M{}
-			maxFields := bson.M{"last_ts": sample.Timestamp}
-
 			for fieldName, value := range numeric {
-				encodedField := encodeRollupFieldKey(fieldName)
-				minFields["min_fields."+encodedField] = value
-				maxFields["max_fields."+encodedField] = value
-				incFields["sum_fields."+encodedField] = value
+				if current, exists := bucket.MinFields[fieldName]; !exists || value < current {
+					bucket.MinFields[fieldName] = value
+				}
+				if current, exists := bucket.MaxFields[fieldName]; !exists || value > current {
+					bucket.MaxFields[fieldName] = value
+				}
+				bucket.SumFields[fieldName] += value
 			}
+		}
+	}
 
-			update := bson.M{
-				"$set": setFields,
-				"$setOnInsert": bson.M{
-					"created_at": now,
-				},
-				"$inc": incFields,
-				"$min": minFields,
-				"$max": maxFields,
-			}
+	out := make([]vizRollupBucket, 0, len(buckets))
+	for _, bucket := range buckets {
+		out = append(out, *bucket)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].GranularitySec != out[j].GranularitySec {
+			return out[i].GranularitySec < out[j].GranularitySec
+		}
+		return out[i].BucketStart.Before(out[j].BucketStart)
+	})
+	return out
+}
 
-			if _, err := h.db.VizRollups().UpdateOne(ctx, filter, update, options.Update().SetUpsert(true)); err != nil {
-				return err
-			}
+const vizRollupBulkChunk = 1000
+
+func (h *Handler) upsertVizRollups(ctx context.Context, samples []models.UartData) error {
+	buckets := aggregateVizRollupBuckets(samples)
+	if len(buckets) == 0 {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	writes := make([]mongo.WriteModel, 0, len(buckets))
+	for _, bucket := range buckets {
+		filter := bson.M{
+			"board_id":        bucket.BoardID,
+			"granularity_sec": bucket.GranularitySec,
+			"bucket_start":    bucket.BucketStart,
+		}
+
+		setFields := bson.M{
+			"board_id":        bucket.BoardID,
+			"granularity_sec": bucket.GranularitySec,
+			"bucket_start":    bucket.BucketStart,
+			"updated_at":      now,
+		}
+		incFields := bson.M{"count": bucket.Count}
+		minFields := bson.M{}
+		maxFields := bson.M{"last_ts": bucket.LastTS}
+
+		for fieldName, value := range bucket.MinFields {
+			encodedField := encodeRollupFieldKey(fieldName)
+			minFields["min_fields."+encodedField] = value
+			maxFields["max_fields."+encodedField] = bucket.MaxFields[fieldName]
+			incFields["sum_fields."+encodedField] = bucket.SumFields[fieldName]
+		}
+
+		update := bson.M{
+			"$set": setFields,
+			"$setOnInsert": bson.M{
+				"created_at": now,
+			},
+			"$inc": incFields,
+			"$min": minFields,
+			"$max": maxFields,
+		}
+		writes = append(writes, mongo.NewUpdateOneModel().
+			SetFilter(filter).
+			SetUpdate(update).
+			SetUpsert(true))
+	}
+
+	for start := 0; start < len(writes); start += vizRollupBulkChunk {
+		end := start + vizRollupBulkChunk
+		if end > len(writes) {
+			end = len(writes)
+		}
+		if _, err := h.db.VizRollups().BulkWrite(
+			ctx,
+			writes[start:end],
+			options.BulkWrite().SetOrdered(false),
+		); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -148,13 +239,19 @@ func chooseVizRollupGranularity(total int64, limit int, start time.Time, hasStar
 	}
 
 	if !hasStart || !hasEnd {
-		// All-range queries have no bounds. Prefer 10s buckets for moderate
-		// datasets so the overview keeps enough shape to be readable; very
-		// large datasets stay on 60s buckets to bound rollup scans.
-		if total <= 200000 {
+		// All-range queries have no bounds. Pick a granularity from the row
+		// count so the overview stays readable without scanning too many
+		// rollup buckets.
+		switch {
+		case total <= 200000:
 			return 10, true
+		case total <= 2000000:
+			return 60, true
+		case total <= 20000000:
+			return 300, true
+		default:
+			return 3600, true
 		}
-		return 60, true
 	}
 
 	rangeSec := end.Sub(start).Seconds()
@@ -169,7 +266,9 @@ func chooseVizRollupGranularity(total int64, limit int, start time.Time, hasStar
 			return granularitySec, true
 		}
 	}
-	return 60, true
+	// Even the coarsest rollup exceeds the target; use it anyway so very long
+	// ranges do not fall back to a finer granularity with more buckets.
+	return vizRollupGranularitySecs[len(vizRollupGranularitySecs)-1], true
 }
 
 func readRollupFieldValue(fields map[string]interface{}, fieldName string) (float64, bool) {
