@@ -63,8 +63,8 @@ export default function SessionsPage() {
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
   const loading = Boolean(selectedBoard) && sessionsByBoard[selectedBoard] === undefined;
 
-  const overlappingSessionIds = useMemo(() => {
-    const ids = new Set<string>();
+  const overlapStates = useMemo(() => {
+    const states = new Map<string, 'full' | 'partial'>();
     const ranges = sessions.map(session => ({
       id: session.id,
       start: Date.parse(session.start_time),
@@ -72,13 +72,19 @@ export default function SessionsPage() {
     })).filter(range => Number.isFinite(range.start));
     for (let i = 0; i < ranges.length; i += 1) {
       for (let j = i + 1; j < ranges.length; j += 1) {
-        if (Math.min(ranges[i].end, ranges[j].end) > Math.max(ranges[i].start, ranges[j].start)) {
-          ids.add(ranges[i].id);
-          ids.add(ranges[j].id);
+        if (Math.min(ranges[i].end, ranges[j].end) <= Math.max(ranges[i].start, ranges[j].start)) {
+          continue;
+        }
+        if (ranges[i].start === ranges[j].start && ranges[i].end === ranges[j].end) {
+          states.set(ranges[i].id, 'full');
+          states.set(ranges[j].id, 'full');
+        } else {
+          if (states.get(ranges[i].id) !== 'full') states.set(ranges[i].id, 'partial');
+          if (states.get(ranges[j].id) !== 'full') states.set(ranges[j].id, 'partial');
         }
       }
     }
-    return ids;
+    return states;
   }, [sessions]);
 
   useEffect(() => {
@@ -216,9 +222,27 @@ export default function SessionsPage() {
     if (!selectedBoard || !form.name.trim() || saving) return;
     const start = toISOString(form.start);
     const end = toISOString(form.end);
-    if (start && end && new Date(end) <= new Date(start)) {
+    const startMs = start ? Date.parse(start) : Number.NaN;
+    const endMs = end ? Date.parse(end) : Number.NaN;
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs <= startMs) {
       setError(t('sessions.invalidRange'));
       return;
+    }
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      const overlappingCount = sessions.filter(session => {
+        const existingStart = Date.parse(session.start_time);
+        const existingEnd = session.end_time
+          ? Date.parse(session.end_time)
+          : Number.POSITIVE_INFINITY;
+        return Number.isFinite(existingStart)
+          && Math.min(existingEnd, endMs) > Math.max(existingStart, startMs);
+      }).length;
+      if (
+        overlappingCount > 0
+        && !window.confirm(t('sessions.overlapConfirm', { count: String(overlappingCount) }))
+      ) {
+        return;
+      }
     }
     setSaving(true);
     setError('');
@@ -550,11 +574,15 @@ export default function SessionsPage() {
                       ) : (
                         <>
                           <strong>{session.name}</strong>
-                          {overlappingSessionIds.has(session.id) && (
-                            <span className="tag tag-overlap" title={t('sessions.overlapHint')}>
-                              {t('sessions.overlapTag')}
+                          {overlapStates.get(session.id) === 'full' ? (
+                            <span className="tag tag-overlap-full" title={t('sessions.overlapHint')}>
+                              {t('sessions.overlapFullTag')}
                             </span>
-                          )}
+                          ) : overlapStates.get(session.id) === 'partial' ? (
+                            <span className="tag tag-overlap" title={t('sessions.overlapHint')}>
+                              {t('sessions.overlapPartialTag')}
+                            </span>
+                          ) : null}
                         </>
                       )}
                     </td>

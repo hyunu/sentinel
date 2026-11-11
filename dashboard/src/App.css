@@ -4665,6 +4665,14 @@ tbody tr:last-child td {
   font-weight: 500;
 }
 
+.tag-overlap-full {
+  margin-left: 6px;
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  font-weight: 500;
+}
+
 .tag-overlap {
   margin-left: 6px;
   background: rgba(244, 114, 182, 0.14);
@@ -5984,6 +5992,14 @@ pre {
   align-items: flex-end;
 }
 
+.sessions-page .card-header h2 {
+  margin: 0;
+}
+
+.sessions-rules-card .sessions-empty {
+  padding: 12px 0;
+}
+
 .sessions-actions {
   display: flex;
   align-items: flex-end;
@@ -6084,10 +6100,6 @@ pre {
   white-space: nowrap;
 }
 
-.sessions-timeline-card .card-header {
-  margin-bottom: 10px;
-}
-
 .session-timeline {
   display: flex;
   flex-direction: column;
@@ -6181,6 +6193,14 @@ pre {
   z-index: 2;
 }
 
+.session-timeline-overlap.is-full {
+  background:
+    repeating-linear-gradient(45deg, rgba(239, 68, 68, 0.6) 0 3px, rgba(239, 68, 68, 0.16) 3px 6px),
+    repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.45) 0 3px, rgba(239, 68, 68, 0.12) 3px 6px);
+  border-left: 1px solid rgba(248, 113, 113, 0.95);
+  border-right: 1px solid rgba(248, 113, 113, 0.95);
+}
+
 .session-timeline-selection {
   position: absolute;
   top: 0;
@@ -6259,6 +6279,7 @@ pre {
 .session-timeline-dot.is-unassigned { background: rgba(251, 191, 36, 0.75); }
 .session-timeline-dot.is-empty { background: rgba(148, 163, 184, 0.35); }
 .session-timeline-dot.is-overlap { background: rgba(244, 114, 182, 0.85); }
+.session-timeline-dot.is-overlap-full { background: rgba(248, 113, 113, 0.9); }
 
 .session-timeline-empty {
   margin: 0;
@@ -6318,6 +6339,15 @@ pre {
 
 .sessions-table td {
   vertical-align: middle;
+}
+
+.sessions-table th:last-child,
+.sessions-table td:last-child {
+  text-align: right;
+}
+
+.sessions-table td:last-child .btn-group {
+  justify-content: flex-end;
 }
 
 .viz-ai-aggregation-badge {

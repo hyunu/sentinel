@@ -92,7 +92,8 @@ export default function SessionTimeline({
       });
   }, [sessions, hasRange, startMs, endMs]);
 
-  // Segments covered by two or more sessions at the same time.
+  // Segments covered by two or more sessions at the same time. `full` marks
+  // segments where two sessions have exactly the same start and end.
   const overlapSegments = useMemo(() => {
     if (sessionRanges.length < 2) return [];
     const points: { t: number; d: number }[] = [];
@@ -101,18 +102,30 @@ export default function SessionTimeline({
       points.push({ t: range.end, d: -1 });
     }
     points.sort((a, b) => (a.t - b.t) || (a.d - b.d));
-    const out: { start: number; end: number; names: string[] }[] = [];
+    const out: { start: number; end: number; names: string[]; full: boolean }[] = [];
     let active = 0;
     let prev: number | null = null;
     for (const point of points) {
       if (prev != null && point.t > prev && active >= 2) {
         const segStart = prev;
+        const activeRanges = sessionRanges.filter(range => range.start < point.t && range.end > segStart);
+        let full = false;
+        for (let i = 0; i < activeRanges.length && !full; i += 1) {
+          for (let j = i + 1; j < activeRanges.length; j += 1) {
+            if (
+              activeRanges[i].start === activeRanges[j].start
+              && activeRanges[i].end === activeRanges[j].end
+            ) {
+              full = true;
+              break;
+            }
+          }
+        }
         out.push({
           start: segStart,
           end: point.t,
-          names: sessionRanges
-            .filter(range => range.start < point.t && range.end > segStart)
-            .map(range => range.name),
+          names: activeRanges.map(range => range.name),
+          full,
         });
       }
       active += point.d;
@@ -120,6 +133,9 @@ export default function SessionTimeline({
     }
     return out;
   }, [sessionRanges]);
+
+  const fullOverlapCount = overlapSegments.filter(segment => segment.full).length;
+  const partialOverlapCount = overlapSegments.length - fullOverlapCount;
 
   const maxCount = useMemo(() => {
     let max = 0;
@@ -312,9 +328,9 @@ export default function SessionTimeline({
               return (
                 <span
                   key={`overlap-${i}`}
-                  className="session-timeline-overlap"
+                  className={`session-timeline-overlap${segment.full ? ' is-full' : ''}`}
                   style={{ left: `${left}%`, width: `${Math.max(width, 0.15)}%` }}
-                  title={`${t('sessions.timelineOverlap')} · ${segment.names.join(', ')}`}
+                  title={`${segment.full ? t('sessions.timelineOverlapFull') : t('sessions.timelineOverlapPartial')} · ${segment.names.join(', ')}`}
                 />
               );
             })}
@@ -346,8 +362,11 @@ export default function SessionTimeline({
             <span><i className="session-timeline-dot is-assigned" />{t('sessions.timelineAssigned')}</span>
             <span><i className="session-timeline-dot is-unassigned" />{t('sessions.timelineUnassigned')}</span>
             <span><i className="session-timeline-dot is-empty" />{t('sessions.timelineEmpty')}</span>
-            {overlapSegments.length > 0 && (
-              <span><i className="session-timeline-dot is-overlap" />{t('sessions.timelineOverlap')}</span>
+            {partialOverlapCount > 0 && (
+              <span><i className="session-timeline-dot is-overlap" />{t('sessions.timelineOverlapPartial')}</span>
+            )}
+            {fullOverlapCount > 0 && (
+              <span><i className="session-timeline-dot is-overlap-full" />{t('sessions.timelineOverlapFull')}</span>
             )}
             <span className="muted">{t('sessions.timelineHint')}</span>
           </div>
@@ -362,8 +381,11 @@ export default function SessionTimeline({
                   gaps: String(coverage.gapRuns),
                   gapTime: formatTimeInterval(coverage.gapMs),
                 }))}
-              {overlapSegments.length > 0 && (
-                <> · {t('sessions.timelineOverlapCount', { count: String(overlapSegments.length) })}</>
+              {partialOverlapCount > 0 && (
+                <> · {t('sessions.timelineOverlapCount', { count: String(partialOverlapCount) })}</>
+              )}
+              {fullOverlapCount > 0 && (
+                <> · {t('sessions.timelineOverlapFullCount', { count: String(fullOverlapCount) })}</>
               )}
             </p>
           )}
