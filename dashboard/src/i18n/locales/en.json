@@ -312,6 +312,7 @@
     "ruleModeCut": "Cut at each packet",
     "ruleModeRange": "Start/end packets",
     "rulesHintRange": "Assign one rule as the start packet and another as the end packet. Only the ranges between them become sessions; everything else stays unassigned.",
+    "rulesLogicHint": "Conditions inside one rule (FID, direction, field) are ANDed; rules are ORed. With multiple start rules, the first matching packet opens the session.",
     "ruleRole": "Packet role",
     "ruleRoleStart": "Start",
     "ruleRoleEnd": "End",

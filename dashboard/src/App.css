@@ -6183,17 +6183,33 @@ pre {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(167, 139, 250, 0.26);
-  border-left: 1px solid rgba(196, 181, 253, 0.8);
-  border-right: 1px solid rgba(196, 181, 253, 0.8);
+  background: rgba(139, 92, 246, 0.45);
+  border-left: 1px solid rgba(196, 181, 253, 0.95);
+  border-right: 1px solid rgba(196, 181, 253, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.35);
   pointer-events: none;
   z-index: 2;
 }
 
+.session-timeline-overlap::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: rgba(196, 181, 253, 0.95);
+}
+
 .session-timeline-overlap.is-full {
-  background: rgba(248, 113, 113, 0.26);
-  border-left: 1px solid rgba(252, 165, 165, 0.85);
-  border-right: 1px solid rgba(252, 165, 165, 0.85);
+  background: rgba(239, 68, 68, 0.5);
+  border-left: 1px solid rgba(252, 165, 165, 0.95);
+  border-right: 1px solid rgba(252, 165, 165, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(252, 165, 165, 0.4);
+}
+
+.session-timeline-overlap.is-full::after {
+  background: rgba(252, 165, 165, 0.98);
 }
 
 .session-timeline-selection {
@@ -6324,6 +6340,11 @@ pre {
   font-size: 12px;
 }
 
+.sessions-rules-logic {
+  margin: -4px 0 10px;
+  font-size: 11px;
+}
+
 .sessions-rules-list {
   display: flex;
   flex-direction: column;
@@ -6380,6 +6401,13 @@ pre {
 
 .sessions-table td:last-child .btn-group {
   justify-content: flex-end;
+}
+
+.sessions-table .tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  line-height: 1.35;
 }
 
 .viz-ai-aggregation-badge {

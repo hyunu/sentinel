@@ -514,6 +514,7 @@ export default function SessionsPage() {
           <p className="muted sessions-rules-hint">
             {t(ruleMode === 'range' ? 'sessions.rulesHintRange' : 'sessions.rulesHint')}
           </p>
+          <p className="muted sessions-rules-logic">{t('sessions.rulesLogicHint')}</p>
           {rules.length === 0 ? (
             <p className="muted sessions-empty">{t('sessions.noRules')}</p>
           ) : (
