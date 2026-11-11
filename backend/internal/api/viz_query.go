@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hyunu/sentinel/internal/models"
@@ -89,22 +90,33 @@ func buildVizProjection(items []models.VizItem) bson.M {
 	return projection
 }
 
+// fieldNameCandidates returns both the bare and payload-prefixed spellings so
+// profiles keep working after a protocol switch between flat and Switch rules.
+func fieldNameCandidates(name string) []string {
+	if name == "" {
+		return nil
+	}
+	if strings.HasPrefix(name, "payload.") {
+		return []string{name, strings.TrimPrefix(name, "payload.")}
+	}
+	return []string{name, "payload." + name}
+}
+
 func vizValuesFromDoc(d *vizSampleDoc, items []models.VizItem) map[string]interface{} {
 	vals := make(map[string]interface{})
 	if d.ParsedFields == nil {
 		return vals
 	}
 	for _, item := range items {
-		value, ok := d.ParsedFields[item.FieldRef.FieldName]
-		if !ok {
-			// Combined monitoring+control rules wrap payload fields under
-			// "payload." while profile items keep the bare field name.
-			value, ok = d.ParsedFields["payload."+item.FieldRef.FieldName]
-		}
-		if ok {
+		for _, candidate := range fieldNameCandidates(item.FieldRef.FieldName) {
+			value, ok := d.ParsedFields[candidate]
+			if !ok {
+				continue
+			}
 			if fv, ok := extractVizValue(value); ok {
 				vals[item.Label] = fv
 			}
+			break
 		}
 	}
 	return vals
@@ -438,16 +450,33 @@ func (h *Handler) queryVizSeriesSampled(
 // use a direct path (cheap); names with dots or special characters fall back to
 // the objectToArray form so they still resolve on MongoDB 4.4.
 func vizNumericFieldExpr(fieldName string) bson.M {
+	candidates := fieldNameCandidates(fieldName)
+	simple := make([]interface{}, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !isSimpleVizFieldName(candidate) {
+			simple = nil
+			break
+		}
+		simple = append(simple, "$parsed_fields."+candidate)
+	}
 	var input interface{}
-	if isSimpleVizFieldName(fieldName) {
-		input = "$parsed_fields." + fieldName
+	if len(simple) > 0 {
+		if len(simple) == 1 {
+			input = simple[0]
+		} else {
+			input = bson.M{"$ifNull": simple}
+		}
 	} else {
+		keys := make(bson.A, 0, len(candidates))
+		for _, candidate := range candidates {
+			keys = append(keys, candidate)
+		}
 		input = bson.M{"$arrayElemAt": bson.A{
 			bson.M{"$map": bson.M{
 				"input": bson.M{"$filter": bson.M{
 					"input": bson.M{"$objectToArray": bson.M{"$ifNull": bson.A{"$parsed_fields", bson.M{}}}},
 					"as":    "p",
-					"cond":  bson.M{"$eq": bson.A{"$$p.k", fieldName}},
+					"cond":  bson.M{"$in": bson.A{"$$p.k", keys}},
 				}},
 				"as": "p",
 				"in": "$$p.v",
