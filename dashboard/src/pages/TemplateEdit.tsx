@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { JsonRuleDocument, ParseResult } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
+import ParseRulesManual from '../components/ParseRulesManual';
 import { useTranslation } from '../i18n';
 import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '../lib/ruleBuilderUtils';
 import '../styles/ruleBuilder.css';
@@ -34,6 +35,7 @@ export default function TemplateEditPage() {
   const [testResult, setTestResult] = useState<ParseResult | { error: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState<'ui' | 'json'>('ui');
+  const [manualOpen, setManualOpen] = useState(false);
 
   const applyRules = useCallback((doc: JsonRuleDocument) => {
     if (!doc.fields?.length) {
@@ -133,6 +135,9 @@ export default function TemplateEditPage() {
           subtitle={t('templates.editSubtitle')}
         />
         <div className="protocol-edit-toolbar-actions">
+          <button type="button" className="btn-ghost" onClick={() => setManualOpen(true)}>
+            {t('common.manual')}
+          </button>
           <Link to="/protocols/templates" className="btn-ghost">{t('common.cancel')}</Link>
           <button
             type="button"
@@ -144,6 +149,8 @@ export default function TemplateEditPage() {
           </button>
         </div>
       </div>
+
+      <ParseRulesManual open={manualOpen} onClose={() => setManualOpen(false)} />
 
       <div className="protocol-edit-stack">
         <div className="card protocol-info-card">

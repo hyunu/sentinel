@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { Board, Session } from '../api';
 import PageHeader from '../components/PageHeader';
 import SessionTimeline from '../components/SessionTimeline';
+import SessionsManual from '../components/SessionsManual';
 import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
 import type { SessionSplitRule } from '../api';
@@ -61,6 +62,7 @@ export default function SessionsPage() {
   const [splitting, setSplitting] = useState(false);
   const [splitMessage, setSplitMessage] = useState('');
   const [splitWarning, setSplitWarning] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
 
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
   const loading = Boolean(selectedBoard) && sessionsByBoard[selectedBoard] === undefined;
@@ -365,7 +367,13 @@ export default function SessionsPage() {
 
   return (
     <div className="page sessions-page">
-      <PageHeader title={t('sessions.title')} subtitle={t('sessions.subtitle')} />
+      <PageHeader title={t('sessions.title')} subtitle={t('sessions.subtitle')}>
+        <button type="button" className="btn-ghost" onClick={() => setManualOpen(true)}>
+          {t('common.manual')}
+        </button>
+      </PageHeader>
+
+      <SessionsManual open={manualOpen} onClose={() => setManualOpen(false)} />
 
       <div className="card">
         <div className="form-row">

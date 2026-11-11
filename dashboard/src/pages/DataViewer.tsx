@@ -4,6 +4,7 @@ import type { UartData, Board, UartCursor, Session, ProtocolSpec, DataReparseJob
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import DataCell from '../components/DataCell';
+import UartDataManual from '../components/UartDataManual';
 import { formatDateTime, formatTimeInterval } from '../utils/date';
 import { useTranslation } from '../i18n';
 
@@ -69,6 +70,7 @@ export default function DataViewerPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteCount, setDeleteCount] = useState<number | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -426,7 +428,13 @@ export default function DataViewerPage() {
       <PageHeader
         title={t('dataViewer.title')}
         subtitle={t('dataViewer.subtitle')}
-      />
+      >
+        <button type="button" className="btn-ghost" onClick={() => setManualOpen(true)}>
+          {t('common.manual')}
+        </button>
+      </PageHeader>
+
+      <UartDataManual open={manualOpen} onClose={() => setManualOpen(false)} />
 
       <div className="card">
         <div className="form-row">

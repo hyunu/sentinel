@@ -4878,7 +4878,11 @@ export default function VizDashboardPage() {
       <PageHeader
         title={t('viz.title')}
         subtitle={t('viz.subtitle')}
-      />
+      >
+        <button type="button" className="btn-ghost" onClick={() => setChartManualOpen(true)}>
+          {t('common.manual')}
+        </button>
+      </PageHeader>
 
       <div className={`card table-card viz-config-card${configOpen ? '' : ' is-collapsed'}`}>
         <div className="card-header viz-config-header">
