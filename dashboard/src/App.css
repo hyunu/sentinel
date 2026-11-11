@@ -2023,7 +2023,7 @@ tbody tr:last-child td {
   gap: 8px;
   padding: 7px 12px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
   border: none;
   border-radius: calc(var(--radius-md) - 3px);
