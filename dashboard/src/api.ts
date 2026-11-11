@@ -113,6 +113,7 @@ export interface Board {
   location?: string;
   protocol_id?: string;
   session_split_rules?: SessionSplitRule[];
+  session_rule_mode?: 'cut' | 'range';
   last_heartbeat: string;
   is_active: boolean;
   created_at: string;
@@ -127,6 +128,7 @@ export interface SessionSplitRule {
   direction?: '' | 'TX' | 'RX';
   field?: string;
   operator?: 'eq' | 'neq' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+  role?: '' | 'start' | 'end';
   value?: string;
 }
 
@@ -404,7 +406,7 @@ export const api = {
     register: (data: { name?: string; mac_address: string; wifi_mac?: string; location?: string; uid?: string; protocol_id?: string }) =>
       request<{ uid: string; board: Board }>('/boards/register', { method: 'POST', body: JSON.stringify(data) })
         .then(r => r.board),
-    update: (id: string, data: { name?: string; firmware_version?: string; location?: string; protocol_id?: string | null; session_split_rules?: SessionSplitRule[] }) =>
+    update: (id: string, data: { name?: string; firmware_version?: string; location?: string; protocol_id?: string | null; session_split_rules?: SessionSplitRule[]; session_rule_mode?: 'cut' | 'range' }) =>
       request<Board>(`/boards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<{ message: string; pending?: boolean; deleted?: Record<string, number> }>(`/boards/${id}`, { method: 'DELETE' }),
@@ -557,7 +559,14 @@ export const api = {
         body: JSON.stringify({ board_id, type, params: { gap_seconds: gapSeconds } }),
       }),
     splitByRules: (board_id: string, replace = true, minGapSeconds = 1) =>
-      request<{ sessions_created: number; cuts: number; rows_assigned: number }>('/sessions/split-by-rules', {
+      request<{
+        sessions_created: number;
+        cuts: number;
+        ranges: number;
+        rows_assigned: number;
+        unclosed_starts: number;
+        mode: 'cut' | 'range';
+      }>('/sessions/split-by-rules', {
         method: 'POST',
         body: JSON.stringify({ board_id, replace, min_gap_seconds: minGapSeconds }),
         timeoutMs: 180000,

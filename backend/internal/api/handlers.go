@@ -361,6 +361,7 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 		Location        *string                    `json:"location"`
 		ProtocolID      *string                    `json:"protocol_id"`
 		SessionRules    *[]models.SessionSplitRule `json:"session_split_rules"`
+		SessionRuleMode *string                    `json:"session_rule_mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -393,6 +394,16 @@ func (h *Handler) UpdateBoard(c *gin.Context) {
 	}
 	if req.SessionRules != nil {
 		update["session_split_rules"] = *req.SessionRules
+	}
+	if req.SessionRuleMode != nil {
+		mode := strings.TrimSpace(*req.SessionRuleMode)
+		switch mode {
+		case "", "cut", "range":
+			update["session_rule_mode"] = mode
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session_rule_mode"})
+			return
+		}
 	}
 
 	updateDoc := bson.M{"$set": update}

@@ -56,9 +56,11 @@ export default function SessionsPage() {
   const [gapSeconds, setGapSeconds] = useState(60);
   const [autoSplitting, setAutoSplitting] = useState(false);
   const [rules, setRules] = useState<SessionSplitRule[]>([]);
+  const [ruleMode, setRuleMode] = useState<'cut' | 'range'>('cut');
   const [rulesSaving, setRulesSaving] = useState(false);
   const [splitting, setSplitting] = useState(false);
   const [splitMessage, setSplitMessage] = useState('');
+  const [splitWarning, setSplitWarning] = useState('');
 
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
   const loading = Boolean(selectedBoard) && sessionsByBoard[selectedBoard] === undefined;
@@ -138,7 +140,22 @@ export default function SessionsPage() {
   useEffect(() => {
     const board = boards.find(item => item.id === selectedBoard);
     setRules(board?.session_split_rules ?? []);
+    setRuleMode(board?.session_rule_mode === 'range' ? 'range' : 'cut');
   }, [selectedBoard, boards]);
+
+  // In range mode every rule needs a role. Rules saved before the mode existed
+  // default to start so the UI and the backend agree.
+  const normalizedRules = useMemo(() => rules.map(rule => ({
+    ...rule,
+    role: ruleMode === 'range'
+      ? (rule.role === 'end' ? 'end' as const : 'start' as const)
+      : '' as const,
+  })), [rules, ruleMode]);
+
+  const rangeReady = ruleMode !== 'range' || (
+    normalizedRules.some(rule => rule.enabled && rule.role === 'start')
+    && normalizedRules.some(rule => rule.enabled && rule.role === 'end')
+  );
 
   const newRuleId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -148,27 +165,38 @@ export default function SessionsPage() {
   };
 
   const addRule = () => {
-    setRules(prev => [...prev, {
-      id: newRuleId(),
-      name: '',
-      enabled: true,
-      fid: '',
-      direction: '',
-      field: '',
-      operator: 'eq',
-      value: '',
-    }]);
+    setRules(prev => {
+      const role = ruleMode !== 'range'
+        ? '' as const
+        : (prev.some(rule => rule.enabled && rule.role !== 'end') && !prev.some(rule => rule.enabled && rule.role === 'end')
+          ? 'end' as const
+          : 'start' as const);
+      return [...prev, {
+        id: newRuleId(),
+        name: '',
+        enabled: true,
+        fid: '',
+        direction: '',
+        field: '',
+        operator: 'eq',
+        value: '',
+        role,
+      }];
+    });
     setSplitMessage('');
+    setSplitWarning('');
   };
 
   const updateRule = (id: string, patch: Partial<SessionSplitRule>) => {
     setRules(prev => prev.map(rule => (rule.id === id ? { ...rule, ...patch } : rule)));
     setSplitMessage('');
+    setSplitWarning('');
   };
 
   const removeRule = (id: string) => {
     setRules(prev => prev.filter(rule => rule.id !== id));
     setSplitMessage('');
+    setSplitWarning('');
   };
 
   const saveRules = async () => {
@@ -176,7 +204,11 @@ export default function SessionsPage() {
     setRulesSaving(true);
     setError('');
     try {
-      const updated = await api.boards.update(selectedBoard, { session_split_rules: rules });
+      const updated = await api.boards.update(selectedBoard, {
+        session_split_rules: normalizedRules,
+        session_rule_mode: ruleMode,
+      });
+      setRules(updated.session_split_rules ?? normalizedRules);
       setBoards(prev => prev.map(board => (board.id === updated.id ? updated : board)));
       setSplitMessage(t('sessions.rulesSaved'));
     } catch (e) {
@@ -189,14 +221,23 @@ export default function SessionsPage() {
 
   const runRuleSplit = async () => {
     if (!selectedBoard || splitting) return;
-    if (!window.confirm(t('sessions.splitConfirm'))) return;
+    if (!rangeReady) {
+      setError(t('sessions.ruleRangeNeedsRoles'));
+      return;
+    }
+    if (!window.confirm(t(ruleMode === 'range' ? 'sessions.splitConfirmRange' : 'sessions.splitConfirm'))) return;
     setSplitting(true);
     setError('');
     setSplitMessage('');
+    setSplitWarning('');
     try {
       // Persist the current editor values first so the split uses what the
       // user sees, not the previously saved rule set.
-      const updated = await api.boards.update(selectedBoard, { session_split_rules: rules });
+      const updated = await api.boards.update(selectedBoard, {
+        session_split_rules: normalizedRules,
+        session_rule_mode: ruleMode,
+      });
+      setRules(updated.session_split_rules ?? normalizedRules);
       setBoards(prev => prev.map(board => (board.id === updated.id ? updated : board)));
       const result = await api.sessions.splitByRules(selectedBoard, true, 1);
       await reload();
@@ -204,6 +245,9 @@ export default function SessionsPage() {
         sessions: formatCount(result.sessions_created),
         rows: formatCount(result.rows_assigned),
       }));
+      if (result.unclosed_starts > 0) {
+        setSplitWarning(t('sessions.splitUnclosed', { count: String(result.unclosed_starts) }));
+      }
     } catch (e) {
       console.error(e);
       setError(t('sessions.splitFailed'));
@@ -437,13 +481,39 @@ export default function SessionsPage() {
                 type="button"
                 className="btn-primary btn-sm"
                 onClick={() => void runRuleSplit()}
-                disabled={splitting || rules.every(rule => !rule.enabled)}
+                disabled={splitting || rules.every(rule => !rule.enabled) || !rangeReady}
               >
                 {splitting ? t('common.loading') : t('sessions.runRuleSplit')}
               </button>
             </div>
           </div>
-          <p className="muted sessions-rules-hint">{t('sessions.rulesHint')}</p>
+          <div className="sessions-rule-mode" role="group" aria-label={t('sessions.ruleMode')}>
+            <button
+              type="button"
+              className={ruleMode === 'cut' ? 'is-active' : ''}
+              onClick={() => {
+                setRuleMode('cut');
+                setSplitMessage('');
+                setSplitWarning('');
+              }}
+            >
+              {t('sessions.ruleModeCut')}
+            </button>
+            <button
+              type="button"
+              className={ruleMode === 'range' ? 'is-active' : ''}
+              onClick={() => {
+                setRuleMode('range');
+                setSplitMessage('');
+                setSplitWarning('');
+              }}
+            >
+              {t('sessions.ruleModeRange')}
+            </button>
+          </div>
+          <p className="muted sessions-rules-hint">
+            {t(ruleMode === 'range' ? 'sessions.rulesHintRange' : 'sessions.rulesHint')}
+          </p>
           {rules.length === 0 ? (
             <p className="muted sessions-empty">{t('sessions.noRules')}</p>
           ) : (
@@ -456,6 +526,17 @@ export default function SessionsPage() {
                     onChange={e => updateRule(rule.id, { enabled: e.target.checked })}
                     aria-label={t('sessions.ruleEnabled')}
                   />
+                  {ruleMode === 'range' && (
+                    <select
+                      className="sessions-rule-role"
+                      value={rule.role === 'end' ? 'end' : 'start'}
+                      aria-label={t('sessions.ruleRole')}
+                      onChange={e => updateRule(rule.id, { role: e.target.value as 'start' | 'end' })}
+                    >
+                      <option value="start">{t('sessions.ruleRoleStart')}</option>
+                      <option value="end">{t('sessions.ruleRoleEnd')}</option>
+                    </select>
+                  )}
                   <input
                     className="sessions-rule-name"
                     value={rule.name}
@@ -511,6 +592,7 @@ export default function SessionsPage() {
             </div>
           )}
           {splitMessage && <p className="sessions-split-message">{splitMessage}</p>}
+          {splitWarning && <p className="sessions-split-warning">{splitWarning}</p>}
         </div>
       )}
 

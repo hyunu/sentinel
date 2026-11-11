@@ -4675,9 +4675,9 @@ tbody tr:last-child td {
 
 .tag-overlap {
   margin-left: 6px;
-  background: rgba(244, 114, 182, 0.14);
-  color: #f9a8d4;
-  border: 1px solid rgba(244, 114, 182, 0.4);
+  background: rgba(167, 139, 250, 0.14);
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.4);
   font-weight: 500;
 }
 
@@ -6173,8 +6173,9 @@ pre {
   position: absolute;
   top: 0;
   bottom: 0;
-  border-left: 2px solid var(--primary);
-  border-right: 1px solid rgba(124, 131, 255, 0.55);
+  background: rgba(124, 131, 255, 0.05);
+  border-left: 1px solid rgba(124, 131, 255, 0.9);
+  border-right: 1px solid rgba(124, 131, 255, 0.45);
   pointer-events: none;
 }
 
@@ -6182,23 +6183,17 @@ pre {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: repeating-linear-gradient(
-    135deg,
-    rgba(244, 114, 182, 0.62) 0 3px,
-    rgba(244, 114, 182, 0.22) 3px 6px
-  );
-  border-left: 1px solid rgba(244, 114, 182, 0.95);
-  border-right: 1px solid rgba(244, 114, 182, 0.95);
+  background: rgba(167, 139, 250, 0.26);
+  border-left: 1px solid rgba(196, 181, 253, 0.8);
+  border-right: 1px solid rgba(196, 181, 253, 0.8);
   pointer-events: none;
   z-index: 2;
 }
 
 .session-timeline-overlap.is-full {
-  background:
-    repeating-linear-gradient(45deg, rgba(239, 68, 68, 0.6) 0 3px, rgba(239, 68, 68, 0.16) 3px 6px),
-    repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.45) 0 3px, rgba(239, 68, 68, 0.12) 3px 6px);
-  border-left: 1px solid rgba(248, 113, 113, 0.95);
-  border-right: 1px solid rgba(248, 113, 113, 0.95);
+  background: rgba(248, 113, 113, 0.26);
+  border-left: 1px solid rgba(252, 165, 165, 0.85);
+  border-right: 1px solid rgba(252, 165, 165, 0.85);
 }
 
 .session-timeline-selection {
@@ -6278,13 +6273,50 @@ pre {
 .session-timeline-dot.is-assigned { background: rgba(110, 158, 214, 0.85); }
 .session-timeline-dot.is-unassigned { background: rgba(251, 191, 36, 0.75); }
 .session-timeline-dot.is-empty { background: rgba(148, 163, 184, 0.35); }
-.session-timeline-dot.is-overlap { background: rgba(244, 114, 182, 0.85); }
+.session-timeline-dot.is-overlap { background: rgba(167, 139, 250, 0.9); }
 .session-timeline-dot.is-overlap-full { background: rgba(248, 113, 113, 0.9); }
 
 .session-timeline-empty {
   margin: 0;
   padding: 18px 0;
   text-align: center;
+}
+
+.sessions-rule-mode {
+  display: inline-flex;
+  margin: 0 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sessions-rule-mode button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.sessions-rule-mode button + button {
+  border-left: 1px solid var(--border);
+}
+
+.sessions-rule-mode button.is-active {
+  background: var(--primary-dim, rgba(124, 131, 255, 0.2));
+  color: var(--text);
+}
+
+.sessions-rule-role {
+  flex: 0 0 84px;
+  width: 84px;
+}
+
+.sessions-split-warning {
+  margin: 6px 0 0;
+  color: var(--warning, #fbbf24);
+  font-size: 12px;
 }
 
 .sessions-rules-hint {
