@@ -20,13 +20,17 @@ type Board struct {
 	// SessionRuleMode selects how packet rules create sessions:
 	// "cut" (default) cuts at every match, "range" builds sessions between
 	// start and end rules.
-	SessionRuleMode string    `json:"session_rule_mode,omitempty" bson:"session_rule_mode,omitempty"`
-	PendingAction   string    `json:"pending_action,omitempty" bson:"pending_action,omitempty"`
-	PendingActionAt time.Time `json:"pending_action_at,omitempty" bson:"pending_action_at,omitempty"`
-	LastHeartbeat   time.Time `json:"last_heartbeat" bson:"last_heartbeat"`
-	IsActive        bool      `json:"is_active" bson:"is_active"`
-	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" bson:"updated_at"`
+	SessionRuleMode string `json:"session_rule_mode,omitempty" bson:"session_rule_mode,omitempty"`
+	// PresenceBackfilled marks that uart_presence covers all existing rows.
+	PresenceBackfilled   bool      `json:"-" bson:"presence_backfilled,omitempty"`
+	PresenceBackfilling  bool      `json:"-" bson:"presence_backfilling,omitempty"`
+	PresenceBackfilledAt time.Time `json:"-" bson:"presence_backfilled_at,omitempty"`
+	PendingAction        string    `json:"pending_action,omitempty" bson:"pending_action,omitempty"`
+	PendingActionAt      time.Time `json:"pending_action_at,omitempty" bson:"pending_action_at,omitempty"`
+	LastHeartbeat        time.Time `json:"last_heartbeat" bson:"last_heartbeat"`
+	IsActive             bool      `json:"is_active" bson:"is_active"`
+	CreatedAt            time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 // SessionSplitRule marks a session boundary when a packet matches. Rules are

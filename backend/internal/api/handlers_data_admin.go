@@ -460,6 +460,9 @@ func (h *Handler) DeleteData(c *gin.Context) {
 			return
 		}
 		stats.UartData = n
+		if _, err := h.db.UartPresence().DeleteMany(ctx, bucketRangeFilter(boardID, since, until)); err != nil {
+			h.logger.Warn("failed to delete uart presence", zap.String("board_id", boardID), zap.Error(err))
+		}
 	}
 	if include["rollups"] {
 		n, err := deleteRange(h.db.VizRollups(), bucketRangeFilter(boardID, since, until))

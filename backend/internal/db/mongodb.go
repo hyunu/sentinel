@@ -66,6 +66,7 @@ const (
 	CollectionHeartbeats    = "heartbeats"
 	CollectionUartData      = "uart_data"
 	CollectionVizRollups    = "viz_rollups"
+	CollectionUartPresence  = "uart_presence"
 	CollectionSessions      = "sessions"
 	CollectionProtocols     = "protocols"
 	CollectionSchemaPresets = "schema_presets"
@@ -79,6 +80,7 @@ func (m *MongoDB) Boards() *mongo.Collection        { return m.Collection(Collec
 func (m *MongoDB) Heartbeats() *mongo.Collection    { return m.Collection(CollectionHeartbeats) }
 func (m *MongoDB) UartData() *mongo.Collection      { return m.Collection(CollectionUartData) }
 func (m *MongoDB) VizRollups() *mongo.Collection    { return m.Collection(CollectionVizRollups) }
+func (m *MongoDB) UartPresence() *mongo.Collection  { return m.Collection(CollectionUartPresence) }
 func (m *MongoDB) Sessions() *mongo.Collection      { return m.Collection(CollectionSessions) }
 func (m *MongoDB) Protocols() *mongo.Collection     { return m.Collection(CollectionProtocols) }
 func (m *MongoDB) SchemaPresets() *mongo.Collection { return m.Collection(CollectionSchemaPresets) }
@@ -150,6 +152,17 @@ func (m *MongoDB) EnsureIndexes(ctx context.Context) error {
 	})
 	if err != nil {
 		m.logger.Warn("failed to create viz_rollups board/time index", zap.Error(err))
+	}
+
+	_, err = m.UartPresence().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "board_id", Value: 1},
+			{Key: "bucket_start", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		m.logger.Warn("failed to create uart_presence bucket index", zap.Error(err))
 	}
 
 	return nil

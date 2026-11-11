@@ -351,6 +351,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 			"bins":    bins,
 			"present": make([]bool, bins),
 			"counts":  make([]int64, bins),
+			"source":  "empty",
 		})
 		return
 	}
@@ -360,6 +361,37 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 	stepMs := spanMs / int64(bins)
 	if stepMs < 1 {
 		stepMs = 1
+	}
+
+	// Prefer the precomputed presence buckets once a board has been backfilled.
+	// Boards without presence (legacy data) keep using the raw aggregation until
+	// the background backfill finishes.
+	var presenceBoard models.Board
+	presenceErr := h.db.Boards().FindOne(
+		ctx,
+		bson.M{"_id": req.BoardID},
+		options.FindOne().SetProjection(bson.M{"presence_backfilled": 1}),
+	).Decode(&presenceBoard)
+	if presenceErr == nil {
+		if presenceBoard.PresenceBackfilled {
+			buckets, err := h.loadUartPresenceBuckets(ctx, req.BoardID, start, end)
+			if err != nil {
+				h.logger.Warn("uart presence query failed", zap.Error(err))
+			} else if len(buckets) > 0 {
+				present, counts := uartPresenceBucketsToBins(start, end, bins, buckets)
+				c.JSON(http.StatusOK, gin.H{
+					"start":   start,
+					"end":     end,
+					"bins":    bins,
+					"present": present,
+					"counts":  counts,
+					"source":  "presence",
+				})
+				return
+			}
+		} else {
+			h.ensureUartPresenceBackfill(ctx, req.BoardID)
+		}
 	}
 
 	filter := bson.M{
@@ -420,6 +452,7 @@ func (h *Handler) VizSpectrum(c *gin.Context) {
 		"bins":    bins,
 		"present": present,
 		"counts":  counts,
+		"source":  "raw",
 	})
 }
 
