@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { UartData, Board, UartCursor, Session } from '../api';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
+import DataCell from '../components/DataCell';
 import { formatDateTime } from '../utils/date';
 import { useTranslation } from '../i18n';
 
@@ -11,27 +12,16 @@ type DirectionFilter = '' | 'TX' | 'RX';
 
 const PAGE_SIZES = [50, 100, 200, 500, 1000, 2000, 5000] as const;
 
-const FRAME_META_KEYS = new Set(['stx', 'etx', 'length', 'fid', 'seq_no', 'attr', 'crc16']);
-
-const PAYLOAD_FIELD_ORDER = [
-  'temperature_celsius',
-  'humidity_percent',
-  'sensor_id',
-];
-
 function renderValue(v: unknown): string {
   if (v === null || v === undefined) return '-';
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }
 
-function hexToAscii(hex: string): string {
-  let out = '';
-  for (let i = 0; i < hex.length; i += 2) {
-    const c = parseInt(hex.substring(i, i + 2), 16);
-    out += (c >= 32 && c <= 126) ? String.fromCharCode(c) : '.';
-  }
-  return out;
+function formatParsedFields(parsed: Record<string, unknown>): string {
+  return Object.entries(parsed)
+    .map(([key, value]) => `${key}: ${renderValue(value)}`)
+    .join('\n');
 }
 
 function sinceForRange(range: TimeRange): string | undefined {
@@ -49,37 +39,6 @@ function toDateTimeLocalValue(date: Date): string {
 
 function formatCount(n: number): string {
   return n.toLocaleString();
-}
-
-function displayParsedEntries(parsed: Record<string, unknown>): [string, unknown][] {
-  const entries = Object.entries(parsed);
-  const picked = new Set<string>();
-  const out: [string, unknown][] = [];
-
-  for (const key of PAYLOAD_FIELD_ORDER) {
-    if (key in parsed) {
-      out.push([key, parsed[key]]);
-      picked.add(key);
-    }
-    const nested = `payload.${key}`;
-    if (nested in parsed && !picked.has(key)) {
-      out.push([key, parsed[nested]]);
-      picked.add(nested);
-      picked.add(key);
-    }
-  }
-
-  for (const [k, v] of entries) {
-    if (picked.has(k) || FRAME_META_KEYS.has(k)) continue;
-    if (k.startsWith('payload.')) {
-      const short = k.slice('payload.'.length);
-      if (picked.has(short)) continue;
-    }
-    out.push([k, v]);
-    if (out.length >= 8) break;
-  }
-
-  return out.slice(0, 8);
 }
 
 export default function DataViewerPage() {
@@ -449,29 +408,40 @@ export default function DataViewerPage() {
           <p className="muted" style={{ padding: '24px 16px' }}>{t('dataViewer.noUartRecords')}</p>
         ) : (
           <div className="data-viewer-table-scroll">
-            <table className="data-table">
+            <table className="data-table data-viewer-table">
               <thead>
                 <tr>
                   <th>{t('dataViewer.time')}</th>
                   <th>{t('dataViewer.dir')}</th>
                   <th>{t('dataViewer.raw')}</th>
-                  <th>{t('dataViewer.ascii')}</th>
                   <th>{t('dataViewer.parsed')}</th>
                 </tr>
               </thead>
               <tbody>
                 {data.map(d => (
                   <tr key={d.id}>
-                    <td>{new Date(d.timestamp).toLocaleString()}</td>
-                    <td>{d.direction}</td>
-                    <td className="mono">{d.raw_hex}</td>
-                    <td className="mono">{hexToAscii(d.raw_hex)}</td>
-                    <td className="mono parsed-cell">
-                      {d.parsed_fields
-                        ? displayParsedEntries(d.parsed_fields).map(([k, v]) => (
-                            <div key={k}><span className="muted">{k}:</span> {renderValue(v)}</div>
-                          ))
-                        : '—'}
+                    <td className="data-viewer-time">{formatDateTime(d.timestamp)}</td>
+                    <td className="data-viewer-dir">{d.direction}</td>
+                    <td className="data-viewer-raw-cell">
+                      <DataCell
+                        text={d.raw_hex}
+                        copyText={d.raw_hex}
+                        copyLabel={t('dataViewer.copyRaw')}
+                        mono
+                        clampLines={3}
+                        className="is-raw"
+                      />
+                    </td>
+                    <td className="data-viewer-parsed-cell">
+                      {d.parsed_fields && Object.keys(d.parsed_fields).length > 0 ? (
+                        <DataCell
+                          text={formatParsedFields(d.parsed_fields)}
+                          copyText={JSON.stringify(d.parsed_fields, null, 2)}
+                          copyLabel={t('dataViewer.copyParsed')}
+                          mono
+                          clampLines={4}
+                        />
+                      ) : '—'}
                     </td>
                   </tr>
                 ))}

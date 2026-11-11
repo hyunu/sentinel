@@ -1058,18 +1058,108 @@ tbody tr:last-child td {
   display: block;
   width: 100%;
   max-height: calc(100vh - 220px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .data-viewer-table-scroll table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .data-viewer-table-scroll th,
 .data-viewer-table-scroll td {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.data-viewer-table-scroll th:nth-child(1),
+.data-viewer-table-scroll td:nth-child(1) {
+  width: 150px;
+}
+
+.data-viewer-table-scroll th:nth-child(2),
+.data-viewer-table-scroll td:nth-child(2) {
+  width: 52px;
+}
+
+.data-viewer-table-scroll th:nth-child(3),
+.data-viewer-table-scroll td:nth-child(3) {
+  width: 36%;
+}
+
+.data-viewer-time,
+.data-viewer-dir {
   white-space: nowrap;
+}
+
+.data-viewer-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.data-cell {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.data-cell.is-mono {
+  font-family: var(--font-mono);
+}
+
+.data-cell-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.data-cell-text.is-raw {
+  word-break: break-all;
+}
+
+.data-cell-text.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 3);
+  line-clamp: var(--clamp-lines, 3);
+  overflow: hidden;
+}
+
+.data-cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.data-cell-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.data-cell-btn:hover {
+  color: var(--accent, #7c83ff);
+}
+
+@media (max-width: 1000px) {
+  .data-viewer-table-scroll th:nth-child(1),
+  .data-viewer-table-scroll td:nth-child(1) {
+    width: 124px;
+  }
+
+  .data-viewer-table-scroll th:nth-child(3),
+  .data-viewer-table-scroll td:nth-child(3) {
+    width: 40%;
+  }
 }
 
 .data-viewer-table-scroll thead th {
