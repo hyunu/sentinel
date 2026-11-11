@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { api } from '../api';
 import type { Session } from '../api';
-import { formatDateTime } from '../utils/date';
+import { formatDateTime, formatTimeInterval } from '../utils/date';
 import { useTranslation } from '../i18n';
 
 interface SessionTimelineProps {
@@ -12,6 +12,14 @@ interface SessionTimelineProps {
 }
 
 type BinState = 'assigned' | 'unassigned' | 'empty';
+
+interface TimelineBin {
+  state: BinState;
+  count: number;
+  start: number;
+  end: number;
+  title: string;
+}
 
 const BIN_COUNT = 600;
 
@@ -28,6 +36,7 @@ export default function SessionTimeline({
   const [startIso, setStartIso] = useState('');
   const [endIso, setEndIso] = useState('');
   const [present, setPresent] = useState<boolean[]>([]);
+  const [counts, setCounts] = useState<number[]>([]);
   const [cursorMs, setCursorMs] = useState<number | null>(null);
   const [dragStartMs, setDragStartMs] = useState<number | null>(null);
   const [dragEndMs, setDragEndMs] = useState<number | null>(null);
@@ -42,12 +51,14 @@ export default function SessionTimeline({
         setStartIso(res.start);
         setEndIso(res.end);
         setPresent(res.present ?? []);
+        setCounts(res.counts ?? []);
       })
       .catch(e => {
         if (cancelled) return;
         console.error(e);
         setLoadError(t('sessions.timelineLoadFailed'));
         setPresent([]);
+        setCounts([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -81,22 +92,83 @@ export default function SessionTimeline({
       });
   }, [sessions, hasRange, startMs, endMs]);
 
+  const maxCount = useMemo(() => {
+    let max = 0;
+    for (let i = 0; i < present.length; i += 1) {
+      if (present[i] && counts[i] > max) max = counts[i];
+    }
+    return max;
+  }, [present, counts]);
+
   const bins = useMemo(() => {
     if (!hasRange || present.length === 0) return [];
-    const out: BinState[] = [];
+    const out: TimelineBin[] = [];
+    const binMs = span / present.length;
     for (let i = 0; i < present.length; i += 1) {
-      const binStart = startMs + (span * i) / present.length;
-      const binEnd = startMs + (span * (i + 1)) / present.length;
+      const binStart = startMs + binMs * i;
+      const binEnd = binStart + binMs;
       const center = (binStart + binEnd) / 2;
+      const startText = formatDateTime(new Date(binStart).toISOString());
+      const endText = formatDateTime(new Date(binEnd).toISOString());
       if (!present[i]) {
-        out.push('empty');
+        out.push({
+          state: 'empty',
+          count: 0,
+          start: binStart,
+          end: binEnd,
+          title: `${startText} ~ ${endText} · ${t('sessions.timelineEmpty')}`,
+        });
         continue;
       }
       const covered = sessionRanges.some(range => center >= range.start && center <= range.end);
-      out.push(covered ? 'assigned' : 'unassigned');
+      out.push({
+        state: covered ? 'assigned' : 'unassigned',
+        count: counts[i] ?? 0,
+        start: binStart,
+        end: binEnd,
+        title: t('sessions.timelineBin', {
+          start: startText,
+          end: endText,
+          count: (counts[i] ?? 0).toLocaleString(),
+        }),
+      });
     }
     return out;
-  }, [hasRange, present, sessionRanges, startMs, span]);
+  }, [hasRange, present, counts, sessionRanges, startMs, span, t]);
+
+  // 0..1 logarithmic density so sparse bursts stay visible while dense regions
+  // read as saturated.
+  const densityOf = (count: number): number => {
+    if (maxCount <= 1) return 1;
+    const ratio = Math.log10(count + 1) / Math.log10(maxCount + 1);
+    return Math.max(0, Math.min(1, ratio));
+  };
+
+  const binColor = (bin: TimelineBin): string => {
+    const density = densityOf(bin.count);
+    if (bin.state === 'assigned') {
+      return `rgba(110, 158, 214, ${0.16 + 0.36 * density})`;
+    }
+    return `rgba(251, 191, 36, ${0.24 + 0.56 * density})`;
+  };
+
+  const coverage = useMemo(() => {
+    if (!hasRange || present.length === 0) return null;
+    const binMs = span / present.length;
+    let covered = 0;
+    let gapRuns = 0;
+    let gapMs = 0;
+    for (let i = 0; i < present.length; i += 1) {
+      if (present[i]) {
+        covered += 1;
+        continue;
+      }
+      gapMs += binMs;
+      if (i === 0 || present[i - 1]) gapRuns += 1;
+    }
+    const percent = (covered / present.length) * 100;
+    return { percent, gapRuns, gapMs };
+  }, [hasRange, present, span]);
 
   const ratioToMs = (clientX: number): number | null => {
     const el = trackRef.current;
@@ -184,8 +256,13 @@ export default function SessionTimeline({
             }}
           >
             <div className="session-timeline-bins">
-              {bins.map((state, i) => (
-                <span key={i} className={`session-timeline-bin is-${state}`} />
+              {bins.map((bin, i) => (
+                <span
+                  key={i}
+                  className={`session-timeline-bin is-${bin.state}`}
+                  style={bin.state === 'empty' ? undefined : { backgroundColor: binColor(bin) }}
+                  title={bin.title}
+                />
               ))}
             </div>
             {sessionRanges.map(range => {
@@ -230,6 +307,19 @@ export default function SessionTimeline({
             <span><i className="session-timeline-dot is-empty" />{t('sessions.timelineEmpty')}</span>
             <span className="muted">{t('sessions.timelineHint')}</span>
           </div>
+          {coverage && (
+            <p className="session-timeline-coverage">
+              {coverage.gapRuns === 0
+                ? t('sessions.timelineCoverageFull', {
+                  percent: coverage.percent >= 99.95 ? '100' : coverage.percent.toFixed(1),
+                })
+                : t('sessions.timelineCoverage', {
+                  percent: coverage.percent >= 99.95 ? '100' : coverage.percent.toFixed(1),
+                  gaps: String(coverage.gapRuns),
+                  gapTime: formatTimeInterval(coverage.gapMs),
+                })}
+            </p>
+          )}
         </>
       )}
     </div>

@@ -6108,7 +6108,7 @@ pre {
 }
 
 .session-timeline-bin.is-assigned {
-  background: rgba(74, 222, 128, 0.38);
+  background: rgba(110, 158, 214, 0.42);
 }
 
 .session-timeline-bin.is-unassigned {
@@ -6116,7 +6116,12 @@ pre {
 }
 
 .session-timeline-bin.is-empty {
-  background: rgba(148, 163, 184, 0.10);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(148, 163, 184, 0.10) 0 4px,
+      rgba(148, 163, 184, 0.03) 4px 8px
+    );
 }
 
 .session-timeline-session {
@@ -6125,7 +6130,6 @@ pre {
   bottom: 0;
   border-left: 2px solid var(--primary);
   border-right: 1px solid rgba(124, 131, 255, 0.55);
-  background: rgba(124, 131, 255, 0.10);
   pointer-events: none;
 }
 
@@ -6190,6 +6194,12 @@ pre {
   gap: 5px;
 }
 
+.session-timeline-coverage {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .session-timeline-dot {
   display: inline-block;
   width: 9px;
@@ -6197,7 +6207,7 @@ pre {
   border-radius: 2px;
 }
 
-.session-timeline-dot.is-assigned { background: rgba(74, 222, 128, 0.7); }
+.session-timeline-dot.is-assigned { background: rgba(110, 158, 214, 0.85); }
 .session-timeline-dot.is-unassigned { background: rgba(251, 191, 36, 0.75); }
 .session-timeline-dot.is-empty { background: rgba(148, 163, 184, 0.35); }
 
