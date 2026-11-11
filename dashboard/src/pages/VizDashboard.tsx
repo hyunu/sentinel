@@ -4697,14 +4697,15 @@ export default function VizDashboardPage() {
   }, [hoverTimeKey, rawValuesIndexByTimeKey, rawValuesSource]);
 
   const cursorValueRows = useMemo(() => {
+    // Keep hidden items in the list: this panel is the only place where the
+    // eye toggle can put an unchecked series back on the chart. Queries only
+    // carry the chart series, so hidden rows simply render without a value.
     const rows = buildCursorValueRows(
       checkedOnly ? items.filter(item => item.visible) : items,
       hoverTimeKey ? rawValuesByTimeKey.get(hoverTimeKey) : undefined,
       hoverPrevTimeKey ? rawValuesByTimeKey.get(hoverPrevTimeKey) : undefined,
       chartItemIds,
-    // Queries only carry the chart series now. Keep rows that can actually
-    // show a value instead of rendering a wall of empty hidden fields.
-    ).filter(row => row.onChart || row.raw !== undefined || row.prevRaw !== undefined);
+    );
     return rows.sort((a, b) => {
       const aFav = !!a.item.favorite;
       const bFav = !!b.item.favorite;
