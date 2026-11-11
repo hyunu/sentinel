@@ -349,6 +349,7 @@ function buildSeriesConfig(
           width: CHART_SERIES_LINE_WIDTH,
           spanGaps: false,
           gaps: gapsRefiner,
+          points: { stroke: item.color, fill: '#ffffff', width: 1 },
         };
       }
       return {
@@ -357,6 +358,7 @@ function buildSeriesConfig(
         width: CHART_SERIES_LINE_WIDTH,
         spanGaps: false,
         gaps: gapsRefiner,
+        points: { stroke: item.color, fill: '#ffffff', width: 1 },
       };
     }),
   ];
