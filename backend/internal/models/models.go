@@ -69,6 +69,7 @@ type SchemaPreset struct {
 	Description     string                       `json:"description,omitempty" bson:"description,omitempty"`
 	ProtocolVersion string                       `json:"protocol_version,omitempty" bson:"protocol_version,omitempty"`
 	ParseRules      *ruleparser.JsonRuleDocument `json:"parse_rules" bson:"parse_rules"`
+	Enums           map[string]map[string]string `json:"enums,omitempty" bson:"enums,omitempty"`
 	CreatedAt       time.Time                    `json:"created_at" bson:"created_at"`
 	UpdatedAt       time.Time                    `json:"updated_at" bson:"updated_at"`
 }

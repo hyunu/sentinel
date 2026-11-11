@@ -172,7 +172,11 @@ export default function ProtocolEditPage() {
     setVersion(preset.protocol_version || '1.0');
     setDescription(preset.description || '');
     const doc = normalizeParseRules(preset.parse_rules);
-    setEnums(extractLegacyEnums(doc));
+    setEnums(
+      preset.enums && Object.keys(preset.enums).length > 0
+        ? preset.enums
+        : extractLegacyEnums(doc),
+    );
     applyRules(doc);
   };
 

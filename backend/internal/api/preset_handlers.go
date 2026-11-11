@@ -67,6 +67,7 @@ func (h *Handler) CreateSchemaPreset(c *gin.Context) {
 		Description:     req.Description,
 		ProtocolVersion: req.ProtocolVersion,
 		ParseRules:      req.ParseRules,
+		Enums:           req.Enums,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -100,6 +101,9 @@ func (h *Handler) UpdateSchemaPreset(c *gin.Context) {
 	}
 	if req.ParseRules != nil {
 		update["parse_rules"] = req.ParseRules
+	}
+	if req.Enums != nil {
+		update["enums"] = req.Enums
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)

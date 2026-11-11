@@ -5,6 +5,7 @@ import type { JsonRuleDocument, ParseResult } from '../api';
 import PageHeader from '../components/PageHeader';
 import ParseRulesBuilder from '../components/ParseRulesBuilder';
 import ParseRulesManual from '../components/ParseRulesManual';
+import ProtocolEnumsEditor, { type ProtocolEnumMap } from '../components/ProtocolEnumsEditor';
 import { useTranslation } from '../i18n';
 import { blankParseRules, documentToJson, normalizeParseRulesDocument } from '../lib/ruleBuilderUtils';
 import '../styles/ruleBuilder.css';
@@ -15,6 +16,32 @@ function normalizeParseRules(raw?: JsonRuleDocument | null): JsonRuleDocument {
 
 function isParseError(result: ParseResult | { error: string }): result is { error: string } {
   return 'error' in result && typeof result.error === 'string';
+}
+
+function extractLegacyEnums(doc?: JsonRuleDocument | null): ProtocolEnumMap {
+  const raw = doc?._meta?.enums;
+  if (!raw || typeof raw !== 'object') return {};
+  const out: ProtocolEnumMap = {};
+  for (const [name, values] of Object.entries(raw as Record<string, unknown>)) {
+    if (!values || typeof values !== 'object') continue;
+    const map: Record<string, string> = {};
+    for (const [key, label] of Object.entries(values as Record<string, unknown>)) {
+      map[String(key)] = String(label);
+    }
+    out[name] = map;
+  }
+  return out;
+}
+
+/** Templates keep enums top-level, so strip any legacy copy from parse_rules. */
+function stripRulesEnums(doc: JsonRuleDocument): JsonRuleDocument {
+  const clone = structuredClone(doc);
+  const meta = clone._meta as Record<string, unknown> | undefined;
+  if (meta && 'enums' in meta) {
+    delete meta.enums;
+    if (Object.keys(meta).length === 0) delete clone._meta;
+  }
+  return clone;
 }
 
 export default function TemplateEditPage() {
@@ -36,6 +63,7 @@ export default function TemplateEditPage() {
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState<'ui' | 'json'>('ui');
   const [manualOpen, setManualOpen] = useState(false);
+  const [enums, setEnums] = useState<ProtocolEnumMap>({});
 
   const applyRules = useCallback((doc: JsonRuleDocument) => {
     if (!doc.fields?.length) {
@@ -59,6 +87,11 @@ export default function TemplateEditPage() {
         setDescription(p.description || '');
         const hasRules = Boolean(p.parse_rules?.fields?.length);
         setLegacyNoRules(!hasRules);
+        setEnums(
+          p.enums && Object.keys(p.enums).length > 0
+            ? p.enums
+            : extractLegacyEnums(p.parse_rules),
+        );
         applyRules(normalizeParseRules(p.parse_rules));
       })
       .catch(() => navigate('/protocols/templates'))
@@ -101,7 +134,8 @@ export default function TemplateEditPage() {
         name: name.trim(),
         description,
         protocol_version: version,
-        parse_rules: rules,
+        parse_rules: stripRulesEnums(rules),
+        enums,
       };
       if (isNew) await api.schemaPresets.create(body);
       else if (id) await api.schemaPresets.update(id, body);
@@ -218,6 +252,13 @@ export default function TemplateEditPage() {
               onChange={e => onRulesChange(e.target.value)}
             />
           )}
+        </div>
+
+        <div className="card protocol-enums-card">
+          <div className="card-header">
+            <h2>{t('protocols.enums')}</h2>
+          </div>
+          <ProtocolEnumsEditor enums={enums} onChange={setEnums} />
         </div>
 
         <div className="card parse-test-card">

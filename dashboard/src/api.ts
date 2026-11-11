@@ -150,6 +150,7 @@ export interface SchemaPreset {
   description?: string;
   protocol_version?: string;
   parse_rules: JsonRuleDocument;
+  enums?: Record<string, Record<string, string>>;
   created_at: string;
   updated_at: string;
 }
