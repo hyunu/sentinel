@@ -328,64 +328,47 @@ export default function SessionsPage() {
             }}
           />
           {formOpen && (
-            <div className="sessions-create-form">
-              <div className="sessions-form-head">
-                <strong>{t('sessions.newSession')}</strong>
-                <button
-                  type="button"
-                  className="btn-ghost btn-sm sessions-form-close"
-                  onClick={() => setFormOpen(false)}
-                  disabled={saving}
-                  aria-label={t('common.close')}
-                >
-                  ×
+            <div className="sessions-create-form" title={t('sessions.assignHint')}>
+              <div className="form-field sessions-form-name">
+                <label>{t('sessions.name')}</label>
+                <input
+                  autoFocus
+                  value={form.name}
+                  onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder={t('sessions.namePlaceholder')}
+                />
+              </div>
+              <div className="form-field sessions-form-desc">
+                <label>{t('sessions.description')}</label>
+                <input
+                  value={form.description}
+                  onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder={t('common.optional')}
+                />
+              </div>
+              <div className="form-field sessions-form-time">
+                <label>{t('sessions.start')}</label>
+                <input
+                  type="datetime-local"
+                  value={form.start}
+                  onChange={e => setForm(prev => ({ ...prev, start: e.target.value }))}
+                />
+              </div>
+              <div className="form-field sessions-form-time">
+                <label>{t('sessions.end')}</label>
+                <input
+                  type="datetime-local"
+                  value={form.end}
+                  onChange={e => setForm(prev => ({ ...prev, end: e.target.value }))}
+                />
+              </div>
+              <div className="sessions-form-actions">
+                <button type="button" className="btn-primary" onClick={create} disabled={saving || !form.name.trim()}>
+                  {saving ? t('common.loading') : t('common.create')}
                 </button>
-              </div>
-              <div className="sessions-form-row">
-                <div className="form-field sessions-form-name">
-                  <label>{t('sessions.name')}</label>
-                  <input
-                    autoFocus
-                    value={form.name}
-                    onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder={t('sessions.namePlaceholder')}
-                  />
-                </div>
-                <div className="form-field sessions-form-desc">
-                  <label>{t('sessions.description')}</label>
-                  <input
-                    value={form.description}
-                    onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder={t('common.optional')}
-                  />
-                </div>
-              </div>
-              <div className="sessions-form-row">
-                <div className="form-field sessions-form-time">
-                  <label>{t('sessions.start')}</label>
-                  <input
-                    type="datetime-local"
-                    value={form.start}
-                    onChange={e => setForm(prev => ({ ...prev, start: e.target.value }))}
-                  />
-                </div>
-                <div className="form-field sessions-form-time">
-                  <label>{t('sessions.end')}</label>
-                  <input
-                    type="datetime-local"
-                    value={form.end}
-                    onChange={e => setForm(prev => ({ ...prev, end: e.target.value }))}
-                  />
-                </div>
-                <p className="muted sessions-form-hint">{t('sessions.assignHint')}</p>
-                <div className="sessions-form-actions">
-                  <button type="button" className="btn-primary" onClick={create} disabled={saving || !form.name.trim()}>
-                    {saving ? t('common.loading') : t('common.create')}
-                  </button>
-                  <button type="button" className="btn-ghost" onClick={() => setFormOpen(false)} disabled={saving}>
-                    {t('common.cancel')}
-                  </button>
-                </div>
+                <button type="button" className="btn-ghost" onClick={() => setFormOpen(false)} disabled={saving}>
+                  {t('common.cancel')}
+                </button>
               </div>
             </div>
           )}
