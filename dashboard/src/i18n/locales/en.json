@@ -288,7 +288,6 @@
     "timelineTitle": "Dataset overview",
     "timelineStart": "Data start",
     "timelineEnd": "Data end",
-    "timelineCursor": "Cursor",
     "timelineAssigned": "Session",
     "timelineUnassigned": "Unassigned",
     "timelineEmpty": "No data",

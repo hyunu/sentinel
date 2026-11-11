@@ -152,12 +152,6 @@ export default function SessionTimeline({
           <span className="session-timeline-range-label">{t('sessions.timelineStart')}</span>
           <span className="mono">{startIso ? formatDateTime(startIso) : '—'}</span>
         </div>
-        <div className="session-timeline-cursor">
-          <span className="session-timeline-range-label">{t('sessions.timelineCursor')}</span>
-          <span className="mono">
-            {cursorMs != null ? formatDateTime(new Date(cursorMs).toISOString()) : '—'}
-          </span>
-        </div>
         <div className="session-timeline-range session-timeline-range--end">
           <span className="session-timeline-range-label">{t('sessions.timelineEnd')}</span>
           <span className="mono">{endIso ? formatDateTime(endIso) : '—'}</span>
@@ -221,10 +215,14 @@ export default function SessionTimeline({
                 style={{ left: `${cursorRatio * 100}%` }}
               />
             )}
-          </div>
-          <div className="session-timeline-axis">
-            <span>{startIso ? formatDateTime(startIso) : ''}</span>
-            <span>{endIso ? formatDateTime(endIso) : ''}</span>
+            {cursorRatio != null && cursorMs != null && (
+              <span
+                className={`session-timeline-cursor-tag${cursorRatio < 0.14 ? ' is-start' : cursorRatio > 0.86 ? ' is-end' : ''}`}
+                style={{ left: `${cursorRatio * 100}%` }}
+              >
+                {formatDateTime(new Date(cursorMs).toISOString())}
+              </span>
+            )}
           </div>
           <div className="session-timeline-legend">
             <span><i className="session-timeline-dot is-assigned" />{t('sessions.timelineAssigned')}</span>

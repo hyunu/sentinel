@@ -6069,13 +6069,11 @@ pre {
   font-size: 12px;
 }
 
-.session-timeline-range,
-.session-timeline-cursor {
+.session-timeline-range {
   display: flex;
   gap: 6px;
   align-items: baseline;
 }
-
 .session-timeline-range--end {
   margin-left: auto;
 }
@@ -6151,11 +6149,30 @@ pre {
   pointer-events: none;
 }
 
-.session-timeline-axis {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-muted);
+.session-timeline-cursor-tag {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.session-timeline-cursor-tag.is-start {
+  transform: none;
+  margin-left: 2px;
+}
+
+.session-timeline-cursor-tag.is-end {
+  transform: translateX(-100%);
+  margin-left: -2px;
 }
 
 .session-timeline-legend {
