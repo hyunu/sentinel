@@ -1858,6 +1858,8 @@ tbody tr:last-child td {
 
 .viz-time-live-bar {
   display: inline-flex;
+  align-items: center;
+  min-height: 38px;
   padding: 3px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
@@ -1931,12 +1933,12 @@ tbody tr:last-child td {
 }
 
 .viz-session-select {
-  height: 30px;
+  height: 38px;
   min-width: 220px;
   max-width: 380px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background-color: var(--surface-inset);
   color: var(--text);
   font-size: 12px;
