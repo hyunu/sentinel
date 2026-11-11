@@ -4368,9 +4368,9 @@ tbody tr:last-child td {
 
 .toolbar-stat {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Badges ── */
