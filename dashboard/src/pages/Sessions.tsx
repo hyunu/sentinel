@@ -464,7 +464,24 @@ export default function SessionsPage() {
       {selectedBoard && (
         <div className="card sessions-rules-card">
           <div className="card-header">
-            <h2>{t('sessions.rulesTitle')}</h2>
+            <h2>
+              {t('sessions.rulesTitle')}
+              <span
+                className="sessions-info"
+                tabIndex={0}
+                role="note"
+                aria-label={t('sessions.rulesHelp')}
+                aria-describedby="sessions-rules-help"
+              >
+                i
+                <span className="sessions-info-tooltip" id="sessions-rules-help" role="tooltip">
+                  <span className="sessions-info-line">
+                    {t(ruleMode === 'range' ? 'sessions.rulesHintRange' : 'sessions.rulesHint')}
+                  </span>
+                  <span className="sessions-info-line">{t('sessions.rulesLogicHint')}</span>
+                </span>
+              </span>
+            </h2>
             <div className="btn-group">
               <button type="button" className="btn-sm" onClick={addRule}>
                 + {t('sessions.addRule')}
@@ -511,10 +528,6 @@ export default function SessionsPage() {
               {t('sessions.ruleModeRange')}
             </button>
           </div>
-          <p className="muted sessions-rules-hint">
-            {t(ruleMode === 'range' ? 'sessions.rulesHintRange' : 'sessions.rulesHint')}
-          </p>
-          <p className="muted sessions-rules-logic">{t('sessions.rulesLogicHint')}</p>
           {rules.length === 0 ? (
             <p className="muted sessions-empty">{t('sessions.noRules')}</p>
           ) : (

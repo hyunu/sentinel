@@ -5996,6 +5996,76 @@ pre {
   margin: 0;
 }
 
+.sessions-rules-card .card-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sessions-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: help;
+  outline: none;
+}
+
+.sessions-info:hover,
+.sessions-info:focus-visible {
+  color: var(--text);
+  border-color: var(--text-secondary);
+}
+
+.sessions-info-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -4px;
+  display: none;
+  width: 380px;
+  max-width: 70vw;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 10px 30px rgba(0, 0, 0, 0.45));
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  z-index: 30;
+}
+
+.sessions-info-line {
+  display: block;
+}
+
+.sessions-info-line + .sessions-info-line {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.sessions-info:hover .sessions-info-tooltip,
+.sessions-info:focus .sessions-info-tooltip,
+.sessions-info:focus-within .sessions-info-tooltip {
+  display: block;
+}
+
 .sessions-rules-card .sessions-empty {
   padding: 12px 0;
 }
@@ -6333,16 +6403,6 @@ pre {
   margin: 6px 0 0;
   color: var(--warning, #fbbf24);
   font-size: 12px;
-}
-
-.sessions-rules-hint {
-  margin: 0 0 10px;
-  font-size: 12px;
-}
-
-.sessions-rules-logic {
-  margin: -4px 0 10px;
-  font-size: 11px;
 }
 
 .sessions-rules-list {
