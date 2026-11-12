@@ -344,11 +344,14 @@ func readRollupFieldValue(fields map[string]interface{}, fieldName string) (floa
 	if len(fields) == 0 {
 		return 0, false
 	}
-	raw, ok := fields[encodeRollupFieldKey(fieldName)]
-	if !ok {
-		return 0, false
+	for _, candidate := range fieldNameCandidates(fieldName) {
+		raw, ok := fields[encodeRollupFieldKey(candidate)]
+		if !ok {
+			continue
+		}
+		return extractVizValue(raw)
 	}
-	return extractVizValue(raw)
+	return 0, false
 }
 
 func appendRollupPoint(dst []vizDataPoint, timestamp time.Time, values map[string]interface{}) []vizDataPoint {

@@ -433,6 +433,8 @@
     "resetZoom": "줌 초기화 (Home / 0)",
     "detailLoading": "상세 데이터 불러오는 중…",
     "chartLoading": "차트 데이터 불러오는 중",
+    "seriesLoading": "필드 데이터 불러오는 중 ({{count}}개)",
+    "seriesLoadingRows": "{{loaded}}/{{total}}행",
     "roughSampling": "전체 영역 러프 샘플링 중…",
     "loadPhase": {
       "overview": "러프 샘플링",
@@ -455,6 +457,7 @@
       "searchLabel": "필드 값 검색",
       "searchClear": "필드 검색 지우기",
       "noMatches": "\"{{query}}\"와 일치하는 필드가 없습니다.",
+      "loadingValue": "불러오는 중…",
       "showItem": "{{name}} 차트에 표시",
       "hideItem": "{{name}} 차트에서 숨기기",
       "toggleFavorite": "더블클릭: 우선 배치",

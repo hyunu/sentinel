@@ -790,24 +790,47 @@ async function queryVizDataset(
   const overviewParams: VizQueryParams = options?.overviewItems
     ? { ...params, items: options.overviewItems }
     : params;
-  const overview = await api.viz.queryItems(
-    {
-      ...overviewParams,
-      limit: OVERVIEW_SAMPLE_POINTS,
-      sampling: 'envelope',
-      buckets: OVERVIEW_BUCKETS,
-    },
-    {
-      signal: options?.signal,
-      timeoutMs: options?.timeoutMs,
-      onProgress: (loaded, total) => options?.onProgress?.({
-        phase: 'overview',
-        loaded,
-        total,
-        overallLoaded: loaded,
-      }),
-    },
-  );
+  const overviewItemCount = overviewParams.items?.length ?? 0;
+  // Envelope aggregation scans every row and computes min/max per field. With
+  // many series it exceeds the 30s query timeout on large boards, so wide
+  // profiles start from real samples instead.
+  const preferEnvelope = overviewItemCount > 0 && overviewItemCount <= 8;
+  let overview;
+  let usedEnvelope = preferEnvelope;
+  if (preferEnvelope) {
+    try {
+      overview = await api.viz.queryItems(
+        {
+          ...overviewParams,
+          limit: OVERVIEW_SAMPLE_POINTS,
+          sampling: 'envelope',
+          buckets: OVERVIEW_BUCKETS,
+        },
+        {
+          signal: options?.signal,
+          timeoutMs: options?.timeoutMs,
+          onProgress: (loaded, total) => options?.onProgress?.({
+            phase: 'overview',
+            loaded,
+            total,
+            overallLoaded: loaded,
+          }),
+        },
+      );
+    } catch (error) {
+      if (options?.signal?.aborted) throw error;
+      usedEnvelope = false;
+      overview = await api.viz.queryItems(
+        { ...overviewParams, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+        { signal: options?.signal, timeoutMs: options?.timeoutMs },
+      );
+    }
+  } else {
+    overview = await api.viz.queryItems(
+      { ...overviewParams, limit: OVERVIEW_SAMPLE_POINTS, sampling: 'raw-sample' },
+      { signal: options?.signal, timeoutMs: options?.timeoutMs },
+    );
+  }
   const meta = overview.meta ?? null;
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
@@ -845,7 +868,7 @@ async function queryVizDataset(
     };
   }
 
-  options?.onOverview?.(overview.data, meta, true, true);
+  options?.onOverview?.(overview.data, meta, true, usedEnvelope);
   const full = await queryFullDatasetProgressive(params, overview.data, meta, {
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
@@ -1338,6 +1361,9 @@ export default function VizDashboardPage() {
   /** Series (id -> label) that the dataset in rawVizData was fetched with. */
   const loadedSeriesRef = useRef<Map<string, string>>(new Map());
   const seriesFetchSeqRef = useRef(0);
+  /** Series being fetched because the user just put them back on the chart. */
+  const [seriesLoadingIds, setSeriesLoadingIds] = useState<string[]>([]);
+  const [seriesLoadProgress, setSeriesLoadProgress] = useState<ChartLoadProgress | null>(null);
 
   const rawVizDataKey = useMemo(
     () => (rawVizData.length > 0
@@ -3389,14 +3415,30 @@ export default function VizDashboardPage() {
       }
       return;
     }
-    if (!rawVizData.length) return;
     const loaded = loadedSeriesRef.current;
     const missing = chartSeriesItems.filter(i => loaded.get(i.id) !== i.label);
     if (!missing.length) return;
+    const missingIds = missing.map(i => i.id);
+    // Several fetches may overlap when the user turns on fields quickly.
+    // Keep every in-flight id marked so no row loses its loading state.
+    const markLoading = () => setSeriesLoadingIds(prev => Array.from(
+      new Set([...prev, ...missingIds]),
+    ));
+    const unmarkLoading = () => setSeriesLoadingIds(prev => (
+      prev.filter(id => !missingIds.includes(id))
+    ));
+    if (!rawVizData.length) {
+      // Nothing is loaded yet (for example every item started hidden). There
+      // is no dataset to merge into, so run a normal query for the selection.
+      markLoading();
+      void runVizQuery(chartQueryTimeRange ?? undefined, false).finally(unmarkLoading);
+      return;
+    }
     for (const item of missing) loaded.set(item.id, item.label);
     if (!inMemoryFull || Object.keys(aiAggregationParams).length > 0) {
       // Sampled or aggregated data cannot be merged row-by-row; refetch it.
-      void runVizQuery(chartQueryTimeRange ?? undefined, false);
+      markLoading();
+      void runVizQuery(chartQueryTimeRange ?? undefined, false).finally(unmarkLoading);
       return;
     }
     const range = chartQueryTimeRange ?? {
@@ -3404,6 +3446,15 @@ export default function VizDashboardPage() {
       end: rawVizData[rawVizData.length - 1].timestamp,
     };
     const seq = ++seriesFetchSeqRef.current;
+    markLoading();
+    setSeriesLoadProgress({
+      phase: 'full',
+      loaded: 0,
+      total: null,
+      overallLoaded: 0,
+      rowsLoaded: 0,
+      rowsTotal: rawVizData.length,
+    });
     // A few extra series is a small payload: use fewer, larger pages instead
     // of the ~85 tiny stripes a full-range load would make.
     const seriesCount = Math.max(1, loaded.size);
@@ -3420,12 +3471,22 @@ export default function VizDashboardPage() {
           { board_id: selectedBoard, items: itemsForDataQuery(missing), time_range: range },
           [],
           { total_matched: rawVizData.length, returned: rawVizData.length, downsampled: false },
-          { timeoutMs: 120000, maxPartitions: 1, stripeRows: mergeStripeRows },
+          {
+            timeoutMs: 120000,
+            maxPartitions: 1,
+            stripeRows: mergeStripeRows,
+            onProgress: progress => {
+              if (seq === seriesFetchSeqRef.current) setSeriesLoadProgress(progress);
+            },
+          },
         );
-        if (seq !== seriesFetchSeqRef.current) return;
+        // Concurrent fetches add different fields, so merging is safe even if
+        // a newer request has started in the meantime.
         setRawVizData(prev => mergeVizRowsByTimestamp(prev, extra.data));
       } catch {
         // Keep the series marked as loaded; an explicit refresh retries.
+      } finally {
+        unmarkLoading();
       }
     })();
   }, [
@@ -3439,6 +3500,10 @@ export default function VizDashboardPage() {
     runVizQuery,
     reloadLiveTail,
   ]);
+
+  useEffect(() => {
+    if (seriesLoadingIds.length === 0) setSeriesLoadProgress(null);
+  }, [seriesLoadingIds]);
 
   const appendLive = useCallback(async () => {
     if (!selectedBoard || !itemsRef.current.length) return;
@@ -4495,11 +4560,16 @@ export default function VizDashboardPage() {
 
   const chartZoomActive = zoomWindow != null;
 
-  const chartDataLoading = loading || detailLoading;
+  const seriesLoadingActive = seriesLoadingIds.length > 0;
+  const useSeriesProgress = seriesLoadingActive && seriesLoadProgress != null;
+  const chartDataLoading = loading || detailLoading || seriesLoadingActive;
+  // While series added from the field panel are merged, their own row-based
+  // progress owns the header instead of the previous full-load estimate.
+  const activeLoadProgress = useSeriesProgress ? seriesLoadProgress : chartLoadProgress;
   // One ratio drives the percentage, the bar width and the MB counter so they
   // can never disagree (the old code mixed unique rows with network bytes).
   const chartProgressRatio = (() => {
-    const progress = chartLoadProgress;
+    const progress = activeLoadProgress;
     if (!progress) return null;
     // The rough-sampling request is only a preview. Letting it run to 100%
     // made the bar jump back to 0 when the real full load started.
@@ -4534,33 +4604,52 @@ export default function VizDashboardPage() {
     ? `${String(chartProgressWholePercent).padStart(2, '0')}%`
     : '';
   const chartProgressSizeText = (() => {
-    if (!chartDataLoading || !chartLoadProgress) return '';
-    if (chartLoadProgress.phase === 'overview') return '';
-    const totalBytes = chartLoadProgress.chunkCount
+    if (!chartDataLoading || !activeLoadProgress) return '';
+    if (useSeriesProgress) return '';
+    if (activeLoadProgress.phase === 'overview') return '';
+    const totalBytes = activeLoadProgress.chunkCount
       ? fullLoadBytesEstimate
-      : chartLoadProgress.total;
+      : activeLoadProgress.total;
     if (!totalBytes || totalBytes <= 0) return '';
-    const loadedBytes = chartLoadProgress.chunkCount
+    const loadedBytes = activeLoadProgress.chunkCount
         && chartProgressWholePercent != null
       ? totalBytes * (chartProgressWholePercent / 100)
-      : Math.min(chartLoadProgress.overallLoaded, totalBytes);
+      : Math.min(activeLoadProgress.overallLoaded, totalBytes);
     const loadedMB = (loadedBytes / 1024 / 1024).toFixed(1);
     // Match the percent exactly at 100% too: an integer total rounded 242.6
     // up to 243 while the numerator stayed 242.6, which looked like 99.8%.
     const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
     return `${loadedMB}/${totalMB.padStart(5, '0')} MB`;
   })();
+  const chartProgressRowsText = useSeriesProgress
+    && activeLoadProgress?.rowsTotal && activeLoadProgress.rowsTotal > 0
+    ? t('viz.seriesLoadingRows', {
+        loaded: (activeLoadProgress.rowsLoaded ?? 0).toLocaleString(),
+        total: activeLoadProgress.rowsTotal.toLocaleString(),
+      })
+    : '';
+  const chartProgressMetaText = chartProgressRowsText
+    ? `(${chartProgressRowsText})`
+    : chartProgressSizeText ? `(${chartProgressSizeText})` : '';
   const chartProgressLabel = [
+    seriesLoadingActive
+      ? t('viz.seriesLoading', { count: seriesLoadingIds.length })
+      : '',
     chartProgressPercentDisplay,
-    chartProgressSizeText ? `(${chartProgressSizeText})` : '',
+    chartProgressMetaText,
   ].filter(Boolean).join(' ') || t('viz.chartLoading');
   const chartProgressNode = (
     <>
+      {seriesLoadingActive && (
+        <span className="viz-chart-progress-title">
+          {t('viz.seriesLoading', { count: seriesLoadingIds.length })}
+        </span>
+      )}
       {chartProgressPercentDisplay && (
         <span className="viz-chart-progress-percent">{chartProgressPercentDisplay}</span>
       )}
-      {chartProgressSizeText && (
-        <span className="viz-chart-progress-size">({chartProgressSizeText})</span>
+      {chartProgressMetaText && (
+        <span className="viz-chart-progress-size">{chartProgressMetaText}</span>
       )}
     </>
   );
@@ -4674,14 +4763,15 @@ export default function VizDashboardPage() {
   }, [hoverTimeKey, rawValuesIndexByTimeKey, rawValuesSource]);
 
   const cursorValueRows = useMemo(() => {
+    // Keep hidden items in the list: this panel is the only place where the
+    // eye toggle can put an unchecked series back on the chart. Queries only
+    // carry the chart series, so hidden rows simply render without a value.
     const rows = buildCursorValueRows(
       checkedOnly ? items.filter(item => item.visible) : items,
       hoverTimeKey ? rawValuesByTimeKey.get(hoverTimeKey) : undefined,
       hoverPrevTimeKey ? rawValuesByTimeKey.get(hoverPrevTimeKey) : undefined,
       chartItemIds,
-    // Queries only carry the chart series now. Keep rows that can actually
-    // show a value instead of rendering a wall of empty hidden fields.
-    ).filter(row => row.onChart || row.raw !== undefined || row.prevRaw !== undefined);
+    );
     return rows.sort((a, b) => {
       const aFav = !!a.item.favorite;
       const bFav = !!b.item.favorite;
@@ -5886,6 +5976,7 @@ export default function VizDashboardPage() {
             timeKey={hoverTimeKey}
             formatTime={formatChartAxisTime}
             rows={cursorValueRows}
+            loadingItemIds={seriesLoadingIds}
             onToggleVisibility={toggleVisibility}
             onToggleFavorite={toggleItemFavorite}
           />

@@ -433,6 +433,8 @@
     "resetZoom": "Reset zoom (Home / 0)",
     "detailLoading": "Loading detail data…",
     "chartLoading": "Loading chart data",
+    "seriesLoading": "Loading field data ({{count}})",
+    "seriesLoadingRows": "{{loaded}}/{{total}} rows",
     "roughSampling": "Sampling the full range…",
     "loadPhase": {
       "overview": "Rough sampling",
@@ -455,6 +457,7 @@
       "searchLabel": "Search field values",
       "searchClear": "Clear field search",
       "noMatches": "No fields match \"{{query}}\".",
+      "loadingValue": "Loading…",
       "showItem": "Show {{name}} on chart",
       "hideItem": "Hide {{name}} from chart",
       "toggleFavorite": "Double-click: pin to top",

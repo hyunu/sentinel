@@ -17,6 +17,8 @@ interface ChartCursorValuesProps {
   timeKey: string | null;
   formatTime: (iso: string) => string;
   rows: CursorValueRow[];
+  /** Items whose values are being fetched after being turned back on. */
+  loadingItemIds?: readonly string[];
   onToggleVisibility?: (itemId: string) => void;
   onToggleFavorite?: (itemId: string) => void;
   embedded?: boolean;
@@ -54,12 +56,14 @@ export default function ChartCursorValues({
   timeKey,
   formatTime,
   rows,
+  loadingItemIds,
   onToggleVisibility,
   onToggleFavorite,
   embedded = false,
   layout = 'bottom',
 }: ChartCursorValuesProps) {
   const { t } = useTranslation();
+  const loadingIds = useMemo(() => new Set(loadingItemIds ?? []), [loadingItemIds]);
   const [search, setSearch] = useState('');
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const filteredRows = useMemo(() => {
@@ -170,6 +174,7 @@ export default function ChartCursorValues({
             {filteredRows.map(({ item, raw, prevRaw, onChart }) => {
               const name = chartLabel(item);
               const hasValue = typeof raw === 'number';
+              const isLoading = loadingIds.has(item.id);
               const isFavorite = !!item.favorite;
               const isVisible = item.visible;
               const delta = hasValue ? formatDelta(raw, prevRaw, item) : { text: '', trend: 'none' as const };
@@ -181,7 +186,7 @@ export default function ChartCursorValues({
                 <div
                   key={item.id}
                   role="listitem"
-                  className={`viz-cursor-value-cell${onChart ? ' on-chart' : ''}${isFavorite ? ' is-favorite' : ''}${!isVisible ? ' is-item-hidden' : ''}${!hasValue ? ' no-value' : ''}${onToggleFavorite ? ' is-toggleable' : ''}`}
+                  className={`viz-cursor-value-cell${onChart ? ' on-chart' : ''}${isFavorite ? ' is-favorite' : ''}${!isVisible ? ' is-item-hidden' : ''}${!hasValue ? ' no-value' : ''}${isLoading ? ' is-loading' : ''}${onToggleFavorite ? ' is-toggleable' : ''}`}
                   title={titleParts.join(' · ')}
                   onMouseDown={onToggleFavorite ? suppressDoubleClickSelect : undefined}
                   onDoubleClick={onToggleFavorite ? e => handleToggleFavorite(e, item.id) : undefined}
@@ -206,7 +211,11 @@ export default function ChartCursorValues({
                   <span className="viz-cursor-value-name">{name}</span>
                   <div className="viz-cursor-value-line">
                     <span className="viz-cursor-value-main">
-                      {hasValue ? formatValue(raw, item) : '—'}
+                      {hasValue
+                        ? formatValue(raw, item)
+                        : isLoading
+                          ? t('viz.valuePanel.loadingValue')
+                          : '—'}
                     </span>
                     {delta.text ? (
                       <span
