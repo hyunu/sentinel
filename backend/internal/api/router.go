@@ -69,6 +69,9 @@ func SetupRouter(database *db.MongoDB, logger *zap.Logger, agent *ai.Agent, opts
 			sessions.DELETE("/:id", h.DeleteSession)
 			sessions.POST("/auto-split", h.AutoSplitSessions)
 			sessions.POST("/split-by-rules", h.SplitSessionsByRules)
+			sessions.POST("/split-by-rules/jobs", h.StartSessionSplitJob)
+			sessions.GET("/split-jobs/:job_id", h.GetSessionSplitJob)
+			sessions.POST("/split-jobs/:job_id/cancel", h.CancelSessionSplitJob)
 		}
 
 		viz := v1.Group("/viz")

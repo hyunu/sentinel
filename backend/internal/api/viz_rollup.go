@@ -54,6 +54,7 @@ func extractNumericParsedFields(parsed map[string]interface{}) map[string]float6
 }
 
 type vizRollupBucketKey struct {
+	boardID        string
 	granularitySec int
 	bucketUnix     int64
 }
@@ -87,6 +88,7 @@ func aggregateVizRollupBuckets(samples []models.UartData) []vizRollupBucket {
 		for _, granularitySec := range vizRollupGranularitySecs {
 			bucketStart := rollupBucketStart(sample.Timestamp, granularitySec)
 			key := vizRollupBucketKey{
+				boardID:        sample.BoardID,
 				granularitySec: granularitySec,
 				bucketUnix:     bucketStart.Unix(),
 			}
@@ -195,6 +197,73 @@ func (h *Handler) upsertVizRollups(ctx context.Context, samples []models.UartDat
 		}
 	}
 	return nil
+}
+
+// estimateVizRowCount sums precomputed rollup counts for the range instead of
+// scanning raw documents. It falls back to an exact count only when no rollup
+// exists (legacy data or an empty board).
+func (h *Handler) estimateVizRowCount(ctx context.Context, filter bson.M) (int64, bool, error) {
+	boardID, ok := filter["board_id"].(string)
+	if !ok || boardID == "" {
+		return 0, false, nil
+	}
+	start, hasStart, end, hasEnd := getVizFilterBounds(filter)
+	for i := len(vizRollupGranularitySecs) - 1; i >= 0; i -= 1 {
+		granularitySec := vizRollupGranularitySecs[i]
+		rollupFilter := bson.M{
+			"board_id":        boardID,
+			"granularity_sec": granularitySec,
+		}
+		if hasStart || hasEnd {
+			rangeFilter := bson.M{}
+			if hasStart {
+				rangeFilter["$gte"] = rollupBucketStart(start, granularitySec)
+			}
+			if hasEnd {
+				rangeFilter["$lte"] = rollupBucketStart(end, granularitySec)
+			}
+			rollupFilter["bucket_start"] = rangeFilter
+		}
+
+		cur, err := h.db.VizRollups().Find(
+			ctx,
+			rollupFilter,
+			options.Find().SetProjection(bson.M{"count": 1}),
+		)
+		if err != nil {
+			return 0, false, err
+		}
+		var total int64
+		found := false
+		for cur.Next(ctx) {
+			var row struct {
+				Count int64 `bson:"count"`
+			}
+			if err := cur.Decode(&row); err != nil {
+				continue
+			}
+			total += row.Count
+			found = true
+		}
+		curErr := cur.Err()
+		cur.Close(ctx)
+		if curErr != nil {
+			return 0, false, curErr
+		}
+		if found {
+			return total, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func (h *Handler) vizCountForFilter(ctx context.Context, filter bson.M) (int64, error) {
+	if total, ok, err := h.estimateVizRowCount(ctx, filter); err != nil {
+		return 0, err
+	} else if ok {
+		return total, nil
+	}
+	return h.db.UartData().CountDocuments(ctx, filter)
 }
 
 func getVizFilterBounds(filter bson.M) (start time.Time, hasStart bool, end time.Time, hasEnd bool) {

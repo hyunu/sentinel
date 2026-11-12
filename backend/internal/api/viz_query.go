@@ -325,7 +325,7 @@ func (h *Handler) queryVizSeriesSampled(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
-	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	total, err := h.vizCountForFilter(ctx, filter)
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}
@@ -494,7 +494,7 @@ func (h *Handler) queryVizSeriesEnvelope(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
-	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	total, err := h.vizCountForFilter(ctx, filter)
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}
@@ -677,7 +677,7 @@ func (h *Handler) queryVizSeriesPage(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
-	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	total, err := h.vizCountForFilter(ctx, filter)
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}
@@ -690,14 +690,6 @@ func (h *Handler) queryVizSeriesPage(
 	if skip > vizFullLoadPointLimit {
 		skip = vizFullLoadPointLimit
 	}
-	if int64(skip) >= total {
-		return []vizDataPoint{}, vizQueryMeta{
-			TotalMatched: total,
-			Returned:     0,
-			Downsampled:  false,
-		}, nil
-	}
-
 	findOpts := options.Find().
 		SetSort(bson.D{{Key: "timestamp", Value: 1}, {Key: "_id", Value: 1}}).
 		SetSkip(int64(skip)).
@@ -748,7 +740,7 @@ func (h *Handler) queryVizSeries(
 		return []vizDataPoint{}, vizQueryMeta{}, nil
 	}
 
-	total, err := h.db.UartData().CountDocuments(ctx, filter)
+	total, err := h.vizCountForFilter(ctx, filter)
 	if err != nil {
 		return nil, vizQueryMeta{}, err
 	}

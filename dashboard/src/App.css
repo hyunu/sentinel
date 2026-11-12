@@ -6451,6 +6451,14 @@ pre {
   color: var(--success);
   font-size: 12px;
 }
+.sessions-split-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 
 .sessions-table td {
   vertical-align: middle;

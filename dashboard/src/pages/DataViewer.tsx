@@ -68,6 +68,7 @@ export default function DataViewerPage() {
   const [nextBefore, setNextBefore] = useState<UartCursor | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [counting, setCounting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
@@ -137,7 +138,6 @@ export default function DataViewerPage() {
         since,
         until,
         limit: pageSize,
-        include_total: !append,
         before_ts: cursor?.timestamp,
         before_id: cursor?.id,
       });
@@ -145,9 +145,6 @@ export default function DataViewerPage() {
       setData(prev => append ? [...prev, ...result.items] : result.items);
       setHasMore(result.has_more);
       setNextBefore(result.next_before ?? null);
-      if (result.total !== undefined) {
-        setTotal(result.total);
-      }
     } catch (e) {
       console.error(e);
       setError(t('dataViewer.failedToLoad'));
@@ -185,8 +182,42 @@ export default function DataViewerPage() {
     fetchPage();
   }, [selectedBoard, selectedSession, direction, timeRange, pageSize, t, fetchPage]);
 
+  // Totals are expensive to compute on large datasets, so they are requested
+  // only when the user explicitly asks for them, and reset when filters change.
+  useEffect(() => {
+    setTotal(null);
+  }, [selectedBoard, selectedSession, direction, timeRange, customSince, customUntil]);
+
+  const countTotal = useCallback(async () => {
+    if (!selectedBoard || counting) return;
+    if (timeRange === 'custom' && !customRangeValid) return;
+    const since = timeRange === 'custom' ? customSince : sinceForRange(timeRange);
+    const until = timeRange === 'custom' ? customUntil : undefined;
+    setCounting(true);
+    setError('');
+    try {
+      const result = await api.uart.list({
+        board_id: selectedBoard,
+        session_id: selectedSession || undefined,
+        direction: direction || undefined,
+        since,
+        until,
+        limit: 1,
+        include_total: true,
+      });
+      setTotal(result.total ?? 0);
+    } catch (e) {
+      console.error(e);
+      setError(t('dataViewer.failedToLoad'));
+    } finally {
+      setCounting(false);
+    }
+  }, [selectedBoard, selectedSession, direction, timeRange, customSince, customUntil, customRangeValid, counting, t]);
+
   const statLabel = total !== null
-    ? t('dataViewer.showingOf', { shown: formatCount(data.length), total: formatCount(total) })
+    ? total === 0
+      ? t('dataViewer.noRecords')
+      : t('dataViewer.showingOf', { shown: formatCount(data.length), total: formatCount(total) })
     : data.length > 0
       ? t('dataViewer.showing', { count: formatCount(data.length) })
       : t('dataViewer.noRecords');
@@ -555,6 +586,16 @@ export default function DataViewerPage() {
       <div className="card data-viewer-table-card">
         <div className="toolbar" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <span className="toolbar-stat muted">{statLabel}</span>
+          {selectedBoard && total === null && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={counting || loading || (timeRange === 'custom' && !customRangeValid)}
+              onClick={() => void countTotal()}
+            >
+              {counting ? t('dataViewer.counting') : t('dataViewer.countTotal')}
+            </button>
+          )}
           {selectedBoard && (
             <>
               <button

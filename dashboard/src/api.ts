@@ -120,6 +120,26 @@ export interface Board {
   updated_at: string;
 }
 
+export interface SessionSplitJob {
+  id: string;
+  board_id: string;
+  mode: 'cut' | 'range';
+  state: 'running' | 'done' | 'failed' | 'canceled';
+  phase: string;
+  processed: number;
+  sessions_created: number;
+  rows_assigned: number;
+  cuts: number;
+  ranges: number;
+  unclosed_starts: number;
+  error?: string;
+  cancel_requested: boolean;
+  created_at: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string;
+}
+
 export interface SessionSplitRule {
   id: string;
   name: string;
@@ -572,6 +592,16 @@ export const api = {
         body: JSON.stringify({ board_id, replace, min_gap_seconds: minGapSeconds }),
         timeoutMs: 180000,
       }),
+    startSplitJob: (board_id: string, replace = true, minGapSeconds = 1) =>
+      request<SessionSplitJob>('/sessions/split-by-rules/jobs', {
+        method: 'POST',
+        body: JSON.stringify({ board_id, replace, min_gap_seconds: minGapSeconds }),
+        timeoutMs: 30000,
+      }),
+    getSplitJob: (jobId: string) =>
+      request<SessionSplitJob>(`/sessions/split-jobs/${jobId}`),
+    cancelSplitJob: (jobId: string) =>
+      request<SessionSplitJob>(`/sessions/split-jobs/${jobId}/cancel`, { method: 'POST' }),
   },
 
   viz: {

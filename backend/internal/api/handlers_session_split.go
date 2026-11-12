@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -135,49 +136,50 @@ func sessionRangesFromMatches(matches []sessionRuleMatch) ([]sessionTimeRange, i
 	return ranges, unclosed
 }
 
-// SplitSessionsByRules builds sessions from packets matching the board's
-// configured rules. It supports two modes:
-//
-//	cut   - every matching packet is a boundary; sessions fill the segments
-//	        between cuts.
-//	range - rules with role "start" open a session and rules with role "end"
-//	        close it; only the covered ranges become sessions.
-//
-// Idle gaps are never used as boundaries.
-func (h *Handler) SplitSessionsByRules(c *gin.Context) {
-	var req struct {
-		BoardID       string `json:"board_id" binding:"required"`
-		Replace       *bool  `json:"replace,omitempty"`
-		MinGapSeconds int    `json:"min_gap_seconds,omitempty"`
-		// Start/End optionally limit the split to a time window.
-		Start string `json:"start,omitempty"`
-		End   string `json:"end,omitempty"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+type sessionSplitRequest struct {
+	BoardID       string `json:"board_id" binding:"required"`
+	Replace       *bool  `json:"replace,omitempty"`
+	MinGapSeconds int    `json:"min_gap_seconds,omitempty"`
+	// Start/End optionally limit the split to a time window.
+	Start string `json:"start,omitempty"`
+	End   string `json:"end,omitempty"`
+}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
-	defer cancel()
+type sessionSplitResult struct {
+	SessionsCreated int    `json:"sessions_created"`
+	Cuts            int    `json:"cuts"`
+	Ranges          int    `json:"ranges"`
+	RowsAssigned    int64  `json:"rows_assigned"`
+	UnclosedStarts  int    `json:"unclosed_starts"`
+	Mode            string `json:"mode"`
+}
 
+type sessionSplitSetup struct {
+	BoardID  string
+	Board    models.Board
+	Rules    []models.SessionSplitRule
+	Mode     string
+	Protocol models.ProtocolSpec
+}
+
+func (h *Handler) prepareSessionSplit(
+	ctx context.Context,
+	req sessionSplitRequest,
+) (*sessionSplitSetup, int, error) {
 	boardID, err := h.resolveBoardID(ctx, req.BoardID, "")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return nil, http.StatusBadRequest, err
 	}
 	var board models.Board
 	if err := h.db.Boards().FindOne(ctx, bson.M{"_id": boardID}).Decode(&board); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "board not found"})
-		return
+		return nil, http.StatusNotFound, errors.New("board not found")
 	}
 	mode := strings.ToLower(strings.TrimSpace(board.SessionRuleMode))
 	if mode == "" {
 		mode = "cut"
 	}
 	if mode != "cut" && mode != "range" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session rule mode"})
-		return
+		return nil, http.StatusBadRequest, errors.New("invalid session rule mode")
 	}
 
 	rules := make([]models.SessionSplitRule, 0, len(board.SessionRules))
@@ -187,8 +189,7 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		}
 	}
 	if len(rules) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no enabled session split rules"})
-		return
+		return nil, http.StatusBadRequest, errors.New("no enabled session split rules")
 	}
 	if mode == "range" {
 		hasStart, hasEnd := false, false
@@ -201,38 +202,52 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 			}
 		}
 		if !hasStart || !hasEnd {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "range mode requires at least one start and one end rule",
-			})
-			return
+			return nil, http.StatusBadRequest, errors.New("range mode requires at least one start and one end rule")
 		}
 	}
 	if board.ProtocolID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "board has no protocol"})
-		return
+		return nil, http.StatusBadRequest, errors.New("board has no protocol")
 	}
 	var proto models.ProtocolSpec
 	if err := h.db.Protocols().FindOne(ctx, bson.M{"_id": board.ProtocolID}).Decode(&proto); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "board protocol not found"})
-		return
+		return nil, http.StatusBadRequest, errors.New("board protocol not found")
 	}
 
-	filter := bson.M{"board_id": boardID}
+	return &sessionSplitSetup{
+		BoardID:  boardID,
+		Board:    board,
+		Rules:    rules,
+		Mode:     mode,
+		Protocol: proto,
+	}, 0, nil
+}
+
+// executeSessionSplit scans the selected range, builds session ranges and
+// assigns unassigned rows. It is shared by the synchronous endpoint and the
+// asynchronous job worker. onProgress receives the scanned row count.
+func (h *Handler) executeSessionSplit(
+	ctx context.Context,
+	req sessionSplitRequest,
+	setup *sessionSplitSetup,
+	onProgress func(processed int64),
+	onPhase func(phase string),
+) (sessionSplitResult, error) {
+	result := sessionSplitResult{Mode: setup.Mode}
+
+	filter := bson.M{"board_id": setup.BoardID}
 	if req.Start != "" || req.End != "" {
 		timeFilter := bson.M{}
 		if req.Start != "" {
 			start, err := parseTimeQuery(req.Start)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start"})
-				return
+				return result, errors.New("invalid start")
 			}
 			timeFilter["$gte"] = start
 		}
 		if req.End != "" {
 			end, err := parseTimeQuery(req.End)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end"})
-				return
+				return result, errors.New("invalid end")
 			}
 			timeFilter["$lte"] = end
 		}
@@ -252,14 +267,23 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 			SetBatchSize(1000),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
-		return
+		return result, err
 	}
 	defer cur.Close(ctx)
 
 	matches := make([]sessionRuleMatch, 0, 64)
 	var firstTs, lastTs time.Time
+	var processed int64
 	for cur.Next(ctx) {
+		processed += 1
+		if processed%1000 == 0 {
+			if onProgress != nil {
+				onProgress(processed)
+			}
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
+		}
 		var doc models.UartData
 		if err := cur.Decode(&doc); err != nil {
 			continue
@@ -269,18 +293,18 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		}
 		lastTs = doc.Timestamp
 
-		parsed := protocol.ParseForStorage(doc.RawHex, proto.ID, &proto)
+		parsed := protocol.ParseForStorage(doc.RawHex, setup.Protocol.ID, &setup.Protocol)
 		if parsed == nil {
 			continue
 		}
 		role := ""
 		matched := false
-		for _, rule := range rules {
+		for _, rule := range setup.Rules {
 			if !sessionRuleMatches(rule, parsed, doc.Direction) {
 				continue
 			}
 			matched = true
-			if mode == "range" {
+			if setup.Mode == "range" {
 				// The first matching rule in list order decides the role.
 				role = strings.ToLower(strings.TrimSpace(rule.Role))
 			}
@@ -289,20 +313,22 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		if !matched {
 			continue
 		}
-		if mode == "range" && role != "start" && role != "end" {
+		if setup.Mode == "range" && role != "start" && role != "end" {
 			continue
 		}
 		matches = append(matches, sessionRuleMatch{TS: doc.Timestamp, Role: role})
 	}
 	if err := cur.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
-		return
+		return result, err
+	}
+	if onProgress != nil {
+		onProgress(processed)
 	}
 
 	ranges := make([]sessionTimeRange, 0, 32)
 	cuts := make([]time.Time, 0, 32)
 	unclosedStarts := 0
-	if mode == "range" {
+	if setup.Mode == "range" {
 		ranges, unclosedStarts = sessionRangesFromMatches(matches)
 	} else {
 		minGap := time.Duration(req.MinGapSeconds) * time.Second
@@ -318,14 +344,7 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 			cuts = append(cuts, match.TS)
 		}
 		if firstTs.IsZero() || len(cuts) == 0 {
-			c.JSON(http.StatusOK, gin.H{
-				"sessions_created": 0,
-				"cuts":             0,
-				"ranges":           0,
-				"rows_assigned":    0,
-				"mode":             mode,
-			})
-			return
+			return result, nil
 		}
 		boundaries := make([]time.Time, 0, len(cuts)+2)
 		boundaries = append(boundaries, firstTs)
@@ -342,16 +361,14 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		}
 	}
 
+	result.Cuts = len(cuts)
+	result.UnclosedStarts = unclosedStarts
+	result.Ranges = len(ranges)
 	if len(ranges) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"sessions_created": 0,
-			"cuts":             len(cuts),
-			"ranges":           0,
-			"rows_assigned":    0,
-			"unclosed_starts":  unclosedStarts,
-			"mode":             mode,
-		})
-		return
+		return result, nil
+	}
+	if onPhase != nil {
+		onPhase("create")
 	}
 
 	replace := true
@@ -359,17 +376,15 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		replace = *req.Replace
 	}
 	if replace {
-		if _, err := h.db.Sessions().DeleteMany(ctx, bson.M{"board_id": boardID}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear sessions"})
-			return
+		if _, err := h.db.Sessions().DeleteMany(ctx, bson.M{"board_id": setup.BoardID}); err != nil {
+			return result, errors.New("failed to clear sessions")
 		}
 		if _, err := h.db.UartData().UpdateMany(
 			ctx,
-			bson.M{"board_id": boardID},
+			bson.M{"board_id": setup.BoardID},
 			bson.M{"$unset": bson.M{"session_id": ""}},
 		); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset session assignment"})
-			return
+			return result, errors.New("failed to reset session assignment")
 		}
 	}
 
@@ -382,7 +397,7 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		}
 		res, err := h.db.UartData().UpdateMany(ctx,
 			bson.M{
-				"board_id":   boardID,
+				"board_id":   setup.BoardID,
 				"timestamp":  tsFilter,
 				"session_id": bson.M{"$exists": false},
 			},
@@ -394,20 +409,21 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		return res.ModifiedCount, nil
 	}
 
-	created := 0
-	var rowsAssigned int64
 	for i, item := range ranges {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if !item.End.After(item.Start) {
 			continue
 		}
 		sessionID := uuid.NewString()
 		name := fmt.Sprintf("Rule split %d", i+1)
-		if mode == "range" {
+		if setup.Mode == "range" {
 			name = fmt.Sprintf("Packet range %d", i+1)
 		}
 		session := models.Session{
 			ID:        sessionID,
-			BoardID:   boardID,
+			BoardID:   setup.BoardID,
 			Name:      name,
 			Tags:      []string{"rule-split"},
 			StartTime: item.Start,
@@ -417,29 +433,53 @@ func (h *Handler) SplitSessionsByRules(c *gin.Context) {
 		// Cut mode excludes the end boundary from all but the final segment so
 		// boundary packets are not assigned twice. Range mode includes the end
 		// packet because it is the closing marker.
-		inclusiveEnd := mode == "range" || i == len(ranges)-1
+		inclusiveEnd := setup.Mode == "range" || i == len(ranges)-1
 		modified, err := assign(sessionID, item.Start, inclusiveEnd, item.End)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to assign session"})
-			return
+			return result, errors.New("failed to assign session")
 		}
 		if modified == 0 {
 			continue
 		}
-		rowsAssigned += modified
+		result.RowsAssigned += modified
 		if _, err := h.db.Sessions().InsertOne(ctx, session); err != nil {
 			h.logger.Error("failed to insert split session", zap.Error(err))
 			continue
 		}
-		created += 1
+		result.SessionsCreated += 1
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"sessions_created": created,
-		"cuts":             len(cuts),
-		"ranges":           len(ranges),
-		"rows_assigned":    rowsAssigned,
-		"unclosed_starts":  unclosedStarts,
-		"mode":             mode,
-	})
+	return result, nil
+}
+
+// SplitSessionsByRules builds sessions from packets matching the board's
+// configured rules. It supports two modes:
+//
+//	cut   - every matching packet is a boundary; sessions fill the segments
+//	        between cuts.
+//	range - rules with role "start" open a session and rules with role "end"
+//	        close it; only the covered ranges become sessions.
+//
+// Idle gaps are never used as boundaries.
+func (h *Handler) SplitSessionsByRules(c *gin.Context) {
+	var req sessionSplitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
+	defer cancel()
+
+	setup, status, err := h.prepareSessionSplit(ctx, req)
+	if err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.executeSessionSplit(ctx, req, setup, nil, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }

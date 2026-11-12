@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
-import type { Board, Session } from '../api';
+import type { Board, Session, SessionSplitJob } from '../api';
 import PageHeader from '../components/PageHeader';
 import SessionTimeline from '../components/SessionTimeline';
 import SessionsManual from '../components/SessionsManual';
@@ -62,6 +62,8 @@ export default function SessionsPage() {
   const [splitting, setSplitting] = useState(false);
   const [splitMessage, setSplitMessage] = useState('');
   const [splitWarning, setSplitWarning] = useState('');
+  const [splitJob, setSplitJob] = useState<SessionSplitJob | null>(null);
+  const [splitJobId, setSplitJobId] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
 
   const sessions = selectedBoard ? sessionsByBoard[selectedBoard] ?? [] : [];
@@ -129,6 +131,9 @@ export default function SessionsPage() {
       setError(t('sessions.loadFailed'));
     }
   };
+
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
 
   const selectBoard = (boardId: string) => {
     setSelectedBoard(boardId);
@@ -232,6 +237,8 @@ export default function SessionsPage() {
     setError('');
     setSplitMessage('');
     setSplitWarning('');
+    setSplitJob(null);
+    setSplitJobId(null);
     try {
       // Persist the current editor values first so the split uses what the
       // user sees, not the previously saved rule set.
@@ -241,20 +248,69 @@ export default function SessionsPage() {
       });
       setRules(updated.session_split_rules ?? normalizedRules);
       setBoards(prev => prev.map(board => (board.id === updated.id ? updated : board)));
-      const result = await api.sessions.splitByRules(selectedBoard, true, 1);
-      await reload();
-      setSplitMessage(t('sessions.splitResult', {
-        sessions: formatCount(result.sessions_created),
-        rows: formatCount(result.rows_assigned),
-      }));
-      if (result.unclosed_starts > 0) {
-        setSplitWarning(t('sessions.splitUnclosed', { count: String(result.unclosed_starts) }));
+      const job = await api.sessions.startSplitJob(selectedBoard, true, 1);
+      setSplitJob(job);
+      setSplitJobId(job.id);
+    } catch (e) {
+      console.error(e);
+      setSplitting(false);
+      setError(t('sessions.splitFailed'));
+    }
+  };
+
+  useEffect(() => {
+    if (!splitJobId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      try {
+        const job = await api.sessions.getSplitJob(splitJobId);
+        if (cancelled) return;
+        setSplitJob(job);
+        if (job.state === 'running') {
+          timer = setTimeout(poll, 800);
+          return;
+        }
+        setSplitJobId(null);
+        setSplitting(false);
+        if (job.state === 'done') {
+          await reloadRef.current(job.board_id);
+          setSplitMessage(t('sessions.splitResult', {
+            sessions: formatCount(job.sessions_created),
+            rows: formatCount(job.rows_assigned),
+          }));
+          if (job.unclosed_starts > 0) {
+            setSplitWarning(t('sessions.splitUnclosed', { count: String(job.unclosed_starts) }));
+          }
+        } else if (job.state === 'canceled') {
+          setSplitMessage(t('sessions.splitCanceled'));
+        } else {
+          setError(job.error || t('sessions.splitFailed'));
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.error(e);
+        setSplitJobId(null);
+        setSplitting(false);
+        setError(t('sessions.splitFailed'));
       }
+    };
+
+    timer = setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [splitJobId, t]);
+
+  const cancelRuleSplit = async () => {
+    if (!splitJobId) return;
+    try {
+      await api.sessions.cancelSplitJob(splitJobId);
     } catch (e) {
       console.error(e);
       setError(t('sessions.splitFailed'));
-    } finally {
-      setSplitting(false);
     }
   };
 
@@ -512,6 +568,18 @@ export default function SessionsPage() {
               </button>
             </div>
           </div>
+          {splitting && (
+            <div className="sessions-split-progress">
+              <span>
+                {splitJob?.phase === 'create'
+                  ? t('sessions.splitCreating')
+                  : t('sessions.splitScanning', { rows: formatCount(splitJob?.processed ?? 0) })}
+              </span>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => void cancelRuleSplit()}>
+                {t('sessions.splitCancel')}
+              </button>
+            </div>
+          )}
           <div className="sessions-rule-mode" role="group" aria-label={t('sessions.ruleMode')}>
             <button
               type="button"

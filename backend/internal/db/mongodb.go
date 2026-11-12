@@ -132,6 +132,20 @@ func (m *MongoDB) EnsureIndexes(ctx context.Context) error {
 		m.logger.Warn("failed to create uart_data board/timestamp index", zap.Error(err))
 	}
 
+	_, err = m.UartData().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "board_id", Value: 1},
+			{Key: "session_id", Value: 1},
+			{Key: "timestamp", Value: -1},
+		},
+		Options: options.Index().SetPartialFilterExpression(bson.M{
+			"session_id": bson.M{"$exists": true},
+		}),
+	})
+	if err != nil {
+		m.logger.Warn("failed to create uart_data session/timestamp index", zap.Error(err))
+	}
+
 	_, err = m.VizRollups().Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{
 			{Key: "board_id", Value: 1},

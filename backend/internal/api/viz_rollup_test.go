@@ -103,3 +103,23 @@ func TestAggregateVizRollupBucketsSkipsSamplesWithoutNumericFields(t *testing.T)
 		t.Fatalf("expected no buckets, got %+v", got)
 	}
 }
+
+func TestAggregateVizRollupBucketsKeepsBoardsSeparate(t *testing.T) {
+	start := time.Date(2026, 11, 11, 0, 0, 5, 0, time.UTC)
+	samples := []models.UartData{
+		{BoardID: "board-1", Timestamp: start, ParsedFields: map[string]interface{}{"v": 1.0}},
+		{BoardID: "board-2", Timestamp: start, ParsedFields: map[string]interface{}{"v": 2.0}},
+	}
+
+	buckets := aggregateVizRollupBuckets(samples)
+	seen := map[string]int64{}
+	for _, bucket := range buckets {
+		seen[bucket.BoardID] += bucket.Count
+	}
+	if seen["board-1"] == 0 || seen["board-2"] == 0 {
+		t.Fatalf("boards were merged: %+v", seen)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("want 2 boards, got %+v", seen)
+	}
+}
