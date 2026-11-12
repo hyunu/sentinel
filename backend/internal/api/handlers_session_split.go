@@ -147,6 +147,7 @@ type sessionSplitRequest struct {
 
 type sessionSplitResult struct {
 	SessionsCreated int    `json:"sessions_created"`
+	Processed       int64  `json:"-"`
 	Cuts            int    `json:"cuts"`
 	Ranges          int    `json:"ranges"`
 	RowsAssigned    int64  `json:"rows_assigned"`
@@ -361,6 +362,7 @@ func (h *Handler) executeSessionSplit(
 		}
 	}
 
+	result.Processed = processed
 	result.Cuts = len(cuts)
 	result.UnclosedStarts = unclosedStarts
 	result.Ranges = len(ranges)

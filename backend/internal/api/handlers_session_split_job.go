@@ -168,6 +168,7 @@ func (h *Handler) runSessionSplitJob(job sessionSplitJob, req sessionSplitReques
 		bson.M{"$set": bson.M{
 			"state":            "done",
 			"phase":            "done",
+			"processed":        result.Processed,
 			"mode":             result.Mode,
 			"sessions_created": result.SessionsCreated,
 			"rows_assigned":    result.RowsAssigned,
