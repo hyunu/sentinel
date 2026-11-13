@@ -1158,6 +1158,7 @@ export default function VizDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [awaitingRoughData, setAwaitingRoughData] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
+  const [overviewProgress, setOverviewProgress] = useState(0);
   const [fullLoadBytesEstimate, setFullLoadBytesEstimate] = useState<number | null>(null);
   /** Keep the 100% bar visible briefly after the final row arrives. */
   const loadCompletedRef = useRef(false);
@@ -1366,6 +1367,22 @@ export default function VizDashboardPage() {
   /** Series being fetched because the user just put them back on the chart. */
   const [seriesLoadingIds, setSeriesLoadingIds] = useState<string[]>([]);
   const [seriesLoadProgress, setSeriesLoadProgress] = useState<ChartLoadProgress | null>(null);
+  // The overview aggregation reports no bytes until the server finishes, so
+  // animate a bounded estimate while it runs; real byte progress can win once
+  // the response starts arriving.
+  useEffect(() => {
+    if (!loading || !awaitingRoughData) {
+      setOverviewProgress(0);
+      return;
+    }
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const elapsed = Date.now() - started;
+      setOverviewProgress(Math.min(0.92, 1 - Math.exp(-elapsed / 2500)));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [loading, awaitingRoughData]);
+
 
   const rawVizDataKey = useMemo(
     () => (rawVizData.length > 0
@@ -4607,10 +4624,18 @@ export default function VizDashboardPage() {
   // can never disagree (the old code mixed unique rows with network bytes).
   const chartProgressRatio = (() => {
     const progress = activeLoadProgress;
-    if (!progress) return null;
-    // The rough-sampling request is only a preview. Letting it run to 100%
-    // made the bar jump back to 0 when the real full load started.
-    if (progress.phase === 'overview') return 0;
+    if (!progress) {
+      return loading && awaitingRoughData ? overviewProgress : null;
+    }
+    if (progress.phase === 'overview') {
+      const byteRatio = progress.total && progress.total > 0
+        ? Math.max(0, Math.min(1, progress.loaded / progress.total))
+        : 0;
+      const ratio = Math.max(byteRatio, overviewProgress);
+      // The envelope can arrive before the real samples are applied; hold at
+      // 99% so the bar does not sit at 100% while the chart is still empty.
+      return awaitingRoughData ? Math.min(0.99, ratio) : ratio;
+    }
     if (progress.done) return 1;
     if (progress.chunkCount && progress.rowsTotal && progress.rowsTotal > 0) {
       return Math.max(
