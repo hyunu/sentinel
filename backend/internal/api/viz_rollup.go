@@ -420,7 +420,8 @@ func (h *Handler) queryVizSeriesFromRollups(
 	}
 
 	start, hasStart, end, hasEnd := getVizFilterBounds(filter)
-	if !hasStart && !hasEnd {
+	allRange := !hasStart && !hasEnd
+	if allRange {
 		// All-range queries have no bounds. Use the presence extent so a board
 		// spanning months can pick a coarse rollup instead of 60s documents.
 		if extentStart, extentEnd, ok := h.uartPresenceExtent(ctx, boardID); ok {
@@ -428,6 +429,11 @@ func (h *Handler) queryVizSeriesFromRollups(
 		}
 	}
 	preferredGranularity, useRollup := chooseVizRollupGranularity(total, effectiveLimit, start, hasStart, end, hasEnd)
+	if allRange && preferredGranularity > 0 && preferredGranularity < 60 {
+		// An all-range view is an overview; 60s keeps it fast even on a short
+		// board. Zooming in still uses finer rollups/raw rows.
+		preferredGranularity = 60
+	}
 	if !useRollup {
 		return nil, false, nil
 	}
