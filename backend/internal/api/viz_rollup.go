@@ -397,6 +397,18 @@ func trimVizPoints(points []vizDataPoint, limit int) []vizDataPoint {
 	return trimmed
 }
 
+// nextFinerVizRollupGranularity returns the next available finer resolution.
+// Older boards may only have 1s/10s/60s rollups, so a request that prefers 1h
+// must fall back instead of falling through to a raw scan.
+func nextFinerVizRollupGranularity(granularitySec int) int {
+	for i, g := range vizRollupGranularitySecs {
+		if g == granularitySec && i > 0 {
+			return vizRollupGranularitySecs[i-1]
+		}
+	}
+	return 0
+}
+
 func (h *Handler) queryVizSeriesFromRollups(
 	ctx context.Context,
 	filter bson.M,
@@ -410,24 +422,51 @@ func (h *Handler) queryVizSeriesFromRollups(
 	}
 
 	start, hasStart, end, hasEnd := getVizFilterBounds(filter)
-	granularitySec, useRollup := chooseVizRollupGranularity(total, effectiveLimit, start, hasStart, end, hasEnd)
+	preferredGranularity, useRollup := chooseVizRollupGranularity(total, effectiveLimit, start, hasStart, end, hasEnd)
 	if !useRollup {
 		return nil, false, nil
 	}
 
-	rollupFilter := bson.M{
-		"board_id":        boardID,
-		"granularity_sec": granularitySec,
+	buildRollupFilter := func(granularitySec int) bson.M {
+		rollupFilter := bson.M{
+			"board_id":        boardID,
+			"granularity_sec": granularitySec,
+		}
+		if hasStart || hasEnd {
+			rangeFilter := bson.M{}
+			if hasStart {
+				rangeFilter["$gte"] = rollupBucketStart(start, granularitySec)
+			}
+			if hasEnd {
+				rangeFilter["$lte"] = rollupBucketStart(end, granularitySec)
+			}
+			rollupFilter["bucket_start"] = rangeFilter
+		}
+		return rollupFilter
 	}
-	if hasStart || hasEnd {
-		rangeFilter := bson.M{}
-		if hasStart {
-			rangeFilter["$gte"] = rollupBucketStart(start, granularitySec)
+
+	// Prefer the computed resolution, but fall back to finer rollups when the
+	// board predates 5m/1h rollups. Without this, long ranges would miss the
+	// rollup collection entirely and fall back to scanning raw documents.
+	granularitySec := preferredGranularity
+	rollupFilter := buildRollupFilter(granularitySec)
+	var rollupCount int64
+	for granularitySec > 0 {
+		n, err := h.db.VizRollups().CountDocuments(ctx, rollupFilter)
+		if err != nil {
+			return nil, false, err
 		}
-		if hasEnd {
-			rangeFilter["$lte"] = rollupBucketStart(end, granularitySec)
+		if n > 0 {
+			rollupCount = n
+			break
 		}
-		rollupFilter["bucket_start"] = rangeFilter
+		granularitySec = nextFinerVizRollupGranularity(granularitySec)
+		if granularitySec > 0 {
+			rollupFilter = buildRollupFilter(granularitySec)
+		}
+	}
+	if rollupCount == 0 {
+		return nil, false, nil
 	}
 
 	findOpts := options.Find().
@@ -437,14 +476,6 @@ func (h *Handler) queryVizSeriesFromRollups(
 			"count":        1,
 			"sum_fields":   1,
 		})
-
-	rollupCount, err := h.db.VizRollups().CountDocuments(ctx, rollupFilter)
-	if err != nil {
-		return nil, false, err
-	}
-	if rollupCount == 0 {
-		return nil, false, nil
-	}
 
 	cursor, err := h.db.VizRollups().Find(ctx, rollupFilter, findOpts)
 	if err != nil {

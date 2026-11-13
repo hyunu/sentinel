@@ -210,3 +210,20 @@ func TestChooseVizRollupGranularityVeryLargeRanges(t *testing.T) {
 		t.Fatalf("expected 1h buckets for huge all-range query, got gran=%d use=%v", gran, use)
 	}
 }
+
+func TestNextFinerVizRollupGranularity(t *testing.T) {
+	t.Parallel()
+	cases := map[int]int{
+		3600: 300,
+		300:  60,
+		60:   10,
+		10:   1,
+		1:    0,
+		123:  0,
+	}
+	for input, want := range cases {
+		if got := nextFinerVizRollupGranularity(input); got != want {
+			t.Fatalf("nextFinerVizRollupGranularity(%d): want %d, got %d", input, want, got)
+		}
+	}
+}
