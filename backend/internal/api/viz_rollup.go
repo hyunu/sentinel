@@ -308,15 +308,13 @@ func chooseVizRollupGranularity(total int64, limit int, start time.Time, hasStar
 	}
 
 	if !hasStart || !hasEnd {
-		// All-range queries have no bounds. Pick a granularity from the row
-		// count so the overview stays readable without scanning too many
-		// rollup buckets.
+		// All-range queries have no bounds, and a sparse board can cover
+		// months. Use at least 60s so the overview reads a bounded number of
+		// rollup documents; zooming in still loads finer detail.
 		switch {
 		case total <= 200000:
-			return 10, true
-		case total <= 2000000:
 			return 60, true
-		case total <= 20000000:
+		case total <= 2000000:
 			return 300, true
 		default:
 			return 3600, true

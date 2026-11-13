@@ -178,13 +178,13 @@ func TestChooseVizRollupGranularity(t *testing.T) {
 	}
 
 	gran, use = chooseVizRollupGranularity(33633, 8000, time.Time{}, false, time.Time{}, false)
-	if !use || gran != 10 {
-		t.Fatalf("expected 10s buckets for moderate all-range query, got gran=%d use=%v", gran, use)
+	if !use || gran != 60 {
+		t.Fatalf("expected 60s buckets for moderate all-range query, got gran=%d use=%v", gran, use)
 	}
 
 	gran, use = chooseVizRollupGranularity(500000, 8000, time.Time{}, false, time.Time{}, false)
-	if !use || gran != 60 {
-		t.Fatalf("expected 60s buckets for large all-range query, got gran=%d use=%v", gran, use)
+	if !use || gran != 300 {
+		t.Fatalf("expected 5m buckets for large all-range query, got gran=%d use=%v", gran, use)
 	}
 }
 
