@@ -134,13 +134,14 @@ const SECTIONS: ManualSection[] = [
           l('With multiple start rules, the first matching packet opens the session; repeated starts are ignored until an end packet closes it.', '시작 규칙이 여러 개면 가장 먼저 일치한 패킷에서 시작하고, 종료 전까지 반복되는 시작 패킷은 무시됩니다.'),
           l('Starts without a matching end are skipped and reported after the split.', '종료 패킷을 만나지 못한 시작은 세션으로 만들지 않고 결과에 경고로 표시됩니다.'),
           l('Splitting replaces existing sessions after confirmation; rows that are already assigned are not stolen.', '분할을 실행하면 확인 후 기존 세션이 교체되며, 이미 다른 세션에 지정된 행은 가져오지 않습니다.'),
+          l('The split runs as a background job. The card shows the scan row count and the session-creation phase, with a Cancel split button.', '분할은 백그라운드 작업으로 실행됩니다. 카드에 스캔 행 수와 세션 생성 단계가 표시되고, 분할 취소 버튼으로 중단할 수 있습니다.'),
         ],
       },
       {
         kind: 'tip',
         text: l(
-          'Hover the (i) icon next to the card title for the current mode explanation. Large boards can take a while to scan.',
-          '카드 제목 옆 (i) 아이콘에 마우스를 올리면 현재 모드 설명을 볼 수 있습니다. 데이터가 많은 보드는 스캔에 시간이 걸릴 수 있습니다.',
+          'Hover the (i) icon next to the card title for the current mode explanation. Large boards scan in the background; progress and cancel stay available in the card.',
+          '카드 제목 옆 (i) 아이콘에 마우스를 올리면 현재 모드 설명을 볼 수 있습니다. 데이터가 많은 보드는 백그라운드에서 스캔하며, 카드에서 진행률과 취소를 사용할 수 있습니다.',
         ),
       },
     ],

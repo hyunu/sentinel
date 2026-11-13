@@ -500,6 +500,7 @@ export const MANUAL_WORKFLOW: ManualBlock[] = [
       l('Use VarBytes + length_from expr inside self-sized FA/FC blocks.', 'FA/FC 자기 길이 블록 안에는 VarBytes + length_from expr.'),
       l('Run Parse Test with a known-good HEX capture before saving.', '저장 전 Parse Test로 알려진 good HEX 검증.'),
       l('Save as Protocol for boards, or save as Template to reuse in other protocols.', '보드용 Protocol 저장, 또는 Template로 재사용.'),
+      l('Edit enums in the Enums card. Rules reference enum names, and templates store enums together with parse_rules.', 'Enum은 Enums 카드에서 편집합니다. 규칙은 Enum 이름을 참조하며, 템플릿에는 parse_rules와 함께 저장됩니다.'),
     ],
   },
   {

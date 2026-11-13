@@ -56,6 +56,7 @@ const SECTIONS: ManualSection[] = [
           l('Session: limits rows to data assigned to one session.', '세션: 특정 세션에 할당된 데이터만 조회합니다.'),
           l('Direction: all, TX, or RX.', '방향: 전체, TX, RX 중에서 선택합니다.'),
           l('Page size: how many rows are loaded per request.', '행 수: 한 번에 불러올 행 수입니다.'),
+          l('Total count is not computed automatically. Press Count total when you need the exact number for the current filter.', '총 건수는 자동으로 계산하지 않습니다. 현재 조건의 정확한 건수가 필요할 때 총 건수 계산 버튼을 누릅니다.'),
         ],
       },
       {
@@ -68,8 +69,8 @@ const SECTIONS: ManualSection[] = [
       {
         kind: 'tip',
         text: l(
-          'Narrow the time range first on large datasets; counts and dumps are much faster.',
-          '데이터가 많을 때는 기간을 먼저 좁히면 개수 조회와 다운로드가 훨씬 빠릅니다.',
+          'Narrow the time range first on large datasets; the count and download are much faster.',
+          '데이터가 많을 때는 기간을 먼저 좁히면 건수 계산과 다운로드가 훨씬 빠릅니다.',
         ),
       },
     ],
@@ -104,7 +105,7 @@ const SECTIONS: ManualSection[] = [
         kind: 'ul',
         items: [
           l('Download exports the currently filtered rows as a data dump.', '다운로드: 현재 조회 조건에 해당하는 행을 데이터 덤프로 내려받습니다.'),
-          l('Delete removes stored UART data and cannot be undone. A confirmation phrase is required.', '삭제: 저장된 UART 데이터를 제거하며 되돌릴 수 없습니다. 확인 문구를 입력해야 실행됩니다.'),
+          l('Delete removes all stored UART data for the board (not just the current page or filter) and cannot be undone. A confirmation phrase is required.', '삭제: 현재 페이지·필터가 아니라 보드에 저장된 UART 데이터 전체를 제거하며 되돌릴 수 없습니다. 확인 문구를 입력해야 실행됩니다.'),
         ],
       },
       {
@@ -133,7 +134,8 @@ const SECTIONS: ManualSection[] = [
           l('Scope: the whole board or only the current filter.', '범위: 보드 전체 또는 현재 조회 조건에 해당하는 행만 선택합니다.'),
           l('Mode: fill missing rows only, or reparse every row.', '모드: 누락된 행만 채우거나 모든 행을 다시 파싱합니다.'),
           l('Runs as a background job with progress, ETA, and cancel.', '백그라운드 작업으로 실행되며 진행률, 예상 시간, 취소를 제공합니다.'),
-          l('Overwritten rows are backed up first, and rollups are rebuilt when the job finishes.', '덮어쓰는 행은 먼저 백업되고, 작업이 끝나면 집계(rollup)가 다시 생성됩니다.'),
+          l('Backup: optionally keep the previous parsed fields before overwriting them.', '백업: 사용 설정하면 덮어쓰기 전에 이전 파싱 필드를 보관합니다.'),
+          l('Clear rollups: when enabled, existing rollups are cleared and rebuilt as the job progresses.', '집계 초기화: 사용 설정하면 기존 집계(rollup)를 지우고 작업이 진행되면서 다시 생성합니다.'),
         ],
       },
       {

@@ -32,7 +32,8 @@ export const CHART_MANUAL_OVERVIEW: ManualBlock[] = [
     items: [
       l('Every series shares the X (time) axis; each item can use its own Y axis, unit, offset, weight, and color.', '모든 시리즈는 시간(X)축을 공유하고, 항목마다 Y축·단위·오프셋·가중치·색상을 따로 지정할 수 있습니다.'),
       l('The header shows the selected board, protocol, and time range. Live mode adds new packets as they arrive.', '상단에는 선택한 보드·프로토콜·기간이 표시됩니다. Live 모드에서는 새 패킷이 도착하는 대로 이어서 그립니다.'),
-      l('Wide ranges are loaded in two steps: a rough min/max overview first, then detailed samples for the visible window.', '넓은 기간은 두 단계로 불러옵니다. 먼저 전체 윤곽용 min/max 샘플을 그리고, 화면에 보이는 구간의 상세 데이터를 이어서 불러옵니다.'),
+      l('Up to 100,000 rows the chart shows a rough overview first, then loads all rows into memory so zooming is instant. Above that, it keeps the sampled overview and fetches only the visible time window when you zoom or pan.', '10만 행 이하에서는 먼저 전체 윤곽(개요)을 보여준 뒤 전체 행을 메모리에 적재해 확대가 즉시 동작합니다. 10만 행을 넘으면 샘플 개요를 유지하고, 확대·이동할 때 보이는 시간 구간만 서버에서 가져옵니다.'),
+      l('While the overview is being aggregated, the percentage rises by a time estimate; download bytes take over when the response starts, and it stops at 99% until the chart applies the data.', '개요를 집계하는 동안에는 시간 기반 추정치로 퍼센트가 올라가고, 응답이 시작되면 실제 다운로드 바이트 기준으로 바뀝니다. 차트에 데이터가 적용되기 전까지는 99%에서 대기합니다.'),
     ],
   },
 ];
@@ -43,6 +44,7 @@ export const CHART_MANUAL_CONFIGURATION: ManualBlock[] = [
     items: [
       l('Board · protocol: the protocol assigned to the board is used for field parsing.', '보드 · 프로토콜: 보드에 지정된 프로토콜로 필드를 파싱합니다.'),
       l('Time range: 1d / 3d / 7d / 15d / 30d / 3m / 6m / 1y / all, or a custom start and end.', '기간: 1일 / 3일 / 7일 / 15일 / 30일 / 3개월 / 6개월 / 1년 / 전체 중에서 고르거나 시작·종료를 직접 지정합니다.'),
+      l('Custom dates are whole-day units. Drag across days in the calendar to set start/end; for a time-of-day range drag the data presence bar above the chart.', '직접 지정은 날짜(일) 단위입니다. 달력에서 여러 날을 드래그하면 시작/종료가 채워지고, 하루 안의 시간 범위는 차트 위 데이터 현황 막대를 드래그하세요.'),
       l('Session: sets the chart time range to the selected session start/end (live assignment filtering is not applied).', '세션: 선택한 세션의 시작·종료 시각으로 차트 기간을 맞춥니다. 세션 할당 여부로 행을 필터링하지는 않습니다.'),
       l('Items: add every field at once or search and add individual fields. Each row controls visibility, label, type, Y axis, unit, Y min/max, offset, weight, and color.', '항목: 전체 필드를 한 번에 추가하거나 검색해서 개별 필드를 추가합니다. 각 행에서 표시 여부, 이름, 타입, Y축, 단위, Y 최소/최대, 오프셋, 가중치, 색상을 설정합니다.'),
       l('Auto layout: place visible on/off items below the analog series with fixed spacing.', 'Y축 자동 배치: 표시 중인 on/off 항목을 아날로그 값 아래에 일정 간격으로 배치합니다.'),
@@ -186,14 +188,15 @@ export const CHART_MANUAL_DATA: ManualBlock[] = [
     items: [
       l('Refresh reloads the selected range (Alt + R). In Live mode it reloads the raw tail.', '새로고침은 선택한 기간을 다시 불러옵니다(Alt + R). Live 모드에서는 원본 꼬리를 다시 읽습니다.'),
       l('CSV export downloads the currently loaded chart data.', 'CSV 내보내기는 현재 불러온 차트 데이터를 내려받습니다.'),
-      l('Changing the time range or fields triggers a new query; the loading indicator shows rough sampling and detail loading separately.', '기간이나 항목을 바꾸면 새로 조회합니다. 로딩 표시는 전체 윤곽 샘플링과 상세 로딩을 구분해 보여줍니다.'),
+      l('Changing the time range or fields triggers a new query; the loading indicator shows rough sampling and detail loading separately, including percentage and rows/MB progress.', '기간이나 항목을 바꾸면 새로 조회합니다. 로딩 표시는 전체 윤곽 샘플링과 상세 로딩을 구분하고 퍼센트·행 수/용량 진행률을 보여줍니다.'),
+      l('Full memory load is capped at 100,000 matched rows; above that only the overview and viewport detail are loaded.', '전체 메모리 적재는 매칭 행 100,000개까지입니다. 그 이상은 개요와 화면 구간 상세만 불러옵니다.'),
     ],
   },
   {
     kind: 'tip',
     text: l(
-      'Narrow the time range when the chart feels slow; wide ranges load a sampled overview and then fetch detail for the visible window.',
-      '차트가 느리면 기간을 좁히세요. 넓은 기간은 샘플 개요를 먼저 그리고 보이는 구간의 상세 데이터를 추가로 불러옵니다.',
+      'Narrow the time range when the chart feels slow. Ranges with more than 100,000 rows keep a sampled overview and fetch detail for the visible window; narrowing below the limit switches to a full in-memory load.',
+      '차트가 느리면 기간을 좁히세요. 10만 행을 넘는 범위는 샘플 개요를 유지하고 보이는 구간만 상세 조회하며, 한도 이하로 좁히면 전체 메모리 적재로 전환됩니다.',
     ),
   },
 ];

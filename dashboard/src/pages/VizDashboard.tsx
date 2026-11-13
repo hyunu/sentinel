@@ -852,11 +852,16 @@ async function queryVizDataset(
       );
       const realMeta = real.meta ?? meta;
       options?.onOverview?.(real.data, realMeta, false, false);
+      // The guide describes the sample that is actually drawn; recompute it
+      // from the real samples rather than the envelope row count.
+      const realAssessment = options?.assessAllRange
+        ? assessAllTimeRangeLoad(realMeta, real.data)
+        : null;
       return {
         data: real.data,
         meta: realMeta,
         inMemoryFull: !!realMeta && !realMeta.downsampled,
-        allRangeAssessment,
+        allRangeAssessment: realAssessment ?? allRangeAssessment,
       };
     }
     options?.onOverview?.(overview.data, meta, false, false);
