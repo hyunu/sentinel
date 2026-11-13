@@ -5099,6 +5099,22 @@ export default function VizDashboardPage() {
                       spectrumSelRef.current = null;
                       setTimeRangePresetId(TIME_PRESET_ALL);
                       setAllRangeGuide(null);
+                      // Apply immediately once both endpoints are chosen. The
+                      // date picker is day-granular, so the end covers 23:59:59.999.
+                      if (s && e) {
+                        const startDate = parseDateOnly(s);
+                        const endDate = parseDateOnly(e);
+                        if (startDate && endDate) {
+                          const endOfDay = new Date(endDate.getTime());
+                          endOfDay.setHours(23, 59, 59, 999);
+                          const range = {
+                            start: startDate.toISOString(),
+                            end: endOfDay.toISOString(),
+                          };
+                          setChartQueryTimeRange(range);
+                          void runVizQuery(range, false);
+                        }
+                      }
                     }}
                   />
                   {isCustomTimeRange && (

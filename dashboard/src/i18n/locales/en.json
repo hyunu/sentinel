@@ -364,7 +364,7 @@
     "endTime": "End time",
     "clear": "Clear",
     "selectDateRange": "Select date range",
-    "dateRangeHint": "Select a start date, then an end date.",
+    "dateRangeHint": "Pick a start date, then an end date. Applies in whole-day units; drag the data presence bar for a time-of-day range.",
     "spectrumHint": "Drag to select the time range to load",
     "spectrumBudget": {
       "max": "Max {{rows}} rows · {{mb}} MB ({{fields}} fields)",
