@@ -95,6 +95,32 @@ func (h *Handler) upsertUartPresence(ctx context.Context, samples []models.UartD
 	return nil
 }
 
+// uartPresenceExtent returns the first/last presence bucket for a board. It is
+// used to choose a rollup resolution for all-range chart queries without
+// scanning the raw collection.
+func (h *Handler) uartPresenceExtent(ctx context.Context, boardID string) (time.Time, time.Time, bool) {
+	findEdge := func(sortDirection int) (time.Time, bool) {
+		var row struct {
+			BucketStart time.Time `bson:"bucket_start"`
+		}
+		err := h.db.UartPresence().FindOne(
+			ctx,
+			bson.M{"board_id": boardID},
+			options.FindOne().
+				SetSort(bson.D{{Key: "bucket_start", Value: sortDirection}}).
+				SetProjection(bson.M{"bucket_start": 1}),
+		).Decode(&row)
+		return row.BucketStart, err == nil && !row.BucketStart.IsZero()
+	}
+	start, okStart := findEdge(1)
+	end, okEnd := findEdge(-1)
+	if !okStart || !okEnd || end.Before(start) {
+		return time.Time{}, time.Time{}, false
+	}
+	// Include the whole final minute.
+	return start, end.Add(time.Minute), true
+}
+
 func (h *Handler) loadUartPresenceBuckets(
 	ctx context.Context,
 	boardID string,
