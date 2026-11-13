@@ -81,7 +81,6 @@ import {
   PROGRESSIVE_MAX_PARTITIONS,
   PROGRESSIVE_PARTITION_ROWS,
   PROGRESSIVE_STRIPE_ROWS,
-  shouldChunkedFullLoad,
   shouldFullLoadInMemory,
   type AllRangeLoadAssessment,
 } from '../lib/vizFullLoad';
@@ -835,9 +834,11 @@ async function queryVizDataset(
   const allRangeAssessment = options?.assessAllRange
     ? assessAllTimeRangeLoad(meta, overview.data)
     : null;
+  // Require the byte budget as well as the 100k point cap. Without this a
+  // wide 98-field profile could still pull hundreds of MB into the browser.
   const willLoadFull = !options?.forceSample
     && !!meta
-    && (shouldFullLoadInMemory(meta, overview.data) || shouldChunkedFullLoad(meta));
+    && shouldFullLoadInMemory(meta, overview.data);
 
   if (!willLoadFull) {
     if (meta?.downsampled) {

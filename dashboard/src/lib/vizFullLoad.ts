@@ -113,7 +113,7 @@ export function assessAllTimeRangeLoad(
     };
   }
 
-  if (shouldFullLoadInMemory(meta, sample) || shouldChunkedFullLoad(meta)) {
+  if (shouldFullLoadInMemory(meta, sample)) {
     return {
       level: 'ok',
       totalMatched,
