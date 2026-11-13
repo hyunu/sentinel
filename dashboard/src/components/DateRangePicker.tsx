@@ -44,8 +44,14 @@ export default function DateRangePicker({ start, end, disabled, onChange }: Date
     return startOfDay(base);
   });
   const [pendingStart, setPendingStart] = useState<string | null>(null);
+  const [dragStart, setDragStart] = useState<string | null>(null);
+  const [dragEnd, setDragEnd] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const dragStartRef = useRef<string | null>(null);
+  const dragEndRef = useRef<string | null>(null);
+  const draggingRef = useRef(false);
+  const suppressClickUntilRef = useRef(0);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   const startDate = useMemo(() => (start ? parseDateOnly(start) : null), [start]);
@@ -58,6 +64,11 @@ export default function DateRangePicker({ start, end, disabled, onChange }: Date
         const base = parseDateOnly(start || end) ?? new Date();
         setView(startOfDay(base));
         setPendingStart(null);
+        setDragStart(null);
+        setDragEnd(null);
+        draggingRef.current = false;
+        dragStartRef.current = null;
+        dragEndRef.current = null;
         const rect = triggerRef.current?.getBoundingClientRect();
         if (rect) {
           setPopoverPos({ top: rect.bottom + 6, left: rect.left });
@@ -91,6 +102,44 @@ export default function DateRangePicker({ start, end, disabled, onChange }: Date
     };
   }, [open]);
 
+  const pickRange = useCallback((a: string, b: string) => {
+    const aDate = parseDateOnly(a);
+    const bDate = parseDateOnly(b);
+    if (!aDate || !bDate) return;
+    const aMs = aDate.getTime();
+    const bMs = bDate.getTime();
+    setPendingStart(null);
+    setOpen(false);
+    onChange(aMs <= bMs ? a : b, aMs <= bMs ? b : a);
+  }, [onChange]);
+
+  // Drag across days: pointer-down starts the range, pointer-enter previews,
+  // pointer-up commits and closes. A click without movement keeps the existing
+  // click-click behavior handled by pickDay.
+  useEffect(() => {
+    if (!open) return;
+    const finishDrag = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      const a = dragStartRef.current;
+      const b = dragEndRef.current;
+      dragStartRef.current = null;
+      dragEndRef.current = null;
+      setDragStart(null);
+      setDragEnd(null);
+      if (a && b && a !== b) {
+        suppressClickUntilRef.current = Date.now() + 400;
+        pickRange(a, b);
+      }
+    };
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', finishDrag);
+    return () => {
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', finishDrag);
+    };
+  }, [open, pickRange]);
+
   const pickDay = useCallback((d: Date) => {
     const key = formatDateOnly(d);
     if (!pendingStart) {
@@ -121,8 +170,16 @@ export default function DateRangePicker({ start, end, disabled, onChange }: Date
     [view],
   );
 
-  const rangeStart = pendingStart ? parseDateOnly(pendingStart) : startDate;
-  const rangeEnd = pendingStart ? null : endDate;
+  const rangeStart = dragStart
+    ? parseDateOnly(dragStart)
+    : pendingStart
+      ? parseDateOnly(pendingStart)
+      : startDate;
+  const rangeEnd = dragStart
+    ? (dragEnd ? parseDateOnly(dragEnd) : parseDateOnly(dragStart))
+    : pendingStart
+      ? null
+      : endDate;
 
   const inRange = useCallback((d: Date) => {
     if (!rangeStart) return false;
@@ -187,7 +244,25 @@ export default function DateRangePicker({ start, end, disabled, onChange }: Date
                   key={i}
                   type="button"
                   className={`viz-date-range-day${inMonth ? '' : ' out'}`}
-                  onClick={() => pickDay(d)}
+                  onPointerDown={event => {
+                    if (event.button !== 0) return;
+                    const key = formatDateOnly(d);
+                    draggingRef.current = true;
+                    dragStartRef.current = key;
+                    dragEndRef.current = key;
+                    setDragStart(key);
+                    setDragEnd(key);
+                  }}
+                  onPointerEnter={() => {
+                    if (!draggingRef.current) return;
+                    const key = formatDateOnly(d);
+                    dragEndRef.current = key;
+                    setDragEnd(key);
+                  }}
+                  onClick={() => {
+                    if (Date.now() < suppressClickUntilRef.current) return;
+                    pickDay(d);
+                  }}
                   data-in-range={r || undefined}
                   data-endpoint={e || undefined}
                 >

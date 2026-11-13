@@ -1153,6 +1153,8 @@ export default function VizDashboardPage() {
   const spectrumTrackRef = useRef<HTMLDivElement | null>(null);
   /** After spectrum-driven query, fit the chart viewport to this time span. */
   const pendingSpectrumViewportRef = useRef<{ startMs: number; endMs: number } | null>(null);
+  const customRangeViewportSeqRef = useRef(0);
+  const customRangeViewportRef = useRef<{ startMs: number; endMs: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [awaitingRoughData, setAwaitingRoughData] = useState(false);
   const [chartLoadProgress, setChartLoadProgress] = useState<ChartLoadProgress | null>(null);
@@ -1481,6 +1483,38 @@ export default function VizDashboardPage() {
 
   const applyViewportTimeMsImmediateRef = useRef(applyViewportTimeMsImmediate);
   applyViewportTimeMsImmediateRef.current = applyViewportTimeMsImmediate;
+  // Custom date ranges should define the chart's visible start/end even when
+  // the range extends past the stored data. Apply after the progressive loads
+  // settle so later data updates cannot reset the window.
+  useEffect(() => {
+    const pending = customRangeViewportRef.current;
+    if (!pending) return;
+    // Keep re-applying briefly: sampled/progressive rounds can reset the
+    // window after the first fit, especially while large payloads are parsed.
+    let attempt = 0;
+    let timer: number | null = null;
+    const apply = () => {
+      // Imperative-only window: the React zoom commit clamps to the data
+      // indices and would snap the axis back to the stored extent.
+      chartCanvasRef.current?.setWindowByTimeMs(pending.startMs, pending.endMs, {
+        syncY: false,
+        lightweight: true,
+      });
+      attempt += 1;
+      const scale = chartCanvasRef.current?.getXScaleMs();
+      const matched = !!scale
+        && Math.abs(scale.startMs - pending.startMs) < 1500
+        && Math.abs(scale.endMs - pending.endMs) < 1500;
+      if (!matched && attempt < 12) {
+        timer = window.setTimeout(apply, 250);
+      }
+    };
+    timer = window.setTimeout(apply, 500);
+    return () => {
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [rawVizData, loading, progressiveLoading]);
+
 
   const fitPendingSpectrumViewport = useCallback(() => {
     const pending = pendingSpectrumViewportRef.current;
@@ -3067,6 +3101,7 @@ export default function VizDashboardPage() {
   }, [spectrum, spectrumSel, spectrumMaxRows]);
 
   const applyTimePresetState = useCallback((id: TimePresetId) => {
+    customRangeViewportRef.current = null;
     setTimeRangePresetId(id);
     setCustomStart('');
     setCustomEnd('');
@@ -3158,6 +3193,7 @@ export default function VizDashboardPage() {
   }, [selectedBoard, applyQueryResult, applyProgressiveData, handleOverviewData, t, scheduleSpectrumViewportFit, aiAggregationParams]);
 
   const selectSession = useCallback((sessionId: string) => {
+    customRangeViewportRef.current = null;
     setSelectedSessionId(sessionId);
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
@@ -3202,7 +3238,8 @@ export default function VizDashboardPage() {
 
   const applySpectrumSelection = useCallback((startIdx: number, endIdx: number) => {
     if (!spectrum || liveModeRef.current) return;
-    const bins = spectrum.present.length;
+
+    customRangeViewportRef.current = null;    const bins = spectrum.present.length;
     const startMs = Date.parse(spectrum.start);
     const endMs = Date.parse(spectrum.end);
     const range = spectrumBinRangeToTimeRange(startIdx, endIdx, startMs, endMs, bins);
@@ -5112,6 +5149,11 @@ export default function VizDashboardPage() {
                             end: endOfDay.toISOString(),
                           };
                           setChartQueryTimeRange(range);
+                          customRangeViewportRef.current = {
+                            startMs: startDate.getTime(),
+                            endMs: endOfDay.getTime(),
+                          };
+                          customRangeViewportSeqRef.current += 1;
                           void runVizQuery(range, false);
                         }
                       }
