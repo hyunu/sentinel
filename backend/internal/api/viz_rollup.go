@@ -466,6 +466,11 @@ func (h *Handler) queryVizSeriesFromRollups(
 	if rollupCount == 0 {
 		return nil, false, nil
 	}
+	if granularitySec < preferredGranularity {
+		// Legacy board: build 5m/1h rollups in the background so the next
+		// long-range request can use them instead of 60s documents.
+		h.ensureVizRollupBackfill(ctx, boardID)
+	}
 
 	findOpts := options.Find().
 		SetSort(bson.D{{Key: "bucket_start", Value: 1}}).
